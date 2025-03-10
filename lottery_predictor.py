@@ -18,7 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.paths import PATHS, ensure_directories
 
 class LotteryPredictor:
-    def __init__(self, numbers_range=(1, 80), numbers_to_draw=20):
+    def __init__(self, numbers_range=(1, 80), numbers_to_draw=20, use_combined_features=True):
         """Initialize LotteryPredictor with enhanced model configuration"""
         # Validate input parameters
         if not isinstance(numbers_range, tuple) or len(numbers_range) != 2:
@@ -80,15 +80,19 @@ class LotteryPredictor:
         }
         
         # Initialize pipeline data storage
-        self.pipeline_data = {}
+        self.pipeline_data = {
+            # NEW: Flag to control whether to use combined features or just base features
+            'use_combined_features': use_combined_features
+        }
         
-        # Initialize pipeline stages - Added this line
+        # Initialize pipeline stages
         self._initialize_pipeline()
         
         print(f"\nInitialized LotteryPredictor:")
         print(f"- Number range: {numbers_range}")
         print(f"- Numbers to draw: {numbers_to_draw}")
         print(f"- Number of classes: {self.num_classes}")
+        print(f"- Using combined features: {use_combined_features}")
         
     def validate_model_state(self):
         """Validate model state before prediction"""
@@ -109,8 +113,16 @@ class LotteryPredictor:
             # Validate feature dimensions
             if hasattr(self.probabilistic_model, 'n_features_in_'):
                 expected_features = self.probabilistic_model.n_features_in_
-                if expected_features != 84:  # Expected feature dimension
-                    return False, f"Invalid feature dimension: {expected_features}"
+                # Check if using combined features (base + analysis)
+                use_combined = self.pipeline_data.get('use_combined_features', False)
+                if use_combined:
+                    # When using combined features, we expect 84 base + 20 analysis = 104 features
+                    if expected_features != 104:
+                        return False, f"Invalid feature dimension for combined model: {expected_features}"
+                else:
+                    # When using only base features, we expect 84 features
+                    if expected_features != 84:
+                        return False, f"Invalid feature dimension: {expected_features}"
 
             return True, "Model state valid"
         except Exception as e:
@@ -574,15 +586,32 @@ class LotteryPredictor:
                 self.pipeline_data['base_features'] = base_features
                 self.pipeline_data['analysis_features'] = analysis_features
                 
-                # For now, use only base features for prediction
-                # This ensures compatibility with existing trained models
-                enhanced_features = base_features
+                # Check if we should use combined features or just base features
+                use_combined = self.pipeline_data.get('use_combined_features', False)
+                
+                if use_combined:
+                    # CHANGE: Actually use the analysis features by combining them with base features
+                    # This is the key change - we're combining both feature sets
+                    try:
+                        # Take the first 20 analysis features (most important ones) to avoid dimensionality issues
+                        analysis_subset = analysis_features[:20]
+                        enhanced_features = np.concatenate([base_features, analysis_subset])
+                        print(f"Using COMBINED feature vector of shape: {enhanced_features.shape}")
+                        print("Using 60% analysis features weight")
+                    except Exception as e:
+                        print(f"Error combining features: {e}. Falling back to base features.")
+                        enhanced_features = base_features
+                else:
+                    # For compatibility with existing models
+                    print("Using only base features for compatibility with existing models")
+                    enhanced_features = base_features
                 
                 # Add feature metadata
                 self.pipeline_data['feature_metadata'] = {
                     'base_features_size': len(base_features),
                     'analysis_features_size': len(analysis_features),
                     'used_features_size': len(enhanced_features),
+                    'using_combined': use_combined,
                     'feature_stats': {
                         'mean': float(np.mean(enhanced_features)),
                         'std': float(np.std(enhanced_features)),
@@ -620,8 +649,24 @@ class LotteryPredictor:
             if len(features.shape) == 1:
                 features = features.reshape(1, -1)
             
-            if features.shape[1] != 84:
-                raise ValueError(f"Expected 84 features, got {features.shape[1]}")
+            # CRITICAL FIX: Handle feature dimension mismatch
+            use_combined = self.pipeline_data.get('use_combined_features', False)
+            expected_dim = self.probabilistic_model.n_features_in_ if hasattr(self.probabilistic_model, 'n_features_in_') else 84
+            
+            if features.shape[1] != expected_dim:
+                print(f"Feature dimension mismatch: got {features.shape[1]}, expected {expected_dim}")
+                
+                if use_combined and features.shape[1] == 104 and expected_dim == 84:
+                    # If we're trying to use combined features but model expects base features:
+                    print("Adapting combined features to base features for compatibility")
+                    features = features[:, :84]  # Take only the first 84 features
+                elif not use_combined and features.shape[1] == 84 and expected_dim == 104:
+                    # If model expects combined features but we're using base features
+                    print("Padding base features for compatibility with combined feature model")
+                    padding = np.zeros((features.shape[0], 20))  # Add 20 zeros
+                    features = np.hstack([features, padding])
+                else:
+                    raise ValueError(f"Cannot adapt features from dimension {features.shape[1]} to {expected_dim}")
                 
             # Scale features
             print("Scaling features...")
@@ -745,8 +790,57 @@ class LotteryPredictor:
             # Normalize and combine predictions
             prob_pred = prob_pred / np.sum(prob_pred)
             pattern_pred = pattern_pred / np.sum(pattern_pred)
-            combined_pred = 0.4 * prob_pred + 0.6 * pattern_pred
             
+            # NEW: Check for analysis data and create analysis prediction
+            analysis_pred = np.zeros(self.num_classes)
+            analysis_weight = 0.0
+            
+            if 'analysis_context' in self.pipeline_data:
+                # Try to get hot numbers from analysis context
+                if 'hot_cold' in self.pipeline_data['analysis_context']:
+                    hot_cold = self.pipeline_data['analysis_context']['hot_cold']
+                    if isinstance(hot_cold, tuple) and len(hot_cold) > 0:
+                        hot_numbers = hot_cold[0]  # First element is hot numbers
+                        
+                        # Create weights based on hot number frequency
+                        for num, count in hot_numbers:
+                            if 1 <= num <= self.num_classes:
+                                analysis_pred[num-1] = count
+                                
+                        # Normalize
+                        sum_analysis = np.sum(analysis_pred)
+                        if sum_analysis > 0:
+                            analysis_pred = analysis_pred / sum_analysis
+                            analysis_weight = 0.6  # Use 60% weight for analysis
+                            print("✓ Using 60% weight from data analysis (hot numbers)")
+                
+                # If no hot numbers, try frequency data
+                elif 'frequency' in self.pipeline_data['analysis_context'] and analysis_weight == 0:
+                    frequency = self.pipeline_data['analysis_context']['frequency']
+                    if frequency:
+                        total_freq = sum(frequency.values())
+                        if total_freq > 0:
+                            for num, freq in frequency.items():
+                                if 1 <= num <= self.num_classes:
+                                    analysis_pred[num-1] = freq / total_freq
+                            
+                            analysis_weight = 0.6  # Use 60% weight for analysis
+                            print("✓ Using 60% weight from data analysis (frequency)")
+            
+            # Combine predictions with appropriate weights
+            if analysis_weight > 0:
+                # Redistribute remaining 40% between prob and pattern
+                prob_weight = 0.25
+                pattern_weight = 0.15
+                combined_pred = (prob_weight * prob_pred + 
+                               pattern_weight * pattern_pred + 
+                               analysis_weight * analysis_pred)
+                print(f"Combined weights: {prob_weight:.2f} prob, {pattern_weight:.2f} pattern, {analysis_weight:.2f} analysis")
+            else:
+                # Fall back to original weights
+                combined_pred = 0.4 * prob_pred + 0.6 * pattern_pred
+                print("Using original weights: 0.4 prob, 0.6 pattern (no analysis data)")
+                
             # Get top numbers and ensure uniqueness
             top_indices = np.argsort(combined_pred)[::-1]  # Sort in descending order
             final_numbers = []

@@ -102,7 +102,7 @@ class DrawHandler:
             self.pipeline_status['success'] = False
             return None, None, None
 
-    def train_ml_models(self, force_retrain=False):
+    def train_ml_models(self, force_retrain=False, use_combined_features=True):
         """Train or retrain ML models"""
         try:
             self.pipeline_status['stage'] = 'model_training'
@@ -114,6 +114,15 @@ class DrawHandler:
 
             print(f"Loaded {len(historical_data)} draws for training")
                 
+            # Initialize predictor with combined features setting if it doesn't exist
+            if not hasattr(self, 'predictor') or self.predictor is None:
+                self.predictor = LotteryPredictor(use_combined_features=use_combined_features)
+            else:
+                # Reset and update the predictor for fresh training
+                self.predictor.reset_for_training(use_combined_features=use_combined_features)
+            
+            print(f"Training with {'combined' if use_combined_features else 'base'} features")
+            
             # Prepare data for training
             features, labels = self.predictor.prepare_data(historical_data)
             if features is None or labels is None or len(features) == 0:
@@ -121,16 +130,76 @@ class DrawHandler:
                 
             print(f"Prepared features shape: {features.shape}")
 
+            # IMPORTANT: Set the feature model type BEFORE training
+            self.predictor.pipeline_data['use_combined_features'] = use_combined_features
+            
+            # Prepare additional features if using combined approach
+            if use_combined_features:
+                try:
+                    print("\nEnhancing training data with analysis features...")
+                    
+                    # Create DataAnalysis instance for feature generation
+                    formatted_draws = []
+                    for _, row in historical_data.iterrows():
+                        try:
+                            numbers = [int(float(row[f'number{i}'])) for i in range(1, 21)]
+                            if len(numbers) == 20 and all(1 <= n <= 80 for n in numbers):
+                                formatted_draws.append((row['date'], numbers))
+                        except Exception as e:
+                            print(f"DEBUG: Error formatting draw: {e}")
+                    
+                    if formatted_draws:
+                        analyzer = DataAnalysis(formatted_draws)
+                        
+                        # Calculate analysis features
+                        frequency = analyzer.count_frequency()
+                        hot_numbers, cold_numbers = analyzer.hot_and_cold_numbers()
+                        
+                        # Prepare feature expansion (add 20 analysis features to each sample)
+                        print("Adding analysis features to training data...")
+                        
+                        # Get top 20 hot numbers for feature expansion
+                        top_hot = [num for num, _ in hot_numbers[:20]]
+                        
+                        # Create hot number features (20 dimensions)
+                        hot_features = np.zeros((features.shape[0], 20))
+                        
+                        # Set values based on frequency (simple method)
+                        for i, num in enumerate(top_hot):
+                            if 1 <= num <= 80:
+                                freq = frequency.get(num, 0)
+                                # Normalize by max frequency
+                                max_freq = max(frequency.values()) if frequency else 1
+                                hot_features[:, i] = freq / max_freq
+                        
+                        # Combine with original features
+                        enhanced_features = np.hstack([features, hot_features])
+                        print(f"Enhanced training data shape: {enhanced_features.shape}")
+                        
+                        # Use enhanced features
+                        features = enhanced_features
+                except Exception as e:
+                    print(f"Warning: Could not enhance training features: {e}")
+                    print("Falling back to base features")
+                    use_combined_features = False
+                    self.predictor.pipeline_data['use_combined_features'] = False
+
             # Train models using predictor with prepared data
             training_success = self.predictor.train_models(features, labels)
             
             if training_success:
+                # Save feature mode used for training
+                feature_mode_file = os.path.join(self.models_dir, 'feature_mode.txt')
+                with open(feature_mode_file, 'w') as f:
+                    f.write('combined' if use_combined_features else 'base')
+                    f.write(f"\nfeature_dim:{features.shape[1]}")
+                
                 # Save models immediately after successful training
                 if not self.predictor.save_models():
                     raise Exception("Failed to save trained models")
                     
                 self.pipeline_status['success'] = True
-                print("Models trained and saved successfully")
+                print(f"Models trained and saved successfully with {'combined' if use_combined_features else 'base'} features")
                 return True
             else:
                 raise Exception("Model training failed")
@@ -313,6 +382,12 @@ class DrawHandler:
                 
                 # Get predictions
                 print("\nDEBUG: Getting predictions...")
+                
+                # CRITICAL CHANGE: Pass analysis results to predictor BEFORE prediction
+                if hasattr(self.predictor, 'pipeline_data'):
+                    self.predictor.pipeline_data['analysis_context'] = analysis_results
+                    print("DEBUG: Added analysis context to predictor pipeline data")
+                    
                 prediction_result = self.predictor.predict(data)
                 
                 if prediction_result is None or len(prediction_result) != 3:
@@ -352,9 +427,17 @@ class DrawHandler:
                 print(f"Probabilities length: {len(probabilities)}")
                 print(f"Sample probabilities: {probabilities[:5]}")
                 
+                # Log if we're using combined features for this prediction
+                feature_mode = "combined" if self.predictor.pipeline_data.get('use_combined_features', False) else "base only"
+                print(f"DEBUG: Prediction used {feature_mode} features")
+                
                 # Update analysis results with context
                 if context:
                     analysis_results.update(context)
+                    
+                # Add feature usage info to results
+                analysis_results['feature_mode'] = feature_mode
+                analysis_results['using_analysis_features'] = self.predictor.pipeline_data.get('use_combined_features', False)
                 
                 return predicted_numbers, probabilities, analysis_results
                 
