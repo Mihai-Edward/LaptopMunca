@@ -1,4 +1,5 @@
 import glob
+import traceback
 import pandas as pd
 from datetime import datetime, timedelta
 import os
@@ -52,7 +53,7 @@ class DrawHandler:
         self._load_learning_status()
 
     def handle_prediction_pipeline(self, historical_data=None):
-        """Coordinates the prediction pipeline process"""
+        """Coordinates the prediction pipeline process with enhanced analysis"""
         try:
             self.pipeline_status['timestamp'] = datetime.now()
             
@@ -63,11 +64,7 @@ class DrawHandler:
             self.pipeline_status['stage'] = 'data_preparation'
             processed_data = self._prepare_pipeline_data(historical_data)
             
-            # 2. Analysis Stage
-            self.pipeline_status['stage'] = 'analysis'
-            analysis_results = {}  # Initialize empty analysis results
-            
-            # 3. Prediction Stage
+            # 2. Prediction Stage
             self.pipeline_status['stage'] = 'prediction'
             model_path = self._get_latest_model()
             if model_path:
@@ -78,22 +75,24 @@ class DrawHandler:
                 ]
                 if all(os.path.exists(file) for file in model_files):
                     print(f"✓ Model found: {os.path.basename(model_path)}")
-                    predictions, probabilities, analysis_results = self._run_prediction(processed_data)
-                    if predictions is not None:
-                        self.pipeline_status['success'] = True
-                        return predictions, probabilities, analysis_results
+                    
+                    # Get predictions and handle returns properly
+                    result = self._run_prediction(processed_data)
+                    if result and len(result) == 3:
+                        numbers, probs, analysis = result
+                        if numbers is not None:
+                            self.pipeline_status['success'] = True
+                            return numbers, probs, analysis
+                    
                 else:
                     print("Model files incomplete. Attempting retraining...")
                     if self.train_ml_models():
-                        # After training, run prediction again with the new model
                         return self._run_prediction(processed_data)
             else:
                 print("No model found. Attempting training...")
                 if self.train_ml_models():
-                    # After training, run prediction with the new model
                     return self._run_prediction(processed_data)
             
-            # If we reach here, prediction failed
             self.pipeline_status['error'] = "Failed to generate predictions"
             return None, None, None
                 
@@ -213,45 +212,62 @@ class DrawHandler:
             return None
 
     def _run_prediction(self, data):
-        """Run prediction with analysis integration"""
+        """Run prediction with integrated analysis"""
         try:
-            analysis_results = {}  # Initialize empty analysis results
+            analysis_results = {}
             
-            # Use the existing predictor instance instead of creating a new one
-            model_base = self._get_latest_model()
-            
-            if not model_base:
-                raise ValueError("No model base found. Training required.")
+            # Load historical data and create DataAnalysis instance
+            historical_data = self._load_historical_data()
+            if historical_data is not None:
+                # Format data for DataAnalysis
+                formatted_draws = [(row['date'], [row[f'number{i}'] for i in range(1, 21)])
+                                 for _, row in historical_data.iterrows()]
                 
-            # Try loading models
-            if not self.predictor.load_models(model_base):
-                print("Model loading failed, attempting to train new model...")
-                if not self.train_ml_models():
-                    raise ValueError("Could not load or train models")
-                # Get new model path after training
-                model_base = self._get_latest_model()
-                if not model_base or not self.predictor.load_models(model_base):
-                    raise ValueError("Model loading failed after training")
-            
+                # Create analyzer instance
+                analyzer = DataAnalysis(formatted_draws)
+                
+                # Get all analyses at once
+                analysis_results = {
+                    'common_pairs': analyzer.find_common_pairs(top_n=10),
+                    'hot_cold': analyzer.hot_and_cold_numbers(top_n=20),
+                    'clusters': analyzer.cluster_analysis(n_clusters=2),
+                    'consecutive': analyzer.find_consecutive_numbers(),
+                    'sequences': analyzer.sequence_pattern_analysis(),
+                    'ranges': analyzer.number_range_analysis()
+                }
+
             number_cols = [f'number{i}' for i in range(1, 21)]
             recent_draws = data.tail(5)[number_cols + ['date', 'day_of_week', 'month', 'day_of_year', 'days_since_first_draw']]
             
-            # Get predictions
-            predicted_numbers, probabilities, analysis = self.predictor.predict(recent_draws)
+            # Get predictions and ensure correct shape
+            predicted_numbers = self.predictor.predict(recent_draws)
+            if hasattr(predicted_numbers, 'shape'):
+                if predicted_numbers.shape[0] == 80:
+                    # Convert probability distribution to top 20 numbers
+                    top_indices = np.argsort(predicted_numbers)[-20:]
+                    predicted_numbers = sorted(top_indices + 1)  # +1 because indices are 0-based
+                elif len(predicted_numbers) > 20:
+                    predicted_numbers = predicted_numbers[:20]
             
-            # Update analysis results
-            if analysis:
-                analysis_results.update(analysis)
-                if self.predictor.training_status.get('prob_score') is not None:
-                    analysis_results['model_performance'] = {
-                        'probabilistic_model_score': self.predictor.training_status['prob_score'],
-                        'pattern_model_score': self.predictor.training_status['pattern_score']
-                    }
+            # Generate probabilities
+            if hasattr(self.predictor, 'predict_proba'):
+                probabilities = self.predictor.predict_proba(recent_draws)
+                if len(probabilities) > 20:
+                    probabilities = probabilities[:20]
+            else:
+                probabilities = [1.0] * len(predicted_numbers) if predicted_numbers else []
+            
+            # Ensure predicted_numbers is a list of exactly 20 numbers
+            if isinstance(predicted_numbers, (list, np.ndarray)):
+                predicted_numbers = list(predicted_numbers)[:20]
+                while len(predicted_numbers) < 20:
+                    predicted_numbers.append(0)
             
             return predicted_numbers, probabilities, analysis_results
                 
         except Exception as e:
             print(f"Error in prediction run: {e}")
+            traceback.print_exc()
             return None, None, None
 
     def _handle_pipeline_results(self, predictions, probabilities, analysis_results):
@@ -591,6 +607,25 @@ class DrawHandler:
             'last_adjustments': self.learning_status['last_adjustments']
         }
 
+    def _validate_draw_time(self, time_str):
+        """Validate the draw time format and values"""
+        try:
+            # Parse the time string
+            if ':' not in time_str:
+                return False
+                
+            hour, minute = map(int, time_str.strip().split(':'))
+            
+            # Validate hour and minute ranges
+            if not (0 <= hour <= 23):
+                return False
+            if not (0 <= minute <= 59):
+                return False
+                
+            return True
+        except ValueError:
+            return False
+
 def save_draw_to_csv(draw_date, draw_numbers, csv_file=None):
     """Save draw results to CSV"""
     if csv_file is None:
@@ -705,9 +740,21 @@ def extract_date_features(df):
     return df
 
 def get_next_draw_time(current_time):
-    minutes = (current_time.minute // 5 + 1) * 5
-    next_draw_time = current_time.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=minutes)
-    return next_draw_time
+    """Calculate the next draw time"""
+    try:
+        # Round to nearest 5 minutes
+        minute = (current_time.minute // 5 * 5 + 5) % 60
+        hour = current_time.hour + (current_time.minute // 5 * 5 + 5) // 60
+        
+        next_time = current_time.replace(hour=hour % 24, minute=minute, second=0, microsecond=0)
+        
+        # If we've wrapped to the next day, add a day
+        if hour >= 24:
+            next_time += timedelta(days=1)
+            
+        return next_time
+    except Exception as e:
+        raise ValueError(f"Error calculating next draw time: {e}")
 
 def save_top_4_numbers_to_excel(top_4_numbers, file_path=None):
     if file_path is None:
@@ -746,28 +793,55 @@ def train_and_predict():
         predictions, probabilities, analysis = handler.handle_prediction_pipeline()
         
         if predictions is not None:
+            current_time = datetime.now()
+            
+            # Safely get next draw time
+            try:
+                next_draw_time = get_next_draw_time(current_time)
+            except ValueError as e:
+                print(f"Warning: Error getting next draw time: {e}")
+                # Fallback to current time + 5 minutes
+                next_draw_time = current_time + timedelta(minutes=5)
+                next_draw_time = next_draw_time.replace(second=0, microsecond=0)
+            
             # Format and display predictions
             formatted_numbers = ','.join(map(str, sorted(predictions)))
-            next_draw_time = get_next_draw_time(datetime.now())
             print(f"\nPredicted numbers for next draw at {next_draw_time.strftime('%H:%M %d-%m-%Y')}:")
             print(f"Numbers: {formatted_numbers}")
             
-            # Display probabilities in a readable format
-            print("\nProbabilities for each predicted number:")
-            for num, prob in zip(sorted(predictions), 
-                               [probabilities[num - 1] for num in predictions]):
-                print(f"Number {num}: {prob:.4f}")
+            # Safely handle probabilities
+            if probabilities is not None and len(probabilities) >= len(predictions):
+                print("\nProbabilities for each predicted number:")
+                for num, prob in zip(sorted(predictions), 
+                                   [probabilities[min(num - 1, len(probabilities) - 1)] for num in predictions]):
+                    print(f"Number {num}: {prob:.4f}")
 
-            # Save predictions
-            handler.save_predictions_to_csv(predictions, probabilities, 
-                                         next_draw_time.strftime('%Y-%m-%d %H:%M:%S'))
+            # Save predictions with proper datetime handling
+            prediction_time = next_draw_time.strftime('%Y-%m-%d %H:%M:00')  # Force seconds to 00
+            handler.save_predictions_to_csv(
+                predictions, 
+                probabilities if probabilities is not None else [1.0] * len(predictions),
+                prediction_time
+            )
             
-            # Handle top 4 numbers if available
-            if analysis and 'hot_numbers' in analysis:
-                top_4_numbers = analysis['hot_numbers'][:4]
-                top_4_file_path = os.path.join(os.path.dirname(PATHS['PREDICTIONS']), 'top_4.xlsx')
-                save_top_4_numbers_to_excel(top_4_numbers, top_4_file_path)
-                print(f"\nTop 4 numbers based on analysis: {','.join(map(str, top_4_numbers))}")
+            # Safely handle analysis results
+            if analysis and isinstance(analysis, dict):
+                # Handle hot numbers if available
+                hot_numbers = []
+                if 'hot_cold' in analysis and analysis['hot_cold']:
+                    hot_cold_data = analysis['hot_cold']
+                    if isinstance(hot_cold_data, tuple) and len(hot_cold_data) > 0:
+                        hot_numbers = [num for num, _ in hot_cold_data[0][:4]]
+                elif 'hot_numbers' in analysis:
+                    hot_numbers = analysis['hot_numbers'][:4]
+                
+                if hot_numbers:
+                    top_4_file_path = os.path.join(os.path.dirname(PATHS['PREDICTIONS']), 'top_4.xlsx')
+                    try:
+                        save_top_4_numbers_to_excel(hot_numbers, top_4_file_path)
+                        print(f"\nTop 4 numbers based on analysis: {','.join(map(str, hot_numbers))}")
+                    except Exception as e:
+                        print(f"Warning: Could not save top 4 numbers: {e}")
             
             return predictions, probabilities, analysis
         else:
@@ -776,6 +850,7 @@ def train_and_predict():
             
     except Exception as e:
         print(f"\nError in prediction process: {str(e)}")
+        traceback.print_exc()  # Print full error traceback for debugging
         return None, None, None
 
 def perform_complete_analysis(draws):
