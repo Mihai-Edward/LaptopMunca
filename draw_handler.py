@@ -146,9 +146,40 @@ class DrawHandler:
         return save_draw_to_csv(draw_date, draw_numbers, csv_file)
 
     def save_predictions_to_csv(self, predicted_numbers, probabilities, timestamp, csv_file=None):
+        """Save predictions with validation"""
         if csv_file is None:
             csv_file = PATHS['PREDICTIONS']
-        return save_predictions_to_csv(predicted_numbers, probabilities, timestamp, csv_file)
+        try:
+            # Validate inputs
+            if len(predicted_numbers) != 20:
+                print(f"WARNING: Adjusting prediction length from {len(predicted_numbers)} to 20")
+                predicted_numbers = (predicted_numbers + [0] * 20)[:20]
+            
+            if len(probabilities) != len(predicted_numbers):
+                print(f"WARNING: Adjusting probabilities length to match predictions")
+                probabilities = (list(probabilities) + [1.0/20] * 20)[:20]
+            
+            data = {
+                'Timestamp': [timestamp],
+                'Predicted_Numbers': [','.join(map(str, predicted_numbers))],
+                'Probabilities': [','.join(f'{p:.4f}' for p in probabilities)]
+            }
+            
+            df = pd.DataFrame(data)
+            os.makedirs(os.path.dirname(csv_file), exist_ok=True)
+            
+            if os.path.exists(csv_file):
+                df.to_csv(csv_file, mode='a', header=False, index=False)
+            else:
+                df.to_csv(csv_file, index=False)
+                
+            print(f"DEBUG: Saved predictions to {csv_file}")
+            return True
+            
+        except Exception as e:
+            print(f"Error saving predictions to CSV: {e}")
+            traceback.print_exc()
+            return False
 
     def save_predictions_to_excel(self, predictions, probabilities, timestamp, excel_file=None):
         if excel_file is None:
@@ -180,11 +211,38 @@ class DrawHandler:
             return None
 
     def _load_historical_data(self):
-        """Load historical data from CSV"""
+        """Load historical data with validation"""
         try:
-            return load_data(self.csv_file)
+            if not os.path.exists(self.csv_file):
+                raise FileNotFoundError(f"Data file {self.csv_file} not found")
+                
+            print(f"\nDEBUG: Loading data from {self.csv_file}")
+            df = pd.read_csv(self.csv_file)
+            print(f"DEBUG: Initial data shape: {df.shape}")
+            
+            # Convert date with error handling
+            try:
+                df['date'] = pd.to_datetime(df['date'], format='%H:%M %d-%m-%Y', errors='coerce')
+                df.loc[df['date'].isna(), 'date'] = pd.to_datetime(df.loc[df['date'].isna(), 'date'], errors='coerce')
+            except Exception as e:
+                print(f"WARNING: Date conversion issue: {e}")
+            
+            # Convert and validate number columns
+            number_cols = [f'number{i}' for i in range(1, 21)]
+            for col in number_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                    print(f"DEBUG: Null values in {col}: {df[col].isnull().sum()}")
+            
+            # Remove rows with any null values
+            df_clean = df.dropna()
+            print(f"DEBUG: Clean data shape: {df_clean.shape}")
+            
+            return df_clean
+            
         except Exception as e:
             print(f"Error loading historical data: {e}")
+            traceback.print_exc()
             return None
 
     def _prepare_pipeline_data(self, data):
@@ -214,59 +272,105 @@ class DrawHandler:
     def _run_prediction(self, data):
         """Run prediction with integrated analysis"""
         try:
+            print("\nDEBUG: Starting prediction run...")
             analysis_results = {}
             
             # Load historical data and create DataAnalysis instance
             historical_data = self._load_historical_data()
             if historical_data is not None:
-                # Format data for DataAnalysis
-                formatted_draws = [(row['date'], [row[f'number{i}'] for i in range(1, 21)])
-                                 for _, row in historical_data.iterrows()]
+                print(f"DEBUG: Loaded historical data shape: {historical_data.shape}")
+                
+                # Format data for DataAnalysis with proper validation
+                formatted_draws = []
+                for _, row in historical_data.iterrows():
+                    try:
+                        numbers = [int(float(row[f'number{i}'])) for i in range(1, 21)]
+                        if len(numbers) == 20 and all(1 <= n <= 80 for n in numbers):
+                            formatted_draws.append((row['date'], numbers))
+                    except Exception as e:
+                        print(f"DEBUG: Error formatting draw: {e}")
+                
+                print(f"DEBUG: Formatted {len(formatted_draws)} valid draws for analysis")
+                
+                if len(formatted_draws) == 0:
+                    print("ERROR: No valid draws found for analysis!")
+                    return None, None, None
                 
                 # Create analyzer instance
                 analyzer = DataAnalysis(formatted_draws)
                 
-                # Get all analyses at once
-                analysis_results = {
-                    'common_pairs': analyzer.find_common_pairs(top_n=10),
-                    'hot_cold': analyzer.hot_and_cold_numbers(top_n=20),
-                    'clusters': analyzer.cluster_analysis(n_clusters=2),
-                    'consecutive': analyzer.find_consecutive_numbers(),
-                    'sequences': analyzer.sequence_pattern_analysis(),
-                    'ranges': analyzer.number_range_analysis()
-                }
+                try:
+                    print("\nDEBUG: Running analyses...")
+                    print(f"DEBUG: Number of draws in analyzer: {len(analyzer.draws)}")
+                    analysis_results = analyzer.get_analysis_results()
+                    
+                    if analysis_results:
+                        print("\nDEBUG: Analysis completed successfully")
+                        if 'hot_cold' in analysis_results:
+                            hot, cold = analysis_results['hot_cold']
+                            print(f"Hot numbers count: {len(hot)}")
+                            print(f"Sample hot numbers: {hot[:5]}")
+                    else:
+                        print("WARNING: Analysis results are empty")
+                    
+                except Exception as analysis_error:
+                    print(f"DEBUG: Error in analysis: {analysis_error}")
+                    traceback.print_exc()
 
-            number_cols = [f'number{i}' for i in range(1, 21)]
-            recent_draws = data.tail(5)[number_cols + ['date', 'day_of_week', 'month', 'day_of_year', 'days_since_first_draw']]
-            
-            # Get predictions and ensure correct shape
-            predicted_numbers = self.predictor.predict(recent_draws)
-            if hasattr(predicted_numbers, 'shape'):
-                if predicted_numbers.shape[0] == 80:
-                    # Convert probability distribution to top 20 numbers
-                    top_indices = np.argsort(predicted_numbers)[-20:]
-                    predicted_numbers = sorted(top_indices + 1)  # +1 because indices are 0-based
-                elif len(predicted_numbers) > 20:
-                    predicted_numbers = predicted_numbers[:20]
-            
-            # Generate probabilities
-            if hasattr(self.predictor, 'predict_proba'):
-                probabilities = self.predictor.predict_proba(recent_draws)
-                if len(probabilities) > 20:
-                    probabilities = probabilities[:20]
+                # Get predictions
+                print("\nDEBUG: Getting predictions...")
+                predicted_numbers = self.predictor.predict(data)
+                print(f"DEBUG: Raw predictions type: {type(predicted_numbers)}")
+                print(f"DEBUG: Raw predictions: {predicted_numbers}")
+                
+                # Convert predictions to list and ensure we have exactly 20 numbers
+                if isinstance(predicted_numbers, tuple):
+                    predicted_numbers = list(predicted_numbers)
+                elif isinstance(predicted_numbers, np.ndarray):
+                    predicted_numbers = predicted_numbers.tolist()
+                
+                # Ensure we have unique numbers
+                seen = set()
+                unique_numbers = []
+                for num in predicted_numbers:
+                    if num not in seen and len(unique_numbers) < 20:
+                        seen.add(num)
+                        unique_numbers.append(num)
+                
+                # Pad with sequential numbers if needed
+                while len(unique_numbers) < 20:
+                    for i in range(1, 81):
+                        if i not in seen and len(unique_numbers) < 20:
+                            unique_numbers.append(i)
+                            seen.add(i)
+                
+                predicted_numbers = unique_numbers[:20]
+                print(f"\nDEBUG: Final prediction numbers: {predicted_numbers}")
+                
+                # Generate probabilities
+                probabilities = [1.0/20] * 20
+                if hasattr(self.predictor, 'predict_proba'):
+                    try:
+                        raw_probabilities = self.predictor.predict_proba(data)
+                        if isinstance(raw_probabilities, np.ndarray):
+                            if raw_probabilities.shape[0] == 80:
+                                probabilities = [raw_probabilities[num - 1] for num in predicted_numbers]
+                            else:
+                                probabilities = raw_probabilities[:20].tolist()
+                    except Exception as e:
+                        print(f"WARNING: Using default probabilities due to error: {e}")
+                
+                print(f"DEBUG: Final probabilities length: {len(probabilities)}")
+                print(f"DEBUG: Sample probabilities: {probabilities[:5]}")
+                
+                return predicted_numbers, probabilities, analysis_results
+                
             else:
-                probabilities = [1.0] * len(predicted_numbers) if predicted_numbers else []
-            
-            # Ensure predicted_numbers is a list of exactly 20 numbers
-            if isinstance(predicted_numbers, (list, np.ndarray)):
-                predicted_numbers = list(predicted_numbers)[:20]
-                while len(predicted_numbers) < 20:
-                    predicted_numbers.append(0)
-            
-            return predicted_numbers, probabilities, analysis_results
+                print("ERROR: No historical data available")
+                return None, None, None
                 
         except Exception as e:
-            print(f"Error in prediction run: {e}")
+            print(f"\nError in prediction run: {e}")
             traceback.print_exc()
             return None, None, None
 
@@ -800,7 +904,6 @@ def train_and_predict():
                 next_draw_time = get_next_draw_time(current_time)
             except ValueError as e:
                 print(f"Warning: Error getting next draw time: {e}")
-                # Fallback to current time + 5 minutes
                 next_draw_time = current_time + timedelta(minutes=5)
                 next_draw_time = next_draw_time.replace(second=0, microsecond=0)
             
@@ -810,23 +913,35 @@ def train_and_predict():
             print(f"Numbers: {formatted_numbers}")
             
             # Safely handle probabilities
-            if probabilities is not None and len(probabilities) >= len(predictions):
+            if probabilities is not None:
                 print("\nProbabilities for each predicted number:")
-                for num, prob in zip(sorted(predictions), 
-                                   [probabilities[min(num - 1, len(probabilities) - 1)] for num in predictions]):
+                # Convert probabilities to list if it's numpy array
+                prob_list = probabilities.tolist() if hasattr(probabilities, 'tolist') else list(probabilities)
+                
+                # Ensure probabilities match predictions length
+                if len(prob_list) == 80:  # If we have probabilities for all numbers
+                    pred_probs = [prob_list[num - 1] for num in predictions]
+                else:  # If we have probabilities just for predictions
+                    pred_probs = prob_list[:len(predictions)]
+                    
+                # Display probabilities
+                for num, prob in zip(sorted(predictions), pred_probs):
                     print(f"Number {num}: {prob:.4f}")
 
             # Save predictions with proper datetime handling
-            prediction_time = next_draw_time.strftime('%Y-%m-%d %H:%M:00')  # Force seconds to 00
+            prediction_time = next_draw_time.strftime('%Y-%m-%d %H:%M:00')
+            
+            # Ensure we have valid probabilities for saving
+            save_probs = pred_probs if 'pred_probs' in locals() else [1.0] * len(predictions)
+            
             handler.save_predictions_to_csv(
-                predictions, 
-                probabilities if probabilities is not None else [1.0] * len(predictions),
+                predictions,
+                save_probs,
                 prediction_time
             )
             
             # Safely handle analysis results
             if analysis and isinstance(analysis, dict):
-                # Handle hot numbers if available
                 hot_numbers = []
                 if 'hot_cold' in analysis and analysis['hot_cold']:
                     hot_cold_data = analysis['hot_cold']
@@ -843,14 +958,14 @@ def train_and_predict():
                     except Exception as e:
                         print(f"Warning: Could not save top 4 numbers: {e}")
             
-            return predictions, probabilities, analysis
+            return predictions, pred_probs if 'pred_probs' in locals() else save_probs, analysis
         else:
             print("\nFailed to generate predictions")
             return None, None, None
             
     except Exception as e:
         print(f"\nError in prediction process: {str(e)}")
-        traceback.print_exc()  # Print full error traceback for debugging
+        traceback.print_exc()
         return None, None, None
 
 def perform_complete_analysis(draws):
