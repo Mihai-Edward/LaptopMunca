@@ -721,65 +721,76 @@ class LotteryPredictor:
         """Process and combine predictions to get exactly 20 numbers"""
         print("\nPost-processing predictions...")
         try:
-            if predictions[0] is None or predictions[1] is None:
-                raise ValueError("Invalid predictions received")
+            if not predictions or len(predictions) != 2 or None in predictions:
+                print("ERROR: Invalid predictions input")
+                return None, None, None
                 
             prob_pred, pattern_pred = predictions
             
-            # Validate prediction arrays
-            if len(prob_pred) != self.num_classes or len(pattern_pred) != self.num_classes:
-                raise ValueError(f"Prediction arrays must have length {self.numbers_to_draw}")
-                
-            # Combine predictions with weights and normalization
-            prob_pred = prob_pred / np.sum(prob_pred)  # Normalize probabilities
-            pattern_pred = pattern_pred / np.sum(pattern_pred)  # Normalize pattern predictions
+            # Normalize and combine predictions
+            prob_pred = prob_pred / np.sum(prob_pred)
+            pattern_pred = pattern_pred / np.sum(pattern_pred)
             combined_pred = 0.4 * prob_pred + 0.6 * pattern_pred
             
             # Get top numbers and ensure uniqueness
             top_indices = np.argsort(combined_pred)[::-1]  # Sort in descending order
-            
             final_numbers = []
-            i = 0
+            used_indices = set()
             
-            while len(final_numbers) < self.numbers_to_draw and i < len(top_indices):
-                number = int(top_indices[i]) + self.numbers_range[0]
-                if number not in final_numbers:  # Ensure uniqueness
-                    if 1 <= number <= 80:  # Validate range
-                        final_numbers.append(number)
-                i += 1
-            
-            # Final validation
-            if len(final_numbers) != self.numbers_to_draw:
-                raise ValueError(f"Could not generate {self.numbers_to_draw} unique valid numbers")
+            # Select unique valid numbers
+            for idx in top_indices:
+                number = int(idx) + self.numbers_range[0]
+                if len(final_numbers) >= self.numbers_to_draw:
+                    break
+                if number not in final_numbers and 1 <= number <= 80:
+                    final_numbers.append(number)
+                    used_indices.add(idx)
             
             # Sort final numbers
             final_numbers.sort()
             
-            # Ensure probabilities are in list format
-            if isinstance(combined_pred, np.ndarray):
-                combined_pred = combined_pred.tolist()
-
-            # Store results in pipeline data with additional metadata
+            # Create probability mapping
+            prob_map = {}
+            for num in final_numbers:
+                idx = num - self.numbers_range[0]
+                if 0 <= idx < len(combined_pred):
+                    prob_map[num] = float(combined_pred[idx])
+                else:
+                    prob_map[num] = 1.0 / self.numbers_to_draw
+            
+            # Create final probability array
+            final_probs = [prob_map[num] for num in final_numbers]
+            
+            # Normalize final probabilities
+            sum_probs = sum(final_probs)
+            if sum_probs > 0:
+                final_probs = [p/sum_probs for p in final_probs]
+            else:
+                final_probs = [1.0/len(final_numbers) for _ in final_numbers]
+            
+            # Store results in pipeline data
             self.pipeline_data.update({
                 'final_prediction': final_numbers,
-                'probabilities': combined_pred,
+                'probabilities': final_probs,
                 'prediction_metadata': {
                     'prob_weight': 0.4,
                     'pattern_weight': 0.6,
-                    'top_prob_numbers': sorted([int(i) + self.numbers_range[0] for i in np.argsort(prob_pred)[-5:]]),
-                    'top_pattern_numbers': sorted([int(i) + self.numbers_range[0] for i in np.argsort(pattern_pred)[-5:]]),
-                    'combined_confidence': float(np.mean([combined_pred[n - self.numbers_range[0]] for n in final_numbers]))
+                    'combined_confidence': float(np.mean(final_probs)),
+                    'prediction_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 }
             })
             
             print("\nPrediction Summary:")
             print(f"Final Numbers: {final_numbers}")
+            print(f"Number of predictions: {len(final_numbers)}")
+            print(f"Number of probabilities: {len(final_probs)}")
             print(f"Average Confidence: {self.pipeline_data['prediction_metadata']['combined_confidence']:.4f}")
             
-            return final_numbers, combined_pred, self.pipeline_data['analysis_context']
+            return final_numbers, final_probs, self.pipeline_data.get('analysis_context', {})
                 
         except Exception as e:
             print(f"Error in post-processing: {e}")
+            traceback.print_exc()
             return None, None, None
 
     def save_models(self, path_prefix=None):
