@@ -1,3 +1,4 @@
+import traceback
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
@@ -193,36 +194,40 @@ class LotteryPredictor:
             raise FileNotFoundError(f"Data file {file_path} not found")
         
         try:
-            df = pd.read_csv(file_path)
+            # Load CSV with header
+            df = pd.read_csv(file_path, header=0)
             
-            # Enhanced date parsing with multiple formats
+            # Clean and convert dates
             try:
-                df['date'] = pd.to_datetime(df['date'], format='%H:%M %d-%m-%Y', errors='coerce')
-                df.loc[df['date'].isna(), 'date'] = pd.to_datetime(
-                    df.loc[df['date'].isna(), 'date'], 
-                    errors='coerce'
-                )
+                df['date'] = df['date'].str.strip()
+                df['date'] = pd.to_datetime(df['date'], format='%H:%M  %d-%m-%Y')
             except Exception as e:
-                print(f"Warning: Date conversion issue: {e}")
+                try:
+                    # Fallback to single space format
+                    df['date'] = pd.to_datetime(df['date'], format='%H:%M %d-%m-%Y')
+                except Exception as e2:
+                    print(f"Warning: Date conversion failed: {e2}")
+                    return None
             
             # Convert number columns to float
-            number_cols = [f'number{i+1}' for i in range(20)]
-            df[number_cols] = df[number_cols].astype(float)
-            
+            number_cols = [f'number{i}' for i in range(1, 21)]
+            for col in number_cols:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                
             # Validate number ranges
             for col in number_cols:
-                if col in df.columns:
-                    invalid_numbers = df[~df[col].between(1, 80)][col]
-                    if not invalid_numbers.empty:
-                        print(f"Warning: Found invalid numbers in {col}")
-                    df[col] = df[col].fillna(
-                        df[col].mode()[0] if not df[col].mode().empty else 0
-                    )
+                invalid_mask = ~df[col].between(1, 80)
+                if invalid_mask.any():
+                    print(f"Warning: Found {invalid_mask.sum()} invalid numbers in {col}")
+                    # Fill invalid numbers with the mode of valid numbers
+                    valid_mode = df.loc[~invalid_mask, col].mode()
+                    df.loc[invalid_mask, col] = valid_mode[0] if not valid_mode.empty else 0
             
             return df
-            
+                
         except Exception as e:
             print(f"Error loading data: {e}")
+            traceback.print_exc()
             return None
 
     def clean_data(self, data):
@@ -749,6 +754,10 @@ class LotteryPredictor:
             # Sort final numbers
             final_numbers.sort()
             
+            # Ensure probabilities are in list format
+            if isinstance(combined_pred, np.ndarray):
+                combined_pred = combined_pred.tolist()
+
             # Store results in pipeline data with additional metadata
             self.pipeline_data.update({
                 'final_prediction': final_numbers,
@@ -766,11 +775,11 @@ class LotteryPredictor:
             print(f"Final Numbers: {final_numbers}")
             print(f"Average Confidence: {self.pipeline_data['prediction_metadata']['combined_confidence']:.4f}")
             
-            return final_numbers, combined_pred
-            
+            return final_numbers, combined_pred, self.pipeline_data['analysis_context']
+                
         except Exception as e:
             print(f"Error in post-processing: {e}")
-            return None, None
+            return None, None, None
 
     def save_models(self, path_prefix=None):
         """Save models with timestamp"""
@@ -1111,13 +1120,12 @@ class LotteryPredictor:
 
     def predict(self, recent_draws):
         """Enhanced prediction with pipeline execution"""
-        # Initialize pipeline tracking
         pipeline_tracking = {
-                'start_time': datetime.now(),
-                'stages_completed': [],
-                'current_stage': None,
-                'error': None
-            }
+            'start_time': datetime.now(),
+            'stages_completed': [],
+            'current_stage': None,
+            'error': None
+        }
         try:
             # Check if models are trained
             if self.probabilistic_model is None or not hasattr(self.probabilistic_model, 'class_prior_'):
@@ -1169,10 +1177,14 @@ class LotteryPredictor:
             probabilities = self.pipeline_data.get('probabilities')
             analysis_context = self.pipeline_data.get('analysis_context', {})
             
-            # Validate final results
+            # Additional validation for probabilities
+            if isinstance(probabilities, np.ndarray):
+                probabilities = probabilities.tolist()
+            
+            # Ensure we have the correct number of predictions
             if final_numbers is None or len(final_numbers) != self.numbers_to_draw:
                 raise ValueError("Invalid prediction results")
-                
+            
             # Store pipeline execution metadata
             self.pipeline_data['pipeline_execution'] = {
                 'execution_time': (datetime.now() - pipeline_tracking['start_time']).total_seconds(),

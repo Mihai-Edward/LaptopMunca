@@ -217,29 +217,28 @@ class DrawHandler:
                 raise FileNotFoundError(f"Data file {self.csv_file} not found")
                 
             print(f"\nDEBUG: Loading data from {self.csv_file}")
-            df = pd.read_csv(self.csv_file)
+            df = pd.read_csv(self.csv_file, header=0)
             print(f"DEBUG: Initial data shape: {df.shape}")
             
-            # Convert date with error handling
+            # Handle the specific date format with potential spaces
             try:
-                df['date'] = pd.to_datetime(df['date'], format='%H:%M %d-%m-%Y', errors='coerce')
-                df.loc[df['date'].isna(), 'date'] = pd.to_datetime(df.loc[df['date'].isna(), 'date'], errors='coerce')
+                # First clean up any extra spaces in the date column
+                df['date'] = df['date'].str.strip()
+                # Convert using the exact format from your file
+                df['date'] = pd.to_datetime(df['date'], format='%H:%M  %d-%m-%Y')
+                print("DEBUG: Date conversion successful")
+                
             except Exception as e:
                 print(f"WARNING: Date conversion issue: {e}")
-            
-            # Convert and validate number columns
-            number_cols = [f'number{i}' for i in range(1, 21)]
-            for col in number_cols:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-                    print(f"DEBUG: Null values in {col}: {df[col].isnull().sum()}")
-            
-            # Remove rows with any null values
-            df_clean = df.dropna()
-            print(f"DEBUG: Clean data shape: {df_clean.shape}")
-            
-            return df_clean
-            
+                try:
+                    # Fallback: Try with single space if double space fails
+                    df['date'] = pd.to_datetime(df['date'], format='%H:%M %d-%m-%Y')
+                    print("DEBUG: Date conversion successful with fallback format")
+                except Exception as e2:
+                    print(f"WARNING: Fallback date conversion failed: {e2}")
+                    
+            return df
+                
         except Exception as e:
             print(f"Error loading historical data: {e}")
             traceback.print_exc()
@@ -404,17 +403,29 @@ class DrawHandler:
             print(f"\nPredicted numbers for next draw at {next_draw_time.strftime('%H:%M %d-%m-%Y')}:")
             print(f"Numbers: {formatted_numbers}")
             
-            # Display probabilities
+            # Display probabilities - NEW VERSION
             print("\nProbabilities for each predicted number:")
-            for num, prob in zip(sorted(predictions), 
-                               [probabilities[num - 1] for num in predictions]):
-                print(f"Number {num}: {prob:.4f}")
+            
+            # Convert probabilities to list if it's a numpy array
+            if isinstance(probabilities, np.ndarray):
+                probabilities = probabilities.tolist()
+                
+            # Print probabilities based on array length
+            if len(probabilities) == 80:  # Full probability distribution
+                for num in sorted(predictions):
+                    if 0 <= num-1 < len(probabilities):
+                        print(f"Number {num}: {probabilities[num-1]:.4f}")
+            else:  # Abbreviated probability distribution
+                # Use uniform distribution as fallback
+                prob_value = 1.0 / len(predictions)
+                for num in sorted(predictions):
+                    print(f"Number {num}: {prob_value:.4f}")
             
             # Save analysis results if available
             if analysis_results:
-                # Save hot numbers if available
-                if 'hot_numbers' in analysis_results:
-                    top_4_numbers = analysis_results['hot_numbers'][:4]
+                if 'hot_cold' in analysis_results and analysis_results['hot_cold']:
+                    hot_numbers, _ = analysis_results['hot_cold']
+                    top_4_numbers = [num for num, _ in hot_numbers[:4]]
                     top_4_file_path = os.path.join(self.predictions_dir, 'top_4.xlsx')
                     save_top_4_numbers_to_excel(top_4_numbers, top_4_file_path)
                     print(f"\nTop 4 numbers based on analysis: {','.join(map(str, top_4_numbers))}")
@@ -429,6 +440,7 @@ class DrawHandler:
             return True
         except Exception as e:
             print(f"Error handling pipeline results: {e}")
+            traceback.print_exc()  # Add this to get more detailed error info
             return False
 
     # NEW METHODS FOR CONTINUOUS LEARNING
