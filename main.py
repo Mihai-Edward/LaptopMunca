@@ -121,7 +121,8 @@ def save_standardized_prediction(predictions, next_draw_time, probabilities=None
         
         # Add probabilities if they exist
         if probabilities is not None:
-            probability_str = ','.join(f"{probabilities[num-1]:.4f}" for num in sorted_predictions)
+            # Use direct probability mapping
+            probability_str = ','.join(f"{p:.4f}" for p in probabilities)
             prediction_data['Probabilities'] = [probability_str]
         else:
             prediction_data['Probabilities'] = ['']
@@ -138,8 +139,7 @@ def save_standardized_prediction(predictions, next_draw_time, probabilities=None
         print(f"\nPrediction saved to: {prediction_file}")
         print(f"Date: {formatted_date}")
         print(f"Numbers: {','.join(map(str, sorted_predictions))}")
-        if probabilities is not None:
-            print("Probabilities included")
+        print("Probabilities included")
         
         return True
         
@@ -185,13 +185,12 @@ def train_and_predict():
             print(f"\nPredicted numbers for next draw at {next_draw_time.strftime('%H:%M %d-%m-%Y')}:")
             print(f"Numbers: {formatted_numbers}")
             
-            # Display probabilities in a readable format
+            # Display probabilities in a readable format - FIXED VERSION
             print("\nProbabilities for each predicted number:")
-            selected_probs = [probabilities[num-1] for num in sorted(predictions)]
-            for num, prob in zip(sorted(predictions), selected_probs):
+            for num, prob in zip(sorted(predictions), probabilities):
                 print(f"Number {num}: {prob:.4f}")
 
-            # Save predictions in standardized format (remove duplicate saving)
+            # Save predictions in standardized format
             save_standardized_prediction(predictions, next_draw_time, probabilities)
 
             # Handle top 4 numbers if available
