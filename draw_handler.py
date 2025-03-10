@@ -295,7 +295,6 @@ class DrawHandler:
                     print("ERROR: No valid draws found for analysis!")
                     return None, None, None
                 
-                # Create analyzer instance
                 analyzer = DataAnalysis(formatted_draws)
                 
                 try:
@@ -319,59 +318,38 @@ class DrawHandler:
                 # Get predictions
                 print("\nDEBUG: Getting predictions...")
                 prediction_result = self.predictor.predict(data)
-                print(f"DEBUG: Raw predictions type: {type(prediction_result)}")
-                print(f"DEBUG: Raw predictions: {prediction_result}")
                 
-                # Handle tuple return type
-                if isinstance(prediction_result, tuple) and len(prediction_result) >= 2:
-                    predicted_numbers = prediction_result[0]  # First element is the numbers
-                    probabilities = prediction_result[1]      # Second element is probabilities
-                    if len(prediction_result) > 2 and prediction_result[2]:
-                        analysis_results.update(prediction_result[2])  # Merge with existing analysis
-                else:
-                    predicted_numbers = prediction_result
-                    probabilities = [1.0/20] * 20
-
-                # Convert to list if needed
+                if not isinstance(prediction_result, tuple) or len(prediction_result) < 2:
+                    print("ERROR: Invalid prediction result format")
+                    return None, None, None
+                
+                predicted_numbers, raw_probabilities = prediction_result[:2]
+                
+                # Convert numpy arrays to lists
                 if isinstance(predicted_numbers, np.ndarray):
                     predicted_numbers = predicted_numbers.tolist()
+                if isinstance(raw_probabilities, np.ndarray):
+                    raw_probabilities = raw_probabilities.tolist()
                 
-                # Ensure we have 20 unique valid numbers
-                valid_numbers = []
-                seen = set()
+                # Validate and process probabilities
+                if len(raw_probabilities) == 80:  # Full probability distribution
+                    # Create a mapping of probabilities for each predicted number
+                    probabilities = []
+                    for num in predicted_numbers:
+                        if 1 <= num <= 80:
+                            probabilities.append(raw_probabilities[num - 1])
+                        else:
+                            probabilities.append(1.0 / len(predicted_numbers))
+                else:
+                    # Use uniform distribution if we don't have full probabilities
+                    probabilities = [1.0 / len(predicted_numbers)] * len(predicted_numbers)
                 
-                # Process existing numbers first
-                for num in predicted_numbers:
-                    if isinstance(num, (int, float)):
-                        num = int(num)
-                        if 1 <= num <= 80 and num not in seen and len(valid_numbers) < 20:
-                            seen.add(num)
-                            valid_numbers.append(num)
+                print(f"DEBUG: Processed predictions:")
+                print(f"Numbers: {predicted_numbers}")
+                print(f"Probabilities length: {len(probabilities)}")
+                print(f"Sample probabilities: {probabilities[:5]}")
                 
-                # Fill remaining spots if needed
-                while len(valid_numbers) < 20:
-                    for num in range(1, 81):
-                        if num not in seen and len(valid_numbers) < 20:
-                            valid_numbers.append(num)
-                            seen.add(num)
-
-                # Update probabilities if needed
-                if isinstance(probabilities, np.ndarray):
-                    if len(probabilities) == 80:  # Full probability distribution
-                        probabilities = [probabilities[num - 1] for num in valid_numbers]
-                    else:
-                        probabilities = probabilities[:20].tolist()
-                
-                # Ensure probabilities match the number of predictions
-                if len(probabilities) != len(valid_numbers):
-                    probabilities = [1.0/20] * len(valid_numbers)
-                
-                print(f"\nDEBUG: Final prediction numbers: {valid_numbers}")
-                print(f"DEBUG: Final probabilities length: {len(probabilities)}")
-                print(f"DEBUG: Sample probabilities: {probabilities[:5]}")
-                
-                return valid_numbers, probabilities, analysis_results
-                
+                return predicted_numbers, probabilities, analysis_results
             else:
                 print("ERROR: No historical data available")
                 return None, None, None
@@ -384,63 +362,160 @@ class DrawHandler:
     def _handle_pipeline_results(self, predictions, probabilities, analysis_results):
         """Handle the results from the prediction pipeline"""
         try:
+            print("\n" + "="*50)
+            print("DEBUG: Starting _handle_pipeline_results with detailed debugging")
+            print("="*50)
+            
+            # Initial input validation
+            print("\nDEBUG: Input Validation:")
+            print(f"Predictions type: {type(predictions)}")
+            print(f"Probabilities type: {type(probabilities)}")
+            if isinstance(predictions, np.ndarray):
+                print(f"Predictions shape: {predictions.shape}")
+            if isinstance(probabilities, np.ndarray):
+                print(f"Probabilities shape: {probabilities.shape}")
+            
             if predictions is None or probabilities is None:
-                print("No valid predictions to handle")
+                print("ERROR: No valid predictions to handle")
                 return False
                 
-            # Format timestamp and next draw time
+            # Format timestamp
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             next_draw_time = get_next_draw_time(datetime.now())
+            print(f"\nDEBUG: Timestamp: {timestamp}")
+            print(f"DEBUG: Next draw time: {next_draw_time}")
             
-            # Save predictions to CSV
-            self.save_predictions_to_csv(predictions, probabilities, timestamp)
-            
-            # Also save to Excel for better visualization
-            self.save_predictions_to_excel(predictions, probabilities, timestamp)
-            
-            # Display formatted results
-            formatted_numbers = ','.join(map(str, sorted(predictions)))
-            print(f"\nPredicted numbers for next draw at {next_draw_time.strftime('%H:%M %d-%m-%Y')}:")
-            print(f"Numbers: {formatted_numbers}")
-            
-            # Display probabilities - NEW VERSION
-            print("\nProbabilities for each predicted number:")
-            
-            # Convert probabilities to list if it's a numpy array
-            if isinstance(probabilities, np.ndarray):
-                probabilities = probabilities.tolist()
+            # Data type conversion
+            print("\nDEBUG: Converting data types...")
+            try:
+                if isinstance(predictions, np.ndarray):
+                    predictions = predictions.tolist()
+                    print("Converted predictions from numpy array to list")
                 
-            # Print probabilities based on array length
-            if len(probabilities) == 80:  # Full probability distribution
-                for num in sorted(predictions):
-                    if 0 <= num-1 < len(probabilities):
-                        print(f"Number {num}: {probabilities[num-1]:.4f}")
-            else:  # Abbreviated probability distribution
-                # Use uniform distribution as fallback
-                prob_value = 1.0 / len(predictions)
-                for num in sorted(predictions):
-                    print(f"Number {num}: {prob_value:.4f}")
+                if isinstance(probabilities, np.ndarray):
+                    probabilities = probabilities.tolist()
+                    print("Converted probabilities from numpy array to list")
+                    
+                print(f"Final predictions type: {type(predictions)}")
+                print(f"Final probabilities type: {type(probabilities)}")
+            except Exception as e:
+                print(f"ERROR in data type conversion: {str(e)}")
+                traceback.print_exc()
             
-            # Save analysis results if available
-            if analysis_results:
-                if 'hot_cold' in analysis_results and analysis_results['hot_cold']:
-                    hot_numbers, _ = analysis_results['hot_cold']
-                    top_4_numbers = [num for num, _ in hot_numbers[:4]]
-                    top_4_file_path = os.path.join(self.predictions_dir, 'top_4.xlsx')
-                    save_top_4_numbers_to_excel(top_4_numbers, top_4_file_path)
-                    print(f"\nTop 4 numbers based on analysis: {','.join(map(str, top_4_numbers))}")
+            # Data validation
+            print("\nDEBUG: Data Validation:")
+            print(f"Number of predictions: {len(predictions)}")
+            print(f"Number of probabilities: {len(probabilities)}")
+            print(f"First 5 predictions: {predictions[:5]}")
+            print(f"First 5 probabilities: {probabilities[:5]}")
+            
+            # Sort predictions
+            print("\nDEBUG: Sorting predictions...")
+            try:
+                predictions = sorted(predictions)
+                print(f"Sorted predictions: {predictions}")
+            except Exception as e:
+                print(f"ERROR in sorting: {str(e)}")
+                traceback.print_exc()
+            
+            # Process probabilities
+            print("\nDEBUG: Processing probabilities...")
+            try:
+                prob_map = {}
                 
-                # Display analysis summary
-                print("\n=== Analysis Results ===")
-                for key, value in analysis_results.items():
-                    if key != 'clusters':  # Skip clusters for cleaner output
-                        print(f"\n{key.replace('_', ' ').title()}:")
-                        print(value)
+                if len(probabilities) == 80:
+                    print("Using full probability distribution (80 values)")
+                    for i, prob in enumerate(probabilities):
+                        print(f"DEBUG: Processing probability for index {i}")
+                        num = i + 1
+                        prob_map[num] = round(float(prob), 4)
                         
+                elif len(probabilities) == len(predictions):
+                    print("Using matching probability array (20 values)")
+                    for num, prob in zip(predictions, probabilities):
+                        print(f"DEBUG: Mapping {num} -> {prob}")
+                        prob_map[num] = round(float(prob), 4)
+                else:
+                    print("Using uniform distribution")
+                    uniform_prob = round(1.0 / len(predictions), 4)
+                    for num in predictions:
+                        prob_map[num] = uniform_prob
+                        
+                print("\nDEBUG: Probability Map Created:")
+                for num in sorted(prob_map.keys()):
+                    print(f"  {num}: {prob_map[num]}")
+                    
+            except Exception as e:
+                print(f"ERROR in probability processing: {str(e)}")
+                traceback.print_exc()
+                print("Falling back to uniform distribution")
+                prob_map = {num: round(1.0/len(predictions), 4) for num in predictions}
+            
+            # Create final probabilities array
+            print("\nDEBUG: Creating final probabilities array...")
+            try:
+                final_probs = []
+                for num in predictions:
+                    if num in prob_map:
+                        final_probs.append(prob_map[num])
+                        print(f"Added probability {prob_map[num]} for number {num}")
+                    else:
+                        print(f"WARNING: Missing probability for number {num}")
+                        final_probs.append(round(1.0/len(predictions), 4))
+                
+                print(f"Final probabilities array length: {len(final_probs)}")
+                print(f"First 5 final probabilities: {final_probs[:5]}")
+            except Exception as e:
+                print(f"ERROR in final probability array creation: {str(e)}")
+                traceback.print_exc()
+                final_probs = [round(1.0/len(predictions), 4)] * len(predictions)
+            
+            # Save predictions
+            print("\nDEBUG: Saving predictions...")
+            try:
+                self.save_predictions_to_csv(predictions, final_probs, timestamp)
+                self.save_predictions_to_excel(predictions, final_probs, timestamp)
+                print("Predictions saved successfully")
+            except Exception as e:
+                print(f"ERROR in saving predictions: {str(e)}")
+                traceback.print_exc()
+            
+            # Display results
+            print("\nDEBUG: Displaying results...")
+            try:
+                formatted_numbers = ','.join(map(str, predictions))
+                print(f"\nPredicted numbers for next draw at {next_draw_time.strftime('%H:%M %d-%m-%Y')}:")
+                print(f"Numbers: {formatted_numbers}")
+                
+                print("\nProbabilities for each predicted number:")
+                for num in predictions:
+                    print(f"Number {num}: {prob_map.get(num, 0.0):.4f}")
+            except Exception as e:
+                print(f"ERROR in displaying results: {str(e)}")
+                traceback.print_exc()
+            
+            # Handle analysis results
+            if analysis_results:
+                print("\nDEBUG: Processing analysis results...")
+                try:
+                    if 'hot_cold' in analysis_results and analysis_results['hot_cold']:
+                        hot_numbers = [num for num, _ in analysis_results['hot_cold'][0][:4]]
+                        top_4_file_path = os.path.join(self.predictions_dir, 'top_4.xlsx')
+                        save_top_4_numbers_to_excel(hot_numbers, top_4_file_path)
+                        print(f"Top 4 numbers: {hot_numbers}")
+                except Exception as e:
+                    print(f"ERROR in analysis results processing: {str(e)}")
+                    traceback.print_exc()
+            
+            print("\nDEBUG: _handle_pipeline_results completed successfully")
             return True
+            
         except Exception as e:
-            print(f"Error handling pipeline results: {e}")
-            traceback.print_exc()  # Add this to get more detailed error info
+            print("\nCRITICAL ERROR in _handle_pipeline_results:")
+            print(f"Error type: {type(e).__name__}")
+            print(f"Error message: {str(e)}")
+            print("Stack trace:")
+            traceback.print_exc()
             return False
 
     # NEW METHODS FOR CONTINUOUS LEARNING
@@ -675,7 +750,7 @@ class DrawHandler:
                 try:
                     # Force model reload
                     model_path = self._get_latest_model()
-                    if model_path:
+                    if (model_path):
                         print(f"Loading adjusted model: {os.path.basename(model_path)}")
                         load_success = self.predictor.load_models(model_path)
                         

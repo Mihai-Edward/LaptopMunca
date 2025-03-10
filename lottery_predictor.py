@@ -737,6 +737,7 @@ class LotteryPredictor:
             
             # Get top numbers and ensure uniqueness
             top_indices = np.argsort(combined_pred)[::-1]  # Sort in descending order
+            
             final_numbers = []
             i = 0
             
