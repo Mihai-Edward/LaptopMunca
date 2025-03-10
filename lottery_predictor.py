@@ -721,11 +721,26 @@ class LotteryPredictor:
         """Process and combine predictions to get exactly 20 numbers"""
         print("\nPost-processing predictions...")
         try:
-            if not predictions or len(predictions) != 2 or None in predictions:
+            # Better validation of predictions input
+            if (predictions is None or 
+                not isinstance(predictions, (list, tuple)) or 
+                len(predictions) != 2 or 
+                any(p is None for p in predictions)):
                 print("ERROR: Invalid predictions input")
                 return None, None, None
                 
             prob_pred, pattern_pred = predictions
+            
+            # Convert to numpy arrays if needed
+            if isinstance(prob_pred, list):
+                prob_pred = np.array(prob_pred)
+            if isinstance(pattern_pred, list):
+                pattern_pred = np.array(pattern_pred)
+            
+            # Validate array shapes
+            if prob_pred.shape != (self.num_classes,) or pattern_pred.shape != (self.num_classes,):
+                print(f"ERROR: Invalid prediction shapes - prob: {prob_pred.shape}, pattern: {pattern_pred.shape}")
+                return None, None, None
             
             # Normalize and combine predictions
             prob_pred = prob_pred / np.sum(prob_pred)
@@ -745,6 +760,11 @@ class LotteryPredictor:
                 if number not in final_numbers and 1 <= number <= 80:
                     final_numbers.append(number)
                     used_indices.add(idx)
+            
+            # Validate we have enough numbers
+            if len(final_numbers) != self.numbers_to_draw:
+                print(f"ERROR: Could not generate {self.numbers_to_draw} unique valid numbers")
+                return None, None, None
             
             # Sort final numbers
             final_numbers.sort()

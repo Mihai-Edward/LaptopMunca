@@ -187,8 +187,8 @@ def train_and_predict():
             
             # Display probabilities in a readable format
             print("\nProbabilities for each predicted number:")
-            for num, prob in zip(sorted(predictions), 
-                               [probabilities[num - 1] for num in predictions]):
+            selected_probs = [probabilities[num-1] for num in sorted(predictions)]
+            for num, prob in zip(sorted(predictions), selected_probs):
                 print(f"Number {num}: {prob:.4f}")
 
             # Save predictions in standardized format (remove duplicate saving)
