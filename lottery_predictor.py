@@ -1375,6 +1375,22 @@ class LotteryPredictor:
             print(f"Error preparing feature columns: {e}")
             return data
 
+    def reset_for_training(self):
+        """Reset the model state for new training"""
+        self.model = None
+        self.scaler = None
+        self.feature_selector = None
+        self.learning_history = []
+        
+    def train_model(self, historical_data):
+        """Train the prediction model"""
+        try:
+            self.reset_for_training()
+            # ...rest of training code...
+        except Exception as e:
+            print(f"Error in model training: {str(e)}")
+            raise
+
 if __name__ == "__main__":
     predictor = LotteryPredictor()
     

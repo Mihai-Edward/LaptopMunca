@@ -848,11 +848,27 @@ def save_predictions_to_csv(predicted_numbers, probabilities, timestamp, csv_fil
     if csv_file is None:
         csv_file = PATHS['PREDICTIONS']
     try:
+        # Convert numpy array to list if needed
+        if hasattr(probabilities, 'tolist'):
+            probabilities = probabilities.tolist()
+
+        # Handle probability mapping based on length
+        if len(probabilities) == 80:
+            # Full distribution - extract relevant probabilities 
+            prob_values = [probabilities[num - 1] for num in predicted_numbers]
+        elif len(probabilities) == len(predicted_numbers):
+            # Direct probability mapping
+            prob_values = probabilities
+        else:
+            # Fallback to uniform distribution
+            prob_values = [1.0/len(predicted_numbers)] * len(predicted_numbers)
+
         data = {
             'Timestamp': [timestamp],
             'Predicted_Numbers': [','.join(map(str, predicted_numbers))],
-            'Probabilities': [','.join(map(str, [probabilities[num - 1] for num in predicted_numbers]))]
+            'Probabilities': [','.join(map(str, prob_values))]
         }
+        
         df = pd.DataFrame(data)
         
         # Create directory if it doesn't exist
@@ -863,6 +879,7 @@ def save_predictions_to_csv(predicted_numbers, probabilities, timestamp, csv_fil
         else:
             df.to_csv(csv_file, index=False)
         return True
+        
     except Exception as e:
         print(f"Error saving predictions to CSV: {e}")
         return False
