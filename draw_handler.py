@@ -319,51 +319,59 @@ class DrawHandler:
 
                 # Get predictions
                 print("\nDEBUG: Getting predictions...")
-                predicted_numbers = self.predictor.predict(data)
-                print(f"DEBUG: Raw predictions type: {type(predicted_numbers)}")
-                print(f"DEBUG: Raw predictions: {predicted_numbers}")
+                prediction_result = self.predictor.predict(data)
+                print(f"DEBUG: Raw predictions type: {type(prediction_result)}")
+                print(f"DEBUG: Raw predictions: {prediction_result}")
                 
-                # Convert predictions to list and ensure we have exactly 20 numbers
-                if isinstance(predicted_numbers, tuple):
-                    predicted_numbers = list(predicted_numbers)
-                elif isinstance(predicted_numbers, np.ndarray):
+                # Handle tuple return type
+                if isinstance(prediction_result, tuple) and len(prediction_result) >= 2:
+                    predicted_numbers = prediction_result[0]  # First element is the numbers
+                    probabilities = prediction_result[1]      # Second element is probabilities
+                    if len(prediction_result) > 2 and prediction_result[2]:
+                        analysis_results.update(prediction_result[2])  # Merge with existing analysis
+                else:
+                    predicted_numbers = prediction_result
+                    probabilities = [1.0/20] * 20
+
+                # Convert to list if needed
+                if isinstance(predicted_numbers, np.ndarray):
                     predicted_numbers = predicted_numbers.tolist()
                 
-                # Ensure we have unique numbers
+                # Ensure we have 20 unique valid numbers
+                valid_numbers = []
                 seen = set()
-                unique_numbers = []
+                
+                # Process existing numbers first
                 for num in predicted_numbers:
-                    if num not in seen and len(unique_numbers) < 20:
-                        seen.add(num)
-                        unique_numbers.append(num)
+                    if isinstance(num, (int, float)):
+                        num = int(num)
+                        if 1 <= num <= 80 and num not in seen and len(valid_numbers) < 20:
+                            seen.add(num)
+                            valid_numbers.append(num)
                 
-                # Pad with sequential numbers if needed
-                while len(unique_numbers) < 20:
-                    for i in range(1, 81):
-                        if i not in seen and len(unique_numbers) < 20:
-                            unique_numbers.append(i)
-                            seen.add(i)
+                # Fill remaining spots if needed
+                while len(valid_numbers) < 20:
+                    for num in range(1, 81):
+                        if num not in seen and len(valid_numbers) < 20:
+                            valid_numbers.append(num)
+                            seen.add(num)
+
+                # Update probabilities if needed
+                if isinstance(probabilities, np.ndarray):
+                    if len(probabilities) == 80:  # Full probability distribution
+                        probabilities = [probabilities[num - 1] for num in valid_numbers]
+                    else:
+                        probabilities = probabilities[:20].tolist()
                 
-                predicted_numbers = unique_numbers[:20]
-                print(f"\nDEBUG: Final prediction numbers: {predicted_numbers}")
+                # Ensure probabilities match the number of predictions
+                if len(probabilities) != len(valid_numbers):
+                    probabilities = [1.0/20] * len(valid_numbers)
                 
-                # Generate probabilities
-                probabilities = [1.0/20] * 20
-                if hasattr(self.predictor, 'predict_proba'):
-                    try:
-                        raw_probabilities = self.predictor.predict_proba(data)
-                        if isinstance(raw_probabilities, np.ndarray):
-                            if raw_probabilities.shape[0] == 80:
-                                probabilities = [raw_probabilities[num - 1] for num in predicted_numbers]
-                            else:
-                                probabilities = raw_probabilities[:20].tolist()
-                    except Exception as e:
-                        print(f"WARNING: Using default probabilities due to error: {e}")
-                
+                print(f"\nDEBUG: Final prediction numbers: {valid_numbers}")
                 print(f"DEBUG: Final probabilities length: {len(probabilities)}")
                 print(f"DEBUG: Sample probabilities: {probabilities[:5]}")
                 
-                return predicted_numbers, probabilities, analysis_results
+                return valid_numbers, probabilities, analysis_results
                 
             else:
                 print("ERROR: No historical data available")
