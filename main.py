@@ -14,6 +14,7 @@ import joblib
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.paths import PATHS, ensure_directories
 
+# 1. System Initialization
 def initialize_system():
     """Initialize system and ensure all directories exist"""
     ensure_directories()
@@ -22,27 +23,21 @@ def initialize_system():
         'system_ready': True
     }
 
-def check_and_train_model():
-    """Check if a trained model exists and train if needed using DrawHandler"""
-    try:
-        handler = DrawHandler()
-        if handler.train_ml_models():
-            print("✓ Model training completed successfully")
-            return True
-        else:
-            print("✗ Model training failed")
-            return False
-            
-    except Exception as e:
-        print(f"Error checking/training model: {e}")
-        return False
+def get_next_draw_time(current_time):
+    """Calculate the next draw time based on current time"""
+    minutes = (current_time.minute // 5 + 1) * 5
+    next_draw_time = current_time.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=minutes)
+    return next_draw_time
 
+# 2. Data Loading and Processing
 def load_data(file_path=None):
+    """Load and preprocess historical data"""
     if file_path is None:
         file_path = PATHS['HISTORICAL_DATA']
         
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Data file {file_path} not found")
+    
     df = pd.read_csv(file_path)
     try:
         df['date'] = pd.to_datetime(df['date'], format='%H:%M %d-%m-%Y', errors='coerce')
@@ -63,17 +58,42 @@ def load_data(file_path=None):
     return df
 
 def extract_date_features(df):
+    """Extract temporal features from date column"""
     df['day_of_week'] = df['date'].dt.dayofweek
     df['hour'] = df['date'].dt.hour
     df['minute'] = df['date'].dt.minute
     return df
-
-def get_next_draw_time(current_time):
-    minutes = (current_time.minute // 5 + 1) * 5
-    next_draw_time = current_time.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=minutes)
-    return next_draw_time
+# 3. Data Collection
+def run_data_collector_standalone():
+    """Run the data collector in standalone mode"""
+    print("\n--- Running Data Collector ---")
+    
+    collector = KinoDataCollector(debug=True)
+    
+    # First try to sort existing data
+    print("\nSorting historical draws...")
+    collector.sort_historical_draws()
+    
+    # Then fetch new draws
+    draws = collector.fetch_latest_draws(num_draws=24)  # Default value from original
+    if draws:
+        print("\nCollected draws:")
+        for draw_date, numbers in draws:
+            print(f"Date: {draw_date}, Numbers: {', '.join(map(str, numbers))}")
+        
+        # Sort again after collecting new draws
+        print("\nSorting updated historical draws...")
+        if collector.sort_historical_draws():
+            print("Historical draws successfully sorted from newest to oldest")
+        else:
+            print("Error occurred while sorting draws")
+            
+    print("\nCollection Status:", collector.collection_status)
+    
+    return draws
 
 def save_top_4_numbers_to_excel(top_4_numbers, file_path=None):
+    """Save top 4 numbers to Excel file"""
     if file_path is None:
         file_path = os.path.join(os.path.dirname(PATHS['PREDICTIONS']), 'top_4.xlsx')
     
@@ -98,82 +118,13 @@ def evaluate_numbers(historical_data):
     # Sort numbers by evaluation score in descending order
     sorted_numbers = sorted(number_evaluation, key=number_evaluation.get, reverse=True)
     return sorted_numbers[:4]  # Return top 4 numbers
-
-def train_and_predict():
-    """Generate predictions using DrawHandler's pipeline"""
-    try:
-        handler = DrawHandler()
-        print("\nStarting prediction process...")
-        
-        # Load historical data
-        historical_data = pd.read_csv(PATHS['HISTORICAL_DATA'])
-        if historical_data is None or historical_data.empty:
-            print("No historical data available")
-            return None, None, None
-            
-        # Format data correctly for DataAnalysis
-        formatted_draws = []
-        for _, row in historical_data.iterrows():
-            try:
-                # Extract date and numbers
-                date = row['date']
-                numbers = sorted([int(row[f'number{i}']) for i in range(1, 21)])
-                
-                # Validate numbers
-                if len(numbers) == 20 and all(1 <= n <= 80 for n in numbers):
-                    formatted_draws.append((date, numbers))
-            except Exception as e:
-                print(f"Error processing row: {e}")
-                continue
-        
-        if not formatted_draws:
-            print("No valid draws to process")
-            return None, None, None
-            
-        print(f"Processed {len(formatted_draws)} valid draws")
-        
-        # Now call handle_prediction_pipeline with properly formatted data
-        try:
-            result = handler.handle_prediction_pipeline()
-            
-            if isinstance(result, tuple) and len(result) == 3:
-                predictions, probabilities, analysis_data = result
-                
-                if predictions is not None:
-                    print("\n✓ Prediction generated successfully!")
-                    next_draw_time = get_next_draw_time(datetime.now())
-                    
-                    print(f"\nPredicted numbers for next draw at {next_draw_time.strftime('%Y-%m-%d %H:%M:%S')}:")
-                    print(f"Numbers: {', '.join(map(str, sorted(predictions)))}")
-                    
-                    if probabilities is not None:
-                        print("\nProbabilities for each predicted number:")
-                        for num, prob in zip(sorted(predictions), probabilities):
-                            print(f"Number {num}: {prob:.4f}")
-
-                    if analysis_data and isinstance(analysis_data, dict) and 'hot_numbers' in analysis_data:
-                        print(f"\nHot numbers analysis: {[num for num, _ in analysis_data['hot_numbers'][:5]]}")
-                    
-                    return predictions, probabilities, analysis_data
-                
-        except Exception as e:
-            print(f"Error during prediction generation: {str(e)}")
-            traceback.print_exc()
-        
-        print("\nFailed to generate predictions")
-        return None, None, None
-            
-    except Exception as e:
-        print(f"\nError in prediction process: {str(e)}")
-        traceback.print_exc()
-        return None, None, None
+# 4. Data Analysis
 def perform_complete_analysis(draws=None):
     """Perform comprehensive analysis using DataAnalysis class"""
     try:
-        # If no draws provided, use DrawHandler to get data
+        # If no draws provided, load from historical_draws.csv
         if not draws:
-            handler = DrawHandler()
-            historical_data = handler.load_historical_data()
+            historical_data = load_data(PATHS['HISTORICAL_DATA'])
             if historical_data is None:
                 print("\nNo historical data available for analysis")
                 return False
@@ -231,7 +182,94 @@ def perform_complete_analysis(draws=None):
         print(f"\nError in complete analysis: {str(e)}")
         traceback.print_exc()
         return False
+def check_and_train_model():
+    """Check if a trained model exists and train if needed using DrawHandler"""
+    try:
+        handler = DrawHandler()
+        if handler.train_ml_models():
+            print("✓ Model training completed successfully")
+            return True
+        else:
+            print("✗ Model training failed")
+            return False
+            
+    except Exception as e:
+        print(f"Error checking/training model: {e}")
+        return False
 
+def train_and_predict():
+    """Generate predictions using DrawHandler's pipeline"""
+    try:
+        handler = DrawHandler()
+        print("\nStarting prediction process...")
+        
+        # Load historical data
+        historical_data = pd.read_csv(PATHS['HISTORICAL_DATA'])
+        if historical_data is None or historical_data.empty:
+            print("No historical data available")
+            return None, None, None
+            
+        # Format data correctly for DataAnalysis
+        formatted_draws = []
+        for _, row in historical_data.iterrows():
+            try:
+                # Extract date and numbers
+                date = row['date']
+                numbers = sorted([int(row[f'number{i}']) for i in range(1, 21)])
+                
+                # Validate numbers
+                if len(numbers) == 20 and all(1 <= n <= 80 for n in numbers):
+                    formatted_draws.append((date, numbers))
+            except Exception as e:
+                print(f"Error processing row: {e}")
+                continue
+        
+        if not formatted_draws:
+            print("No valid draws to process")
+            return None, None, None
+            
+        print(f"Processed {len(formatted_draws)} valid draws")
+        
+        # Now perform analysis before prediction
+        if not perform_complete_analysis(formatted_draws):
+            print("Warning: Analysis failed, but continuing with prediction...")
+        
+        # Call handle_prediction_pipeline with properly formatted data
+        try:
+            result = handler.handle_prediction_pipeline()
+            
+            if isinstance(result, tuple) and len(result) == 3:
+                predictions, probabilities, analysis_data = result
+                
+                if predictions is not None:
+                    print("\n✓ Prediction generated successfully!")
+                    next_draw_time = get_next_draw_time(datetime.now())
+                    
+                    print(f"\nPredicted numbers for next draw at {next_draw_time.strftime('%Y-%m-%d %H:%M:%S')}:")
+                    print(f"Numbers: {', '.join(map(str, sorted(predictions)))}")
+                    
+                    if probabilities is not None:
+                        print("\nProbabilities for each predicted number:")
+                        for num, prob in zip(sorted(predictions), probabilities):
+                            print(f"Number {num}: {prob:.4f}")
+
+                    if analysis_data and isinstance(analysis_data, dict) and 'hot_numbers' in analysis_data:
+                        print(f"\nHot numbers analysis: {[num for num, _ in analysis_data['hot_numbers'][:5]]}")
+                    
+                    return predictions, probabilities, analysis_data
+                
+        except Exception as e:
+            print(f"Error during prediction generation: {str(e)}")
+            traceback.print_exc()
+        
+        print("\nFailed to generate predictions")
+        return None, None, None
+            
+    except Exception as e:
+        print(f"\nError in prediction process: {str(e)}")
+        traceback.print_exc()
+        return None, None, None
+    # 6. Pipeline Testing and Integration
 def test_pipeline_integration():
     """Test the integrated prediction pipeline with enhanced monitoring"""
     try:
@@ -335,34 +373,8 @@ def test_pipeline_integration():
         print(f"\nError in pipeline integration test: {str(e)}")
         traceback.print_exc()
         return pipeline_status
-def run_data_collector_standalone():
-    """Run the data collector in standalone mode"""
-    print("\n--- Running Data Collector ---")
-    
-    collector = KinoDataCollector(debug=True)
-    
-    # First try to sort existing data
-    print("\nSorting historical draws...")
-    collector.sort_historical_draws()
-    
-    # Then fetch new draws
-    draws = collector.fetch_latest_draws(num_draws=24)  # Default value from original
-    if draws:
-        print("\nCollected draws:")
-        for draw_date, numbers in draws:
-            print(f"Date: {draw_date}, Numbers: {', '.join(map(str, numbers))}")
-        
-        # Sort again after collecting new draws
-        print("\nSorting updated historical draws...")
-        if collector.sort_historical_draws():
-            print("Historical draws successfully sorted from newest to oldest")
-        else:
-            print("Error occurred while sorting draws")
-            
-    print("\nCollection Status:", collector.collection_status)
-    
-    return draws
 
+# 7. Main Program Entry Point
 def main():
     try:
         # Initialize system
@@ -381,10 +393,15 @@ def main():
             print("\n==========================")
             print("    KINO Draw Analyzer    ")
             print("==========================")
+            print("DATA COLLECTION:")
             print("3. Update Historical Data")
+            print("\nANALYSIS:")
             print("8. Complete Analysis & Save")
+            print("\nPREDICTION:")
             print("9. Get ML prediction")
+            print("\nEVALUATION:")
             print("10. Evaluate prediction accuracy")
+            print("\nSYSTEM:")
             print("11. Run pipeline test")
             print("12. Run continuous learning cycle")
             print("13. Exit")
@@ -410,30 +427,34 @@ def main():
                 
                 elif choice == '8':
                     print("\nPerforming complete analysis...")
-                    success = perform_complete_analysis(draws)
+                    success = perform_complete_analysis()
                     if success:
                         print("\n✓ Complete analysis performed and saved successfully")
                     else:
                         print("\n✗ Failed to perform complete analysis")
                 
                 elif choice == '9':
+                    print("\nChecking analysis status...")
+                    analysis_file = PATHS['ANALYSIS']
+                    if not os.path.exists(analysis_file):
+                        print("\n⚠️ Warning: No analysis data found!")
+                        print("It's recommended to run 'Complete Analysis & Save' (option 8) first.")
+                        proceed = input("Do you want to proceed anyway? (y/n): ")
+                        if proceed.lower() != 'y':
+                            continue
+                    
                     print("\nGenerating ML prediction for next draw...")
                     try:
-                        # First train the models
                         predictor = LotteryPredictor()
                         if predictor.train_models():
                             print("\n✓ Models trained successfully")
                             
-                            # Then generate prediction
                             result = train_and_predict()
                             if isinstance(result, tuple) and len(result) == 3:
                                 predictions, probabilities, analysis = result
                                 if predictions is not None:
                                     print("\n✓ Prediction process completed successfully!")
                                     print(f"Predicted numbers: {', '.join(map(str, sorted(predictions)))}")
-                                    
-                                    # Save prediction if needed
-                                    # You might want to add prediction saving logic here
                                 else:
                                     print("\n✗ Failed to generate predictions")
                             else:
@@ -457,11 +478,6 @@ def main():
                     confirm = input("Continue? (y/n): ")
                     if confirm.lower() == 'y':
                         status = test_pipeline_integration()
-                        print("\nPipeline Test Results:")
-                        for step, success in {k: v for k, v in status.items() 
-                                           if k not in ['timestamps', 'metrics']}.items():
-                            print(f"{step}: {'✓' if success else '✗'}")
-                        
                         if all(v for k, v in status.items() if k not in ['timestamps', 'metrics']):
                             print("\n✓ Complete pipeline test successful!")
                         else:
