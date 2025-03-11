@@ -64,6 +64,12 @@ class DrawHandler:
             self.pipeline_status['stage'] = 'data_preparation'
             processed_data = self._prepare_pipeline_data(historical_data)
             
+            # 1.5. Analysis Stage (Perform analysis after data preparation)
+            self.pipeline_status['stage'] = 'data_analysis'
+            analyzer = DataAnalysis(historical_data)
+            analysis_results = analyzer.get_analysis_results()
+            self.predictor.pipeline_data['analysis_context'] = analysis_results
+            
             # 2. Prediction Stage
             self.pipeline_status['stage'] = 'prediction'
             model_path = self._get_latest_model()
@@ -411,7 +417,7 @@ class DrawHandler:
                     print("WARNING: Adjusting probability array length")
                     if len(probabilities) == 80:
                         # Extract relevant probabilities
-                        prob_map = {num: probabilities[num-1] for num in predicted_numbers if 1 <= num <= 80}
+                        prob_map = {num: probabilities[num-1] for num in predicted_numbers}
                         probabilities = [prob_map.get(num, 1.0/len(predicted_numbers)) for num in predicted_numbers]
                     else:
                         # Create uniform distribution
@@ -841,49 +847,8 @@ def save_draw_to_csv(draw_date, draw_numbers, csv_file=None):
         return True
     except Exception as e:
         print(f"Error saving draw to CSV: {e}")
-        return False
-
-def save_predictions_to_csv(predicted_numbers, probabilities, timestamp, csv_file=None):
-    """Save predictions to CSV"""
-    if csv_file is None:
-        csv_file = PATHS['PREDICTIONS']
-    try:
-        # Convert numpy array to list if needed
-        if hasattr(probabilities, 'tolist'):
-            probabilities = probabilities.tolist()
-
-        # Handle probability mapping based on length
-        if len(probabilities) == 80:
-            # Full distribution - extract relevant probabilities 
-            prob_values = [probabilities[num - 1] for num in predicted_numbers]
-        elif len(probabilities) == len(predicted_numbers):
-            # Direct probability mapping
-            prob_values = probabilities
-        else:
-            # Fallback to uniform distribution
-            prob_values = [1.0/len(predicted_numbers)] * len(predicted_numbers)
-
-        data = {
-            'Timestamp': [timestamp],
-            'Predicted_Numbers': [','.join(map(str, predicted_numbers))],
-            'Probabilities': [','.join(map(str, prob_values))]
-        }
-        
-        df = pd.DataFrame(data)
-        
-        # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(csv_file), exist_ok=True)
-        
-        if os.path.exists(csv_file):
-            df.to_csv(csv_file, mode='a', header=False, index=False)
-        else:
-            df.to_csv(csv_file, index=False)
-        return True
-        
-    except Exception as e:
-        print(f"Error saving predictions to CSV: {e}")
-        return False
-
+        return False       
+    
 def save_predictions_to_excel(predictions, probabilities, timestamp, excel_file=None):
     """Save predictions to Excel"""
     if excel_file is None:

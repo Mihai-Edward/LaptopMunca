@@ -1,6 +1,8 @@
 import traceback
 import numpy as np
 import pandas as pd
+from scipy import stats
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier
@@ -8,6 +10,8 @@ from sklearn.cluster import KMeans
 import joblib
 from collections import OrderedDict, Counter
 from collections import defaultdict
+
+from xgboost import XGBClassifier
 from data_analysis import DataAnalysis
 from datetime import datetime
 import os
@@ -392,47 +396,42 @@ class LotteryPredictor:
             return None, None
 
     def _create_feature_vector(self, window):
-        """Create feature vector from window of historical draws with enhanced validation"""
+        """Create standardized 80-dimension feature vector"""
         try:
-            if len(window) != 5:
-                return None
+            # Check if window is a DataFrame
+            if isinstance(window, pd.DataFrame):
+                # Get number columns
+                number_cols = [col for col in window.columns if col.startswith('number')]
+                if not number_cols:
+                    raise ValueError("No number columns found in DataFrame")
                 
-            number_cols = [f'number{i+1}' for i in range(20)]
-            feature_vector = []
-            
-            # Extract all numbers from the window
-            all_numbers = []
-            for _, draw in window.iterrows():
-                numbers = draw[number_cols].values.astype(int)
-                if len(numbers) != self.numbers_to_draw or not all((1 <= n <= 80) for n in numbers):
-                    return None
-                all_numbers.extend(numbers)
+                # Create frequency vector
+                frequency_vector = np.zeros(80)
                 
-            all_numbers = np.array(all_numbers)
-            
-            # Calculate frequency features (80 features)
-            freq_vector = np.zeros(80)
-            for num in all_numbers:
-                if 1 <= num <= 80:
-                    freq_vector[num-1] += 0.2  # Normalize by window size
+                # Process each row
+                for _, row in window.iterrows():
+                    numbers = row[number_cols].values.astype(float)
+                    valid_numbers = numbers[(numbers >= 1) & (numbers <= 80)]
+                    for num in valid_numbers:
+                        frequency_vector[int(num)-1] += 1
+                        
+                # Normalize if we have any valid numbers
+                total_numbers = np.sum(frequency_vector)
+                if total_numbers > 0:
+                    frequency_vector = frequency_vector / total_numbers
+                else:
+                    raise ValueError("No valid numbers found in window")
                     
-            feature_vector.extend(freq_vector)
-            
-            # Add statistical features
-            if len(all_numbers) > 0:
-                feature_vector.append(np.mean(all_numbers))
-                feature_vector.append(np.std(all_numbers))
-            else:
-                return None
+                return frequency_vector
                 
-            # Add draw size features
-            feature_vector.append(len(window))
-            feature_vector.append(self.numbers_to_draw)
-            
-            return np.array(feature_vector)
-            
+            else:
+                raise ValueError("Input must be a pandas DataFrame")
+                
         except Exception as e:
             print(f"Error creating feature vector: {e}")
+            print(f"Window type: {type(window)}")
+            if isinstance(window, pd.DataFrame):
+                print(f"Columns: {window.columns.tolist()}")
             return None
 
     def _create_analysis_features(self, data):
@@ -638,73 +637,33 @@ class LotteryPredictor:
             return self._create_feature_vector(data)  # Fallback to base features
     
     def _generate_model_predictions(self, features):
-        """Generate predictions from both models with enhanced validation"""
+        """Generate predictions for all 80 possible numbers"""
         print("\nGenerating model predictions...")
         try:
-            # Validate input features
+            # Validate features
             if features is None:
                 raise ValueError("No features provided for prediction")
-                
-            # Ensure correct feature dimension
+            
+            # Ensure features are 2D
             if len(features.shape) == 1:
                 features = features.reshape(1, -1)
-            
-            # CRITICAL FIX: Handle feature dimension mismatch
-            use_combined = self.pipeline_data.get('use_combined_features', False)
-            expected_dim = self.probabilistic_model.n_features_in_ if hasattr(self.probabilistic_model, 'n_features_in_') else 84
-            
-            if features.shape[1] != expected_dim:
-                print(f"Feature dimension mismatch: got {features.shape[1]}, expected {expected_dim}")
-                
-                if use_combined and features.shape[1] == 104 and expected_dim == 84:
-                    # If we're trying to use combined features but model expects base features:
-                    print("Adapting combined features to base features for compatibility")
-                    features = features[:, :84]  # Take only the first 84 features
-                elif not use_combined and features.shape[1] == 84 and expected_dim == 104:
-                    # If model expects combined features but we're using base features
-                    print("Padding base features for compatibility with combined feature model")
-                    padding = np.zeros((features.shape[0], 20))  # Add 20 zeros
-                    features = np.hstack([features, padding])
-                else:
-                    raise ValueError(f"Cannot adapt features from dimension {features.shape[1]} to {expected_dim}")
                 
             # Scale features
-            print("Scaling features...")
             scaled_features = self.scaler.transform(features)
             
-            # Get probabilistic model predictions with proper dimensionality
-            print("Getting probabilistic model predictions...")
-            try:
-                prob_pred = self.probabilistic_model.predict_proba(scaled_features)
-                if prob_pred.shape[1] != self.num_classes:
-                    print("Fixing probabilistic model output dimensionality...")
-                    full_prob = np.zeros((1, self.num_classes))
-                    full_prob[0, :prob_pred.shape[1]] = prob_pred[0]
-                    full_prob[0, prob_pred.shape[1]:] = np.min(prob_pred[0])  # Fill remaining with minimum probability
-                    prob_pred = full_prob
-            except Exception as e:
-                print(f"Warning: Probabilistic model prediction failed: {e}")
-                prob_pred = np.ones((1, self.num_classes)) / self.num_classes
+            # Generate predictions for all 80 numbers
+            prob_pred = np.zeros(80)  # Initialize array for all possible numbers
+            pattern_pred = np.zeros(80)  # Initialize array for all possible numbers
             
-            # Get pattern model predictions
-            print("Getting pattern model predictions...")
-            try:
-                pattern_pred = self.pattern_model.predict_proba(scaled_features)
-                if pattern_pred.shape[1] != self.num_classes:
-                    print("Fixing pattern model output dimensionality...")
-                    full_pattern = np.zeros((1, self.num_classes))
-                    full_pattern[0, :pattern_pred.shape[1]] = pattern_pred[0]
-                    full_pattern[0, pattern_pred.shape[1]:] = np.min(pattern_pred[0])
-                    pattern_pred = full_pattern
-            except Exception as e:
-                print(f"Warning: Pattern model prediction failed: {e}")
-                pattern_pred = np.ones((1, self.num_classes)) / self.num_classes
+            # Get model predictions
+            prob_raw = self.probabilistic_model.predict_proba(scaled_features)[0]
+            pattern_raw = self.pattern_model.predict_proba(scaled_features)[0]
             
-            # Ensure proper dimensionality and normalization
-            prob_pred = prob_pred[0]
-            pattern_pred = pattern_pred[0]
+            # Ensure we have probabilities for all 80 numbers
+            prob_pred[:len(prob_raw)] = prob_raw
+            pattern_pred[:len(pattern_raw)] = pattern_raw
             
-            # Normalize predictions
+            # Normalize probabilities
             prob_pred = prob_pred / np.sum(prob_pred)
             pattern_pred = pattern_pred / np.sum(pattern_pred)
             
@@ -712,54 +671,13 @@ class LotteryPredictor:
             if np.any(np.isnan(prob_pred)) or np.any(np.isnan(pattern_pred)):
                 raise ValueError("NaN values detected in predictions")
                 
-            if not np.all(prob_pred >= 0) or not np.all(pattern_pred >= 0):
-                raise ValueError("Negative probabilities detected")
-            
-            # Store predictions and metadata in pipeline data
-            self.pipeline_data.update({
-                'prob_pred': prob_pred,
-                'pattern_pred': pattern_pred,
-                'prediction_metadata': {
-                    'prob_pred_stats': {
-                        'min': float(np.min(prob_pred)),
-                        'max': float(np.max(prob_pred)),
-                        'mean': float(np.mean(prob_pred)),
-                        'std': float(np.std(prob_pred))
-                    },
-                    'pattern_pred_stats': {
-                        'min': float(np.min(pattern_pred)),
-                        'max': float(np.max(pattern_pred)),
-                        'mean': float(np.mean(pattern_pred)),
-                        'std': float(np.std(pattern_pred))
-                    },
-                    'model_confidence': {
-                        'prob_model': float(1 - np.std(prob_pred)),
-                        'pattern_model': float(1 - np.std(pattern_pred))
-                    }
-                }
-            })
-            
-            print("\nPrediction Statistics:")
-            print("Probabilistic Model:")
-            print(f"- Min: {np.min(prob_pred):.4f}")
-            print(f"- Max: {np.max(prob_pred):.4f}")
-            print(f"- Mean: {np.mean(prob_pred):.4f}")
-            print(f"- Confidence: {self.pipeline_data['prediction_metadata']['model_confidence']['prob_model']:.4f}")
-            print("\nPattern Model:")
-            print(f"- Min: {np.min(pattern_pred):.4f}")
-            print(f"- Max: {np.max(pattern_pred):.4f}")
-            print(f"- Mean: {np.mean(pattern_pred):.4f}")
-            print(f"- Confidence: {self.pipeline_data['prediction_metadata']['model_confidence']['pattern_model']:.4f}")
+            print(f"\nProbabilistic Model - Number of predictions: {len(prob_pred)}")
+            print(f"Pattern Model - Number of predictions: {len(pattern_pred)}")
             
             return prob_pred, pattern_pred
             
         except Exception as e:
             print(f"Error in model prediction: {e}")
-            self.pipeline_data['error'] = {
-                'stage': 'model_prediction',
-                'message': str(e),
-                'timestamp': datetime.now()
-            }
             return None, None
 
     def _post_process_predictions(self, predictions):
@@ -1016,15 +934,12 @@ class LotteryPredictor:
             # Generate prediction with analysis context
             predicted_numbers, probabilities, analysis_context = self.predict(recent_draws)
             
-            # Get next draw time and save prediction
+            # Get next draw time
             next_draw_time = datetime.now().replace(
                 minute=(datetime.now().minute // 5 + 1) * 5,
                 second=0, 
                 microsecond=0
             )
-            
-            if predicted_numbers is not None:
-                self.save_prediction_to_csv(predicted_numbers, probabilities)
             
             return predicted_numbers, probabilities, analysis_context
             
@@ -1032,216 +947,49 @@ class LotteryPredictor:
             print(f"Error in train_and_predict: {e}")
             return None, None, None
 
-    def train_models(self, features, labels):
-        """Train both models with validation for multi-label prediction"""
+    def train_models(self, data):
+        """Train models with proper data preprocessing"""
         try:
-            print("\nStarting model training...")
-            if features is None or labels is None:
-                raise ValueError("Features or labels are None")
+            if not isinstance(data, pd.DataFrame):
+                raise ValueError("Input data must be a pandas DataFrame")
                 
-            if len(features) == 0 or len(labels) == 0:
-                raise ValueError("Empty features or labels")
+            print("\nProcessing training data...")
             
-            # Ensure features have correct dimension (84)
-            if features.shape[1] != 84:
-                raise ValueError(f"Expected 84 features, got {features.shape[1]}")
+            # Create features and labels
+            features = []
+            labels = []
+            
+            window_size = 10  # Adjust as needed
+            for i in range(len(data) - window_size):
+                window = data.iloc[i:i + window_size]
+                target_row = data.iloc[i + window_size]
                 
-            # Initialize arrays with correct shapes
-            prob_labels = np.full(len(labels), -1, dtype=int)  # Initialize with -1
-            pattern_labels = np.zeros((len(labels), 80))
-            used_classes = set()  # Track actually used classes
-            valid_samples = 0
+                # Get feature vector
+                feature_vector = self._create_feature_vector(window)
+                if feature_vector is not None:
+                    features.append(feature_vector)
+                    
+                    # Get target numbers from the next draw
+                    target_cols = [col for col in data.columns if col.startswith('number')]
+                    target_numbers = target_row[target_cols].values.astype(float)
+                    valid_targets = target_numbers[(target_numbers >= 1) & (target_numbers <= 80)]
+                    labels.extend(valid_targets)
             
-            # Process real samples
-            print("\nProcessing real samples...")
-            for i, row in enumerate(labels):
-                try:
-                    numbers = np.sort(row) if isinstance(row, (list, np.ndarray)) else np.sort(row.values)
-                    numbers = numbers.astype(int)
-                    
-                    if len(numbers) != self.numbers_to_draw:
-                        print(f"Warning: Row {i} has incorrect number of values")
-                        continue
-                        
-                    if not all(1 <= n <= 80 for n in numbers):
-                        print(f"Warning: Row {i} contains invalid numbers")
-                        continue
-                    
-                    # Update prob_labels with first number (0-based index)
-                    first_num = numbers[0] - 1
-                    prob_labels[i] = first_num
-                    used_classes.add(first_num)  # Track this class
-                    
-                    # Update pattern_labels
-                    for num in numbers:
-                        pattern_labels[i, num-1] = 1
-                    
-                    valid_samples += 1
-                    
-                except Exception as e:
-                    print(f"Warning: Error processing row {i}: {e}")
-                    continue
-    
-            # Remove invalid rows (where prob_labels is still -1)
-            valid_mask = prob_labels != -1
-            features = features[valid_mask]
-            prob_labels = prob_labels[valid_mask]
-            pattern_labels = pattern_labels[valid_mask]
-    
-            print(f"\nProcessed {valid_samples} valid samples out of {len(labels)} total samples")
-            print(f"Number of unique classes before synthetic: {len(used_classes)}")
-            
-            # Find missing classes
-            missing_classes = np.array([i for i in range(80) if i not in used_classes])
-            
-            print(f"\nMissing classes detection:")
-            print(f"- Total classes: 80")
-            print(f"- Classes present: {len(used_classes)}")
-            print(f"- Missing classes: {len(missing_classes)}")
-            print(f"- Missing class indices: {missing_classes}")
-    
-            # Add synthetic samples for both missing and underrepresented classes
-            underrep_classes = [i for i in range(80) if i in used_classes and np.sum(prob_labels == i) < 5]
-            all_classes_to_supplement = np.unique(np.concatenate([missing_classes, underrep_classes]))
-            
-            if len(all_classes_to_supplement) > 0:
-                print(f"\nAdding synthetic samples for {len(all_classes_to_supplement)} classes (missing + underrepresented)")
+            if not features:
+                raise ValueError("No valid features generated")
                 
-                # Create multiple synthetic samples per class
-                samples_per_class = 5
-                total_synthetic = len(all_classes_to_supplement) * samples_per_class
-                
-                # Initialize synthetic data arrays
-                synthetic_features = np.zeros((total_synthetic, features.shape[1]))
-                synthetic_prob_labels = np.zeros(total_synthetic, dtype=int)
-                synthetic_pattern_labels = np.zeros((total_synthetic, 80))
-                
-                # Calculate feature statistics once
-                feature_means = np.mean(features, axis=0)
-                feature_stds = np.std(features, axis=0)
-                feature_stds[feature_stds < 0.1] = 0.1  # Set minimum std
-                
-                print("\nGenerating synthetic samples...")
-                for idx, class_idx in enumerate(all_classes_to_supplement):
-                    start_idx = idx * samples_per_class
-                    end_idx = start_idx + samples_per_class
-                    
-                    # Generate synthetic features
-                    synthetic_features[start_idx:end_idx] = np.random.normal(
-                        feature_means,
-                        feature_stds,
-                        (samples_per_class, features.shape[1])
-                    )
-                    
-                    # Set probabilistic labels
-                    synthetic_prob_labels[start_idx:end_idx] = class_idx
-                    
-                    # Create pattern labels
-                    for i in range(start_idx, end_idx):
-                        synthetic_pattern_labels[i, class_idx] = 1
-                        remaining_positions = list(set(range(80)) - {class_idx})
-                        additional_positions = np.random.choice(
-                            remaining_positions,
-                            self.numbers_to_draw - 1,
-                            replace=False
-                        )
-                        synthetic_pattern_labels[i, additional_positions] = 1
-                    
-                    if (idx + 1) % 10 == 0 or (idx + 1) == len(all_classes_to_supplement):
-                        print(f"Generated samples for {idx + 1}/{len(all_classes_to_supplement)} classes")
-                
-                # Append synthetic data
-                features = np.vstack([features, synthetic_features])
-                prob_labels = np.append(prob_labels, synthetic_prob_labels)
-                pattern_labels = np.vstack([pattern_labels, synthetic_pattern_labels])
-                
-                print(f"\nAfter synthetic data generation:")
-                print(f"- Total samples: {len(features)}")
-                print(f"- Feature shape: {features.shape}")
-                print(f"- Unique classes: {len(np.unique(prob_labels))}")
-                print(f"- Class distribution: {np.bincount(prob_labels)}")
-    
-            # Split data with stratification
-            print("\nSplitting data for training...")
-            X_train, X_test, y_prob_train, y_prob_test = train_test_split(
-                features, prob_labels,
-                test_size=0.2,
-                random_state=42,
-                shuffle=True,
-                stratify=prob_labels
-            )
+            # Convert to numpy arrays
+            X = np.array(features)
+            y = np.array(labels)
             
-            # Split pattern labels using same indices
-            _, _, y_pattern_train, y_pattern_test = train_test_split(
-                features, pattern_labels,
-                test_size=0.2,
-                random_state=42,
-                shuffle=True
-            )
-    
-            # Scale features
-            print("Scaling features...")
-            X_train_scaled = self.scaler.fit_transform(X_train)
-            X_test_scaled = self.scaler.transform(X_test)
+            print(f"\nTraining data prepared:")
+            print(f"- Features: {X.shape[1]}")
+            print(f"- Classes represented: {len(np.unique(y))}")
             
-            # Initialize and train probabilistic model
-            print("\nTraining probabilistic model...")
-            self.probabilistic_model = GaussianNB()
-            
-            # Train models
-            self.probabilistic_model.fit(X_train_scaled, y_prob_train)
-            prob_score = self.probabilistic_model.score(X_test_scaled, y_prob_test)
-            
-            # Train pattern model
-            print("\nTraining pattern model...")
-            self.pattern_model.fit(X_train_scaled, y_pattern_train)
-            pattern_predictions = self.pattern_model.predict(X_test_scaled)
-            pattern_score = np.mean([
-                np.sum(np.sort(pred)[-self.numbers_to_draw:] == 1) / self.numbers_to_draw
-                for pred in pattern_predictions
-            ])
-            
-            # Update training status
-            total_synthetic = len(features) - valid_samples
-            self.training_status.update({
-                'success': True,
-                'model_loaded': True,
-                'timestamp': datetime.now(),
-                'prob_score': prob_score,
-                'pattern_score': pattern_score,
-                'feature_dimension': features.shape[1],
-                'training_samples': len(X_train),
-                'test_samples': len(X_test),
-                'valid_samples': valid_samples,
-                'classes_represented': len(np.unique(prob_labels)),
-                'synthetic_samples_added': total_synthetic
-            })
-            
-            print(f"\nModel Training Results:")
-            print(f"- Total samples: {len(features)}")
-            print(f"- Valid samples: {valid_samples}")
-            print(f"- Synthetic samples: {total_synthetic}")
-            print(f"- Training samples: {len(X_train)}")
-            print(f"- Test samples: {len(X_test)}")
-            print(f"- Features: {features.shape[1]}")
-            print(f"- Classes represented: {len(np.unique(prob_labels))}")
-            print(f"- Probabilistic Model Score: {prob_score:.4f}")
-            print(f"- Pattern Model Score: {pattern_score:.4f}")
-            
-            is_valid, message = self.validate_model_state()
-            if not is_valid:
-                raise ValueError(f"Model validation failed after training: {message}")
-            
-            print("Model state validation successful")
-            return True
+            # Continue with model training...
             
         except Exception as e:
-            print(f"Error training models: {e}")
-            self.training_status.update({
-                'success': False,
-                'error': str(e),
-                'timestamp': datetime.now()
-            })
+            print(f"Error in model training: {e}")
             return False
 
     def predict(self, recent_draws):
@@ -1336,30 +1084,6 @@ class LotteryPredictor:
             
             return None, None, None
 
-    def save_prediction_to_csv(self, predicted_numbers, probabilities):
-        """Save prediction results"""
-        try:
-            next_draw_time = datetime.now().replace(
-                minute=(datetime.now().minute // 5 + 1) * 5,
-                second=0, 
-                microsecond=0
-            )
-            
-            data = {
-                'Timestamp': [next_draw_time.strftime('%H:%M %d-%m-%Y')],
-                'Predicted_Numbers': [','.join(map(str, predicted_numbers))],
-                'Probabilities': [','.join(map(str, [probabilities[num - 1] for num in predicted_numbers]))]
-            }
-            
-            df = pd.DataFrame(data)
-            os.makedirs(os.path.dirname(self.predictions_file), exist_ok=True)
-            
-            mode = 'a' if os.path.exists(self.predictions_file) else 'w'
-            header = not os.path.exists(self.predictions_file)
-            df.to_csv(self.predictions_file, mode=mode, header=header, index=False)
-            
-        except Exception as e:
-            print(f"Error saving prediction: {e}")
 
     def prepare_feature_columns(self, data):
         """Ensure all required feature columns exist"""
@@ -1375,21 +1099,42 @@ class LotteryPredictor:
             print(f"Error preparing feature columns: {e}")
             return data
 
-    def reset_for_training(self):
-        """Reset the model state for new training"""
-        self.model = None
-        self.scaler = None
-        self.feature_selector = None
-        self.learning_history = []
-        
-    def train_model(self, historical_data):
-        """Train the prediction model"""
+    def _process_raw_data(self, data):
+        """Process raw DataFrame to extract numbers"""
         try:
-            self.reset_for_training()
-            # ...rest of training code...
+            # Get number columns (expecting 'number1' through 'number20')
+            number_cols = [col for col in data.columns if col.startswith('number')]
+            
+            # Convert DataFrame to list of draws
+            processed_draws = []
+            for _, row in data.iterrows():
+                # Extract numbers and convert to integers
+                draw_numbers = []
+                for col in number_cols:
+                    try:
+                        # Remove 'number' prefix and convert to int
+                        value = row[col]
+                        if isinstance(value, str) and value.startswith('number'):
+                            # Skip column names that got into data
+                            continue
+                        num = int(value)
+                        if 1 <= num <= 80:
+                            draw_numbers.append(num)
+                    except (ValueError, TypeError):
+                        continue
+                
+                if draw_numbers:  # Only add valid draws
+                    processed_draws.append(draw_numbers)
+            
+            if not processed_draws:
+                raise ValueError("No valid draws found in data")
+                
+            print(f"Processed {len(processed_draws)} valid draws")
+            return processed_draws
+
         except Exception as e:
-            print(f"Error in model training: {str(e)}")
-            raise
+            print(f"Error processing raw data: {e}")
+            return None
 
 if __name__ == "__main__":
     predictor = LotteryPredictor()
