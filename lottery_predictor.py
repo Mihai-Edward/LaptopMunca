@@ -1,3 +1,4 @@
+import json
 import traceback
 import numpy as np
 import pandas as pd
@@ -98,6 +99,35 @@ class LotteryPredictor:
         print(f"- Number of classes: {self.num_classes}")
         print(f"- Using combined features: {use_combined_features}")
         
+    def _validate_data(self, data):
+        """Validate input data format"""
+        try:
+            required_cols = ['date'] + [f'number{i}' for i in range(1, 21)]
+            
+            # Check columns exist
+            missing_cols = [col for col in required_cols if col not in data.columns]
+            if missing_cols:
+                raise ValueError(f"Missing required columns: {missing_cols}")
+                
+            # Validate date format
+            try:
+                data['date'] = pd.to_datetime(data['date'].str.strip())
+            except:
+                raise ValueError("Invalid date format in data")
+                
+            # Validate numbers
+            number_cols = [f'number{i}' for i in range(1, 21)]
+            for col in number_cols:
+                invalid_nums = data[~data[col].between(1, 80)]
+                if not invalid_nums.empty:
+                    raise ValueError(f"Invalid numbers found in column {col}")
+                    
+            return True
+            
+        except Exception as e:
+            print(f"Data validation error: {e}")
+            return False
+            
     def validate_model_state(self):
         """Validate model state before prediction"""
         try:
@@ -131,74 +161,189 @@ class LotteryPredictor:
             return True, "Model state valid"
         except Exception as e:
             return False, f"Model validation error: {str(e)}"
-    
     def _initialize_pipeline(self):
-        """Initialize the prediction pipeline with ordered stages"""
-        self.pipeline_stages = OrderedDict({
-            'data_preparation': self._prepare_pipeline_data,
-            'feature_engineering': self._create_enhanced_features,
-            'model_prediction': self._generate_model_predictions,
-            'post_processing': self._post_process_predictions
-        })
-        self.pipeline_data = {}
+        """Initialize prediction pipeline with enhanced stages and validation"""
+        try:
+            print("\nInitializing prediction pipeline...")
+            
+            # Define ordered pipeline stages with better structure
+            self.pipeline_stages = OrderedDict({
+                'data_preparation': {
+                    'function': self._prepare_pipeline_data,
+                    'description': 'Prepare and validate input data',
+                    'required_inputs': ['date', 'number1', 'number2', '...', 'number20'],
+                    'outputs': ['prepared_data']
+                },
+                'feature_engineering': {
+                    'function': self._create_enhanced_features,
+                    'description': 'Create feature vectors from prepared data',
+                    'required_inputs': ['prepared_data'],
+                    'outputs': ['features', 'analysis_features']
+                },
+                'model_prediction': {
+                    'function': self._generate_model_predictions,
+                    'description': 'Generate model predictions',
+                    'required_inputs': ['features'],
+                    'outputs': ['prob_predictions', 'pattern_predictions']
+                },
+                'post_processing': {
+                    'function': self._post_process_predictions,
+                    'description': 'Process and combine predictions',
+                    'required_inputs': ['prob_predictions', 'pattern_predictions'],
+                    'outputs': ['final_numbers', 'probabilities', 'analysis_context']
+                }
+            })
+            
+            # Initialize pipeline data storage
+            self.pipeline_data = {
+                'pipeline_config': {
+                    'initialized_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'use_combined_features': self.pipeline_data.get('use_combined_features', True),
+                    'stages': list(self.pipeline_stages.keys())
+                },
+                'execution_context': {
+                    'current_stage': None,
+                    'completed_stages': [],
+                    'errors': [],
+                    'warnings': []
+                },
+                'stage_results': {},
+                'metadata': {
+                    'model_config': {
+                        'num_classes': self.num_classes,
+                        'numbers_to_draw': self.numbers_to_draw,
+                        'feature_dimension': None  # Will be set during execution
+                    },
+                    'runtime_config': {
+                        'use_analysis': True,
+                        'analysis_weight': 0.6,
+                        'prob_weight': 0.25,
+                        'pattern_weight': 0.15
+                    }
+                }
+            }
+            
+            # Convert stage definitions to actual functions
+            self.pipeline_stages = OrderedDict({
+                name: stage['function'] 
+                for name, stage in self.pipeline_stages.items()
+            })
+            
+            print("Pipeline initialization complete with stages:")
+            for stage_name in self.pipeline_stages.keys():
+                print(f"- {stage_name}")
+                
+            return True
+            
+        except Exception as e:
+            print(f"Error initializing pipeline: {e}")
+            self.pipeline_data['errors'] = [{
+                'stage': 'initialization',
+                'error': str(e),
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }]
+            traceback.print_exc()
+            return False
     
     def _prepare_pipeline_data(self, data):
-        """First pipeline stage: Prepare and validate input data"""
+        """First pipeline stage: Prepare and validate input data with enhanced checks"""
         print("\nPreparing data for prediction pipeline...")
         try:
-            # Ensure we have a DataFrame
+            # Input validation
             if not isinstance(data, pd.DataFrame):
                 raise ValueError("Input must be a pandas DataFrame")
                 
-            # Ensure we have the required number of rows (5 recent draws)
             if len(data) < 5:
                 raise ValueError("Need at least 5 recent draws for prediction")
                 
-            # Clean the data
-            prepared_data = self.clean_data(data)
-            if prepared_data is None or len(prepared_data) < 5:
-                raise ValueError("Data cleaning resulted in insufficient data")
-                
+            # Deep copy to avoid modifying original data
+            prepared_data = data.copy()
+            
             # Ensure all required columns exist
-            required_cols = ['date'] + [f'number{i+1}' for i in range(20)]
+            required_cols = ['date'] + [f'number{i}' for i in range(1, 21)]
             missing_cols = [col for col in required_cols if col not in prepared_data.columns]
             if missing_cols:
                 raise ValueError(f"Missing required columns: {missing_cols}")
                 
-            # Sort by date and get most recent 5 draws
-            prepared_data = prepared_data.sort_values('date').tail(5)
-            
-            # Validate number ranges
-            number_cols = [f'number{i+1}' for i in range(20)]
+            # Clean and validate date column
+            try:
+                prepared_data['date'] = pd.to_datetime(prepared_data['date'])
+                prepared_data = prepared_data.sort_values('date').reset_index(drop=True)
+            except Exception as e:
+                print(f"Warning: Date conversion error: {e}")
+                print("Attempting to proceed without date sorting...")
+                
+            # Validate and clean number columns
+            number_cols = [f'number{i}' for i in range(1, 21)]
             for col in number_cols:
-                invalid_numbers = prepared_data[~prepared_data[col].between(1, 80)]
-                if not invalid_numbers.empty:
-                    raise ValueError(f"Invalid numbers found in column {col}")
-                    
-            # Add date-based features
+                # Convert to numeric, coerce errors to NaN
+                prepared_data[col] = pd.to_numeric(prepared_data[col], errors='coerce')
+                
+                # Check for invalid numbers
+                invalid_mask = ~prepared_data[col].between(1, 80)
+                invalid_count = invalid_mask.sum()
+                
+                if invalid_count > 0:
+                    print(f"Warning: Found {invalid_count} invalid numbers in {col}")
+                    # Fill invalid numbers with the mode of valid numbers
+                    valid_mode = prepared_data.loc[~invalid_mask, col].mode()
+                    if not valid_mode.empty:
+                        prepared_data.loc[invalid_mask, col] = valid_mode[0]
+                    else:
+                        raise ValueError(f"No valid numbers found in column {col}")
+            
+            # Sort numbers within each draw
+            for idx in prepared_data.index:
+                numbers = sorted(prepared_data.loc[idx, number_cols])
+                for i, num in enumerate(numbers):
+                    prepared_data.loc[idx, f'number{i+1}'] = num
+            
+            # Get most recent 5 draws
+            prepared_data = prepared_data.tail(5).reset_index(drop=True)
+            
+            # Add time-based features
             if 'date' in prepared_data.columns:
                 prepared_data['day_of_week'] = prepared_data['date'].dt.dayofweek
                 prepared_data['month'] = prepared_data['date'].dt.month
-                prepared_data['day_of_year'] = prepared_data['date'].dt.dayofyear
-                prepared_data['days_since_first_draw'] = (
-                    prepared_data['date'] - prepared_data['date'].min()
-                ).dt.days
-                
-                # Store additional features in pipeline data
-                self.pipeline_data['date_features'] = {
-                    'day_of_week': prepared_data['day_of_week'].tolist(),
-                    'month': prepared_data['month'].tolist(),
-                    'day_of_year': prepared_data['day_of_year'].tolist(),
-                    'days_since_first_draw': prepared_data['days_since_first_draw'].tolist()
-                }
+                prepared_data['day'] = prepared_data['date'].dt.day
+                prepared_data['hour'] = prepared_data['date'].dt.hour
+                prepared_data['minute'] = prepared_data['date'].dt.minute
             
-            # Store in pipeline data for potential later use
+            # Store metadata in pipeline data
             self.pipeline_data['prepared_data'] = prepared_data
-            print("Data preparation completed successfully")
+            self.pipeline_data['data_preparation_metadata'] = {
+                'original_rows': len(data),
+                'prepared_rows': len(prepared_data),
+                'date_range': {
+                    'start': prepared_data['date'].min().strftime('%Y-%m-%d %H:%M:%S'),
+                    'end': prepared_data['date'].max().strftime('%Y-%m-%d %H:%M:%S')
+                },
+                'number_stats': {
+                    col: {
+                        'min': float(prepared_data[col].min()),
+                        'max': float(prepared_data[col].max()),
+                        'mean': float(prepared_data[col].mean())
+                    } for col in number_cols
+                },
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+            print("\nData preparation completed:")
+            print(f"- Processed {len(prepared_data)} draws")
+            print(f"- Time range: {self.pipeline_data['data_preparation_metadata']['date_range']['start']} to "
+                  f"{self.pipeline_data['data_preparation_metadata']['date_range']['end']}")
+            
             return prepared_data
             
         except Exception as e:
             print(f"Error in data preparation: {e}")
+            if 'pipeline_data' in self.__dict__:
+                self.pipeline_data['errors'] = self.pipeline_data.get('errors', []) + [{
+                    'stage': 'data_preparation',
+                    'error': str(e),
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }]
+            traceback.print_exc()
             return None
 
     def load_data(self, file_path=None):
@@ -278,89 +423,178 @@ class LotteryPredictor:
         try:
             print("\nPreparing training data...")
             if historical_data is None or len(historical_data) < 6:
-                raise ValueError("Insufficient historical data for training (minimum 6 draws required)")
+                raise ValueError("Insufficient historical data (minimum 6 draws required)")
 
-            # Sort data chronologically
-            historical_data = historical_data.sort_values('date')
+            # Validate data first
+            if not self._validate_data(historical_data):
+                raise ValueError("Data validation failed")
+
+            # Sort chronologically and reset index
+            historical_data = historical_data.sort_values('date').reset_index(drop=True)
+            
             features = []
             labels = []
+            window_size = 5  # Use last 5 draws to predict next
+            number_cols = [f'number{i}' for i in range(1, 21)]
 
-            # Define column names for the 20 numbers
-            number_cols = [f'number{i+1}' for i in range(20)]
+            print(f"Processing {len(historical_data) - window_size} potential training samples...")
 
-            # Validate number columns exist
-            missing_cols = [col for col in number_cols if col not in historical_data.columns]
-            if missing_cols:
-                raise ValueError(f"Missing number columns: {missing_cols}")
+            # Create sliding windows
+            for i in range(len(historical_data) - window_size):
+                try:
+                    # Get window of 5 consecutive draws
+                    window = historical_data.iloc[i:i+window_size]
+                    
+                    # Create base features (80-dimensional frequency vector)
+                    frequency_vector = np.zeros(80)
+                    for _, row in window.iterrows():
+                        for col in number_cols:
+                            num = int(row[col])
+                            if 1 <= num <= 80:
+                                frequency_vector[num-1] += 1
 
-            print(f"\nProcessing {len(historical_data) - 5} potential training samples...")
-            valid_samples = 0
-            skipped_samples = 0
-            errors = defaultdict(int)
+                    # Normalize frequency vector
+                    total = np.sum(frequency_vector)
+                    if total > 0:
+                        frequency_vector = frequency_vector / total
 
-            # Rest of the method with proper indentation
-            # ...
+                    # Get target draw (for labels)
+                    target_draw = historical_data.iloc[i+window_size]
+                    
+                    # Add time-based features
+                    target_date = pd.to_datetime(target_draw['date'])
+                    time_features = np.array([
+                        target_date.hour,
+                        target_date.minute,
+                        target_date.dayofweek,
+                        target_date.day
+                    ])
+
+                    # Combine features
+                    feature_vector = np.concatenate([frequency_vector, time_features])
+                    
+                    # Create label (the actual numbers that were drawn)
+                    label = np.array([int(target_draw[col]) for col in number_cols])
+                    
+                    features.append(feature_vector)
+                    labels.append(label)
+
+                except Exception as e:
+                    print(f"Warning: Error processing window {i}: {e}")
+                    continue
+
+            if not features:
+                raise ValueError("No valid training samples could be generated")
+
+            # Convert to numpy arrays
+            features = np.array(features)
+            labels = np.array(labels)
+
+            # Update training status with feature information
+            self.training_status['feature_dimension'] = features.shape[1]
+            self.training_status['samples_processed'] = len(features)
+
+            print(f"\nTraining data preparation complete:")
+            print(f"- Number of samples: {len(features)}")
+            print(f"- Feature vector shape: {features.shape}")
+            print(f"- Label shape: {labels.shape}")
+
+            return features, labels
 
         except Exception as e:
-            print(f"Error preparing training data: {e}")
+            print(f"Exception during data preparation: {str(e)}")
+            traceback.print_exc()
             return None, None
 
-    def _create_feature_vector(self, window):
-        """Create standardized 80-dimension feature vector"""
+    def _create_feature_vector(self, window, target_date=None):
+        """Create standardized feature vector with time features"""
         try:
-            # Check if window is a DataFrame
-            if isinstance(window, pd.DataFrame):
-                # Get number columns
-                number_cols = [col for col in window.columns if col.startswith('number')]
-                if not number_cols:
-                    raise ValueError("No number columns found in DataFrame")
-                
-                # Create frequency vector
-                frequency_vector = np.zeros(80)
-                
-                # Process each row
-                for _, row in window.iterrows():
-                    numbers = row[number_cols].values.astype(float)
-                    valid_numbers = numbers[(numbers >= 1) & (numbers <= 80)]
-                    for num in valid_numbers:
-                        frequency_vector[int(num)-1] += 1
-                        
-                # Normalize if we have any valid numbers
-                total_numbers = np.sum(frequency_vector)
-                if total_numbers > 0:
-                    frequency_vector = frequency_vector / total_numbers
-                else:
-                    raise ValueError("No valid numbers found in window")
-                    
-                return frequency_vector
-                
-            else:
+            # Validate input
+            if not isinstance(window, pd.DataFrame):
                 raise ValueError("Input must be a pandas DataFrame")
                 
+            # Get number columns
+            number_cols = [f'number{i}' for i in range(1, 21)]
+            if not all(col in window.columns for col in number_cols):
+                raise ValueError("Missing required number columns")
+                
+            # Create frequency vector (80 dimensions)
+            frequency_vector = np.zeros(80)
+            
+            # Count frequencies from all draws in window
+            for _, row in window.iterrows():
+                numbers = row[number_cols].values.astype(float)
+                valid_numbers = numbers[(numbers >= 1) & (numbers <= 80)]
+                for num in valid_numbers:
+                    frequency_vector[int(num)-1] += 1
+                    
+            # Normalize frequency vector
+            total_numbers = np.sum(frequency_vector)
+            if total_numbers > 0:
+                frequency_vector = frequency_vector / total_numbers
+                
+            # Add time-based features if target_date is provided
+            if target_date is not None:
+                if isinstance(target_date, str):
+                    target_date = pd.to_datetime(target_date)
+                    
+                time_features = np.array([
+                    target_date.hour,
+                    target_date.minute,
+                    target_date.dayofweek,
+                    target_date.day
+                ])
+                
+                # Combine frequency and time features
+                feature_vector = np.concatenate([frequency_vector, time_features])
+            else:
+                feature_vector = frequency_vector
+                
+            print(f"Created feature vector with shape: {feature_vector.shape}")
+            
+            # Store feature metadata
+            self.pipeline_data['latest_feature_vector'] = {
+                'frequency_dims': 80,
+                'time_dims': 4 if target_date is not None else 0,
+                'total_dims': len(feature_vector),
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+            return feature_vector
+            
         except Exception as e:
             print(f"Error creating feature vector: {e}")
-            print(f"Window type: {type(window)}")
-            if isinstance(window, pd.DataFrame):
-                print(f"Columns: {window.columns.tolist()}")
+            traceback.print_exc()
             return None
 
     def _create_analysis_features(self, data):
-        """Create enhanced features from data analysis"""
+        """Create enhanced features from data analysis with improved integration"""
         print("\nGenerating analysis features...")
         
         try:
-            # Update analyzer with current data
+            # Format data for analysis
             formatted_draws = []
             for _, row in data.iterrows():
-                numbers = []
-                for i in range(1, 21):
-                    num = row.get(f'number{i}')
-                    if isinstance(num, (int, float)) and 1 <= num <= 80:
-                        numbers.append(int(num))
-                if len(numbers) == 20:
-                    formatted_draws.append((row['date'], numbers))
-            
-            self.analyzer = DataAnalysis(formatted_draws)
+                try:
+                    # Get numbers and validate
+                    numbers = []
+                    for i in range(1, 21):
+                        num = row.get(f'number{i}')
+                        if isinstance(num, (int, float)) and 1 <= num <= 80:
+                            numbers.append(int(num))
+                    
+                    if len(numbers) == 20:  # Only use complete draws
+                        formatted_draws.append((row['date'], sorted(numbers)))
+                except Exception as e:
+                    print(f"Warning: Skipping draw due to error: {e}")
+                    continue
+
+            if not formatted_draws:
+                raise ValueError("No valid draws for analysis")
+
+            # Initialize or update analyzer
+            if self.analyzer is None:
+                self.analyzer = DataAnalysis(formatted_draws)
             
             # Get analysis results
             frequency = self.analyzer.count_frequency()
@@ -368,23 +602,23 @@ class LotteryPredictor:
             common_pairs = self.analyzer.find_common_pairs()
             range_analysis = self.analyzer.number_range_analysis()
             
-            # Convert analysis results to features - fixed size array
+            # Create feature arrays
             analysis_features = np.zeros(160)  # 80 for frequency + 80 for hot/cold
             
-            # Frequency features (first 80)
+            # Fill frequency features (first 80 dimensions)
             total_freq = sum(frequency.values()) or 1  # Avoid division by zero
             for num, freq in frequency.items():
                 if 1 <= num <= 80:
                     analysis_features[num-1] = freq / total_freq
             
-            # Hot/Cold features (second 80)
+            # Fill hot/cold features (second 80 dimensions)
             hot_nums = dict(hot_numbers)
             max_hot_score = max(hot_nums.values()) if hot_nums else 1
             for num, score in hot_nums.items():
                 if 1 <= num <= 80:
                     analysis_features[80 + num-1] = score / max_hot_score
             
-            # Store analysis context with additional metadata
+            # Store analysis context with metadata
             self.pipeline_data['analysis_context'] = {
                 'frequency': frequency,
                 'hot_cold': (hot_numbers, cold_numbers),
@@ -393,18 +627,24 @@ class LotteryPredictor:
                 'feature_stats': {
                     'total_frequency': total_freq,
                     'max_hot_score': max_hot_score,
-                    'feature_range': (np.min(analysis_features), np.max(analysis_features))
+                    'feature_range': (float(np.min(analysis_features)), float(np.max(analysis_features))),
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 }
             }
             
-            print(f"Generated {len(analysis_features)} analysis features")
-            print(f"Feature range: {np.min(analysis_features):.4f} to {np.max(analysis_features):.4f}")
+            # Print analysis summary
+            print(f"\nAnalysis features generated:")
+            print(f"- Total features: {len(analysis_features)}")
+            print(f"- Frequency features: 80")
+            print(f"- Hot/Cold features: 80")
+            print(f"- Feature range: {np.min(analysis_features):.4f} to {np.max(analysis_features):.4f}")
             
             return analysis_features
             
         except Exception as e:
             print(f"Error in analysis features generation: {e}")
-            return np.zeros(160)  # Return zero vector of fixed size
+            traceback.print_exc()
+            return np.zeros(160)  # Return zero vector as fallback
 
     def extract_sequence_patterns(self, data, sequence_length=3):
         """Extract sequence patterns with validation"""
@@ -547,102 +787,161 @@ class LotteryPredictor:
             return self._create_feature_vector(data)  # Fallback to base features
     
     def _generate_model_predictions(self, features):
-        """Generate predictions for all 80 possible numbers"""
+        """Generate model predictions with enhanced validation and combination"""
         print("\nGenerating model predictions...")
         try:
-            # Validate features
+            # Validate features input
             if features is None:
                 raise ValueError("No features provided for prediction")
+                
+            if not isinstance(features, np.ndarray):
+                try:
+                    features = np.array(features)
+                except Exception as e:
+                    raise ValueError(f"Could not convert features to numpy array: {e}")
             
             # Ensure features are 2D
             if len(features.shape) == 1:
                 features = features.reshape(1, -1)
                 
+            # Validate feature dimensions
+            expected_dims = self.training_status.get('feature_dimension')
+            if expected_dims and features.shape[1] != expected_dims:
+                raise ValueError(f"Feature dimension mismatch: expected {expected_dims}, got {features.shape[1]}")
+            
+            print(f"Processing features shape: {features.shape}")
+            
             # Scale features
-            scaled_features = self.scaler.transform(features)
+            try:
+                scaled_features = self.scaler.transform(features)
+            except Exception as e:
+                raise ValueError(f"Feature scaling failed: {e}")
             
-            # Generate predictions for all 80 numbers
-            prob_pred = np.zeros(80)  # Initialize array for all possible numbers
-            pattern_pred = np.zeros(80)  # Initialize array for all possible numbers
+            # Initialize prediction arrays
+            prob_pred = np.zeros(80)  # For all possible numbers (1-80)
+            pattern_pred = np.zeros(80)
             
-            # Get model predictions
-            prob_raw = self.probabilistic_model.predict_proba(scaled_features)[0]
-            pattern_raw = self.pattern_model.predict_proba(scaled_features)[0]
+            # Generate probabilistic model predictions
+            try:
+                print("Generating probabilistic model predictions...")
+                prob_raw = self.probabilistic_model.predict_proba(scaled_features)[0]
+                prob_pred[:len(prob_raw)] = prob_raw
+                print(f"- Probabilistic predictions shape: {prob_pred.shape}")
+            except Exception as e:
+                print(f"Warning: Probabilistic model prediction failed: {e}")
+                # Use uniform distribution as fallback
+                prob_pred = np.ones(80) / 80
             
-            # Ensure we have probabilities for all 80 numbers
-            prob_pred[:len(prob_raw)] = prob_raw
-            pattern_pred[:len(pattern_raw)] = pattern_raw
-            
-            # Normalize probabilities
-            prob_pred = prob_pred / np.sum(prob_pred)
-            pattern_pred = pattern_pred / np.sum(pattern_pred)
+            # Generate pattern model predictions
+            try:
+                print("Generating pattern model predictions...")
+                pattern_raw = self.pattern_model.predict_proba(scaled_features)[0]
+                pattern_pred[:len(pattern_raw)] = pattern_raw
+                print(f"- Pattern predictions shape: {pattern_pred.shape}")
+            except Exception as e:
+                print(f"Warning: Pattern model prediction failed: {e}")
+                # Use uniform distribution as fallback
+                pattern_pred = np.ones(80) / 80
             
             # Validate predictions
             if np.any(np.isnan(prob_pred)) or np.any(np.isnan(pattern_pred)):
                 raise ValueError("NaN values detected in predictions")
                 
-            print(f"\nProbabilistic Model - Number of predictions: {len(prob_pred)}")
-            print(f"Pattern Model - Number of predictions: {len(pattern_pred)}")
+            # Normalize predictions
+            prob_pred = prob_pred / np.sum(prob_pred)
+            pattern_pred = pattern_pred / np.sum(pattern_pred)
+            
+            # Store prediction metadata
+            self.pipeline_data['model_predictions'] = {
+                'probabilistic': {
+                    'raw_shape': prob_raw.shape if 'prob_raw' in locals() else None,
+                    'normalized_shape': prob_pred.shape,
+                    'min': float(np.min(prob_pred)),
+                    'max': float(np.max(prob_pred)),
+                    'mean': float(np.mean(prob_pred))
+                },
+                'pattern': {
+                    'raw_shape': pattern_raw.shape if 'pattern_raw' in locals() else None,
+                    'normalized_shape': pattern_pred.shape,
+                    'min': float(np.min(pattern_pred)),
+                    'max': float(np.max(pattern_pred)),
+                    'mean': float(np.mean(pattern_pred))
+                },
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+            print("\nPrediction Statistics:")
+            print("Probabilistic Model:")
+            print(f"- Min: {self.pipeline_data['model_predictions']['probabilistic']['min']:.4f}")
+            print(f"- Max: {self.pipeline_data['model_predictions']['probabilistic']['max']:.4f}")
+            print(f"- Mean: {self.pipeline_data['model_predictions']['probabilistic']['mean']:.4f}")
+            print("Pattern Model:")
+            print(f"- Min: {self.pipeline_data['model_predictions']['pattern']['min']:.4f}")
+            print(f"- Max: {self.pipeline_data['model_predictions']['pattern']['max']:.4f}")
+            print(f"- Mean: {self.pipeline_data['model_predictions']['pattern']['mean']:.4f}")
             
             return prob_pred, pattern_pred
             
         except Exception as e:
-            print(f"Error in model prediction: {e}")
+            print(f"Error in model prediction generation: {e}")
+            if 'pipeline_data' in self.__dict__:
+                self.pipeline_data['errors'] = self.pipeline_data.get('errors', []) + [{
+                    'stage': 'model_prediction',
+                    'error': str(e),
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }]
+            traceback.print_exc()
             return None, None
 
     def _post_process_predictions(self, predictions):
-        """Process and combine predictions to get exactly 20 numbers"""
+        """Process and combine predictions with enhanced validation and analysis"""
         print("\nPost-processing predictions...")
         try:
-            # Better validation of predictions input
+            # Validate predictions input
             if (predictions is None or 
                 not isinstance(predictions, (list, tuple)) or 
                 len(predictions) != 2 or 
                 any(p is None for p in predictions)):
-                print("ERROR: Invalid predictions input")
-                return None, None, None
+                raise ValueError("Invalid predictions input format")
                 
             prob_pred, pattern_pred = predictions
             
             # Convert to numpy arrays if needed
-            if isinstance(prob_pred, list):
-                prob_pred = np.array(prob_pred)
-            if isinstance(pattern_pred, list):
-                pattern_pred = np.array(pattern_pred)
+            prob_pred = np.array(prob_pred) if isinstance(prob_pred, list) else prob_pred
+            pattern_pred = np.array(pattern_pred) if isinstance(pattern_pred, list) else pattern_pred
             
             # Validate array shapes
             if prob_pred.shape != (self.num_classes,) or pattern_pred.shape != (self.num_classes,):
-                print(f"ERROR: Invalid prediction shapes - prob: {prob_pred.shape}, pattern: {pattern_pred.shape}")
-                return None, None, None
+                raise ValueError(f"Invalid prediction shapes - prob: {prob_pred.shape}, pattern: {pattern_pred.shape}")
             
-            # Normalize and combine predictions
+            # Normalize predictions
             prob_pred = prob_pred / np.sum(prob_pred)
             pattern_pred = pattern_pred / np.sum(pattern_pred)
             
-            # NEW: Check for analysis data and create analysis prediction
+            # Initialize analysis prediction
             analysis_pred = np.zeros(self.num_classes)
             analysis_weight = 0.0
             
+            # Try to incorporate analysis data
             if 'analysis_context' in self.pipeline_data:
-                # Try to get hot numbers from analysis context
                 if 'hot_cold' in self.pipeline_data['analysis_context']:
                     hot_cold = self.pipeline_data['analysis_context']['hot_cold']
                     if isinstance(hot_cold, tuple) and len(hot_cold) > 0:
-                        hot_numbers = hot_cold[0]  # First element is hot numbers
+                        hot_numbers = hot_cold[0]
                         
-                        # Create weights based on hot number frequency
+                        # Create weights from hot numbers
                         for num, count in hot_numbers:
                             if 1 <= num <= self.num_classes:
                                 analysis_pred[num-1] = count
-                                
-                        # Normalize
+                        
+                        # Normalize analysis predictions
                         sum_analysis = np.sum(analysis_pred)
                         if sum_analysis > 0:
                             analysis_pred = analysis_pred / sum_analysis
-                            analysis_weight = 0.6  # Use 60% weight for analysis
-                            print("✓ Using 60% weight from data analysis (hot numbers)")
+                            analysis_weight = 0.6
+                            print("Using 60% weight from hot numbers analysis")
                 
-                # If no hot numbers, try frequency data
+                # Fallback to frequency data if no hot numbers
                 elif 'frequency' in self.pipeline_data['analysis_context'] and analysis_weight == 0:
                     frequency = self.pipeline_data['analysis_context']['frequency']
                     if frequency:
@@ -651,13 +950,11 @@ class LotteryPredictor:
                             for num, freq in frequency.items():
                                 if 1 <= num <= self.num_classes:
                                     analysis_pred[num-1] = freq / total_freq
-                            
-                            analysis_weight = 0.6  # Use 60% weight for analysis
-                            print("✓ Using 60% weight from data analysis (frequency)")
+                            analysis_weight = 0.6
+                            print("Using 60% weight from frequency analysis")
             
-            # Combine predictions with appropriate weights
+            # Combine predictions with weights
             if analysis_weight > 0:
-                # Redistribute remaining 40% between prob and pattern
                 prob_weight = 0.25
                 pattern_weight = 0.15
                 combined_pred = (prob_weight * prob_pred + 
@@ -665,40 +962,32 @@ class LotteryPredictor:
                                analysis_weight * analysis_pred)
                 print(f"Combined weights: {prob_weight:.2f} prob, {pattern_weight:.2f} pattern, {analysis_weight:.2f} analysis")
             else:
-                # Fall back to original weights
                 combined_pred = 0.4 * prob_pred + 0.6 * pattern_pred
-                print("Using original weights: 0.4 prob, 0.6 pattern (no analysis data)")
-                
-            # Get top numbers and ensure uniqueness
-            top_indices = np.argsort(combined_pred)[::-1]  # Sort in descending order
+                print("Using default weights: 0.4 prob, 0.6 pattern")
+            
+            # Get top numbers ensuring uniqueness
+            top_indices = np.argsort(combined_pred)[::-1]
             final_numbers = []
             used_indices = set()
             
             # Select unique valid numbers
             for idx in top_indices:
-                number = int(idx) + self.numbers_range[0]
                 if len(final_numbers) >= self.numbers_to_draw:
                     break
+                number = int(idx) + 1  # Convert to 1-based index
                 if number not in final_numbers and 1 <= number <= 80:
                     final_numbers.append(number)
                     used_indices.add(idx)
             
-            # Validate we have enough numbers
+            # Validate final numbers
             if len(final_numbers) != self.numbers_to_draw:
-                print(f"ERROR: Could not generate {self.numbers_to_draw} unique valid numbers")
-                return None, None, None
+                raise ValueError(f"Could not generate {self.numbers_to_draw} unique valid numbers")
             
             # Sort final numbers
             final_numbers.sort()
             
             # Create probability mapping
-            prob_map = {}
-            for num in final_numbers:
-                idx = num - self.numbers_range[0]
-                if 0 <= idx < len(combined_pred):
-                    prob_map[num] = float(combined_pred[idx])
-                else:
-                    prob_map[num] = 1.0 / self.numbers_to_draw
+            prob_map = {num: float(combined_pred[num-1]) for num in final_numbers}
             
             # Create final probability array
             final_probs = [prob_map[num] for num in final_numbers]
@@ -715,8 +1004,9 @@ class LotteryPredictor:
                 'final_prediction': final_numbers,
                 'probabilities': final_probs,
                 'prediction_metadata': {
-                    'prob_weight': 0.4,
-                    'pattern_weight': 0.6,
+                    'prob_weight': 0.4 if analysis_weight == 0 else 0.25,
+                    'pattern_weight': 0.6 if analysis_weight == 0 else 0.15,
+                    'analysis_weight': analysis_weight,
                     'combined_confidence': float(np.mean(final_probs)),
                     'prediction_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 }
@@ -724,12 +1014,10 @@ class LotteryPredictor:
             
             print("\nPrediction Summary:")
             print(f"Final Numbers: {final_numbers}")
-            print(f"Number of predictions: {len(final_numbers)}")
-            print(f"Number of probabilities: {len(final_probs)}")
             print(f"Average Confidence: {self.pipeline_data['prediction_metadata']['combined_confidence']:.4f}")
             
             return final_numbers, final_probs, self.pipeline_data.get('analysis_context', {})
-                
+            
         except Exception as e:
             print(f"Error in post-processing: {e}")
             traceback.print_exc()
@@ -858,53 +1146,84 @@ class LotteryPredictor:
             return None, None, None
 
     def train_models(self, features, labels):
-        """Train models with proper data preprocessing"""
+        """Train models with enhanced preprocessing and validation"""
         try:
-            # Check if features and labels are numpy arrays
+            print("\nStarting model training...")
+            
+            # Validate inputs
             if not isinstance(features, np.ndarray) or not isinstance(labels, np.ndarray):
                 raise ValueError("Features and labels must be numpy arrays")
             
-            print("\nProcessing training data...")
+            if len(features) != len(labels):
+                raise ValueError(f"Mismatched lengths: features ({len(features)}) vs labels ({len(labels)})")
             
-            # Print shapes of features and labels
-            print(f"- Features shape: {features.shape}")
-            print(f"- Labels shape: {labels.shape}")
-
-            # Ensure labels are 1D for compatibility with ML models
+            # Print dataset information
+            print(f"\nTraining dataset:")
+            print(f"- Total samples: {len(features)}")
+            print(f"- Feature dimensions: {features.shape[1]}")
+            print(f"- Label shape: {labels.shape}")
+            
+            # Reshape labels if needed
             if len(labels.shape) > 1:
                 labels = labels.ravel()
+                print("- Reshaped labels to 1D array")
             
-            # Debug: Print first few samples of features and labels
-            print("Debug: First 5 samples of features:\n", features[:5])
-            print("Debug: First 5 samples of labels:\n", labels[:5])
-            
-            # Split data into training and test sets
-            X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, random_state=42)
-            
-            # Debug: Print shapes after train-test split
-            print(f"Debug: X_train shape: {X_train.shape}, y_train shape: {y_train.shape}")
-            print(f"Debug: X_test shape: {X_test.shape}, y_test shape: {y_test.shape}")
+            # Split data with stratification
+            try:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    features, 
+                    labels, 
+                    test_size=0.2, 
+                    random_state=42,
+                    shuffle=True
+                )
+                print("\nData split complete:")
+                print(f"- Training samples: {len(X_train)}")
+                print(f"- Test samples: {len(X_test)}")
+            except Exception as e:
+                print(f"Error in data splitting: {e}")
+                raise
             
             # Scale features
-            self.scaler.fit(X_train)
-            X_train_scaled = self.scaler.transform(X_train)
-            X_test_scaled = self.scaler.transform(X_test)
-            
-            # Debug: Print first few samples of scaled features
-            print("Debug: First 5 samples of scaled X_train:\n", X_train_scaled[:5])
+            try:
+                self.scaler = StandardScaler()
+                X_train_scaled = self.scaler.fit_transform(X_train)
+                X_test_scaled = self.scaler.transform(X_test)
+                print("\nFeature scaling complete")
+            except Exception as e:
+                print(f"Error in feature scaling: {e}")
+                raise
             
             # Train probabilistic model (Naive Bayes)
-            self.probabilistic_model = GaussianNB()
-            self.probabilistic_model.fit(X_train_scaled, y_train)
-            prob_train_score = self.probabilistic_model.score(X_train_scaled, y_train)
-            prob_test_score = self.probabilistic_model.score(X_test_scaled, y_test)
-            print(f"Probabilistic Model - Train Accuracy: {prob_train_score:.4f}, Test Accuracy: {prob_test_score:.4f}")
+            try:
+                print("\nTraining probabilistic model...")
+                self.probabilistic_model = GaussianNB()
+                self.probabilistic_model.fit(X_train_scaled, y_train)
+                
+                prob_train_score = self.probabilistic_model.score(X_train_scaled, y_train)
+                prob_test_score = self.probabilistic_model.score(X_test_scaled, y_test)
+                
+                print(f"Probabilistic Model Performance:")
+                print(f"- Training accuracy: {prob_train_score:.4f}")
+                print(f"- Test accuracy: {prob_test_score:.4f}")
+            except Exception as e:
+                print(f"Error training probabilistic model: {e}")
+                raise
             
-            # Train pattern model (MLP)
-            self.pattern_model.fit(X_train_scaled, y_train)
-            pattern_train_score = self.pattern_model.score(X_train_scaled, y_train)
-            pattern_test_score = self.pattern_model.score(X_test_scaled, y_test)
-            print(f"Pattern Model - Train Accuracy: {pattern_train_score:.4f}, Test Accuracy: {pattern_test_score:.4f}")
+            # Train pattern model (Neural Network)
+            try:
+                print("\nTraining pattern model...")
+                self.pattern_model.fit(X_train_scaled, y_train)
+                
+                pattern_train_score = self.pattern_model.score(X_train_scaled, y_train)
+                pattern_test_score = self.pattern_model.score(X_test_scaled, y_test)
+                
+                print(f"Pattern Model Performance:")
+                print(f"- Training accuracy: {pattern_train_score:.4f}")
+                print(f"- Test accuracy: {pattern_test_score:.4f}")
+            except Exception as e:
+                print(f"Error training pattern model: {e}")
+                raise
             
             # Update training status
             self.training_status.update({
@@ -917,109 +1236,138 @@ class LotteryPredictor:
                 'model_config': {
                     'num_classes': self.num_classes,
                     'numbers_to_draw': self.numbers_to_draw,
-                    'feature_dimension': features.shape[1]
+                    'feature_dimension': features.shape[1],
+                    'training_samples': len(X_train),
+                    'test_samples': len(X_test)
+                },
+                'training_metrics': {
+                    'prob_train_acc': prob_train_score,
+                    'prob_test_acc': prob_test_score,
+                    'pattern_train_acc': pattern_train_score,
+                    'pattern_test_acc': pattern_test_score,
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 }
             })
             
+            print("\nModel training completed successfully")
             return True
             
         except Exception as e:
-            print(f"Error in model training: {e}")
-            self.training_status['error'] = str(e)
+            print(f"\nError in model training: {e}")
+            self.training_status.update({
+                'success': False,
+                'error': str(e),
+                'timestamp': datetime.now()
+            })
+            traceback.print_exc()
             return False
 
     def predict(self, recent_draws):
-        """Enhanced prediction with pipeline execution"""
+        """Enhanced prediction with improved pipeline execution and validation"""
         pipeline_tracking = {
             'start_time': datetime.now(),
             'stages_completed': [],
             'current_stage': None,
             'error': None
         }
+        
         try:
-            # Check if models are trained
-            if self.probabilistic_model is None or not hasattr(self.probabilistic_model, 'class_prior_'):
-                raise ValueError("Models not properly trained. Please train models first.")
+            print("\nStarting prediction pipeline...")
+            
+            # Validate model state
             is_valid, message = self.validate_model_state()
             if not is_valid:
-
-                print(f"Warning: {message}")  # Log the warning but don't fail
-                print("Attempting to continue with existing validation...")
-            try:
-                # Ensure pipeline is initialized
-                if not hasattr(self, 'pipeline_stages'):
-                    self._initialize_pipeline()
-            except Exception as e:
-                print(f"Error initializing pipeline: {e}")
-                raise
+                print(f"Warning: {message}")
+                print("Attempting to proceed with available model state...")
             
             # Validate input data
-            if recent_draws is None:
-                raise ValueError("No input data provided for prediction")
+            if recent_draws is None or len(recent_draws) < 5:
+                raise ValueError("Need at least 5 recent draws for prediction")
                 
-      
+            if not isinstance(recent_draws, pd.DataFrame):
+                raise ValueError("Input must be a pandas DataFrame")
                 
-            # Run prediction pipeline
+            # Initialize pipeline if needed
+            if not hasattr(self, 'pipeline_stages'):
+                self._initialize_pipeline()
+                
+            # Execute pipeline stages
             result = recent_draws
             for stage_name, stage_func in self.pipeline_stages.items():
-                print(f"\nExecuting pipeline stage: {stage_name}")
-                pipeline_tracking['current_stage'] = stage_name
-                
-                # Execute stage with timing
-                stage_start = datetime.now()
-                result = stage_func(result)
-                stage_duration = (datetime.now() - stage_start).total_seconds()
-                
-                # Validate stage result
-                if result is None:
-                    raise ValueError(f"Pipeline stage {stage_name} failed")
+                try:
+                    print(f"\nExecuting stage: {stage_name}")
+                    pipeline_tracking['current_stage'] = stage_name
+                    stage_start = datetime.now()
                     
-                # Update tracking
-                pipeline_tracking['stages_completed'].append({
-                    'stage': stage_name,
-                    'duration': stage_duration,
-                    'success': True
-                })
-                print(f"Stage {stage_name} completed in {stage_duration:.2f} seconds")
+                    # Execute stage
+                    result = stage_func(result)
+                    
+                    # Validate stage result
+                    if result is None:
+                        raise ValueError(f"Stage {stage_name} failed to produce valid results")
+                        
+                    # Record stage completion
+                    stage_duration = (datetime.now() - stage_start).total_seconds()
+                    pipeline_tracking['stages_completed'].append({
+                        'stage': stage_name,
+                        'duration': stage_duration,
+                        'success': True,
+                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    })
+                    
+                    print(f"Stage completed in {stage_duration:.2f} seconds")
+                    
+                except Exception as e:
+                    print(f"Error in stage {stage_name}: {e}")
+                    pipeline_tracking['stages_completed'].append({
+                        'stage': stage_name,
+                        'error': str(e),
+                        'success': False,
+                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    })
+                    raise
             
-            # Get final predictions and analysis
+            # Get final predictions
             final_numbers = self.pipeline_data.get('final_prediction')
             probabilities = self.pipeline_data.get('probabilities')
             analysis_context = self.pipeline_data.get('analysis_context', {})
             
-            # Additional validation for probabilities
+            # Validate predictions
+            if final_numbers is None or len(final_numbers) != self.numbers_to_draw:
+                raise ValueError(f"Invalid prediction results: expected {self.numbers_to_draw} numbers")
+                
+            # Convert probabilities to list if needed
             if isinstance(probabilities, np.ndarray):
                 probabilities = probabilities.tolist()
-            
-            # Ensure we have the correct number of predictions
-            if final_numbers is None or len(final_numbers) != self.numbers_to_draw:
-                raise ValueError("Invalid prediction results")
-            
-            # Store pipeline execution metadata
-            self.pipeline_data['pipeline_execution'] = {
+                
+            # Store execution metadata
+            self.pipeline_data['prediction_metadata'] = {
                 'execution_time': (datetime.now() - pipeline_tracking['start_time']).total_seconds(),
-                'stages': pipeline_tracking['stages_completed'],
-                'timestamp': datetime.now()
+                'stages_completed': pipeline_tracking['stages_completed'],
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'numbers_generated': len(final_numbers),
+                'prediction_confidence': float(np.mean(probabilities)) if probabilities else None
             }
             
-            print("\nPipeline execution completed successfully")
-            print(f"Total execution time: {self.pipeline_data['pipeline_execution']['execution_time']:.2f} seconds")
+            print("\nPrediction pipeline completed successfully:")
+            print(f"- Numbers generated: {sorted(final_numbers)}")
+            print(f"- Total execution time: {self.pipeline_data['prediction_metadata']['execution_time']:.2f} seconds")
             
             return final_numbers, probabilities, analysis_context
             
         except Exception as e:
             error_msg = f"Error in prediction pipeline: {str(e)}"
-            print(error_msg)
+            print(f"\n{error_msg}")
             
             # Update pipeline data with error information
             self.pipeline_data['error'] = {
                 'message': error_msg,
                 'stage': pipeline_tracking.get('current_stage'),
-                'timestamp': datetime.now()
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
             
+            traceback.print_exc()
             return None, None, None
-
 
     def prepare_feature_columns(self, data):
         """Ensure all required feature columns exist"""
@@ -1071,17 +1419,75 @@ class LotteryPredictor:
         except Exception as e:
             print(f"Error processing raw data: {e}")
             return None
+    def save_predictions_to_csv(self, predicted_numbers, probabilities, timestamp=None, csv_file=None):
+        """Save prediction results to CSV with enhanced metadata"""
+        try:
+            # Use provided csv_file or generate default filename
+            if csv_file is None:
+                current_timestamp = timestamp or datetime.now().strftime('%Y%m%d_%H%M%S')
+                csv_file = os.path.join(PATHS['PREDICTIONS'], f'prediction_{current_timestamp}.csv')
+            
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(csv_file), exist_ok=True)
+            
+            # Create prediction DataFrame
+            prediction_data = pd.DataFrame({
+                'number': sorted(predicted_numbers),
+                'probability': [float(p) for p in probabilities],
+                'timestamp': timestamp or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            })
+            
+            # Add metadata
+            metadata = {
+                'prediction_time': timestamp or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'model_version': self.training_status.get('timestamp', 'unknown'),
+                'prob_score': self.training_status.get('prob_score', 0),
+                'pattern_score': self.training_status.get('pattern_score', 0),
+                'feature_dimension': self.training_status.get('features', 0),
+                'feature_mode': self.pipeline_data.get('use_combined_features', False)
+            }
+            
+            # Save prediction data
+            prediction_data.to_csv(csv_file, index=False)
+            
+            # Save metadata to separate file
+            metadata_file = csv_file.replace('.csv', '_metadata.json')
+            with open(metadata_file, 'w') as f:
+                json.dump(metadata, f, indent=4)
+                
+            print(f"\nPrediction saved successfully:")
+            print(f"- Data file: {os.path.basename(csv_file)}")
+            print(f"- Metadata file: {os.path.basename(metadata_file)}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error saving predictions to CSV: {e}")
+            traceback.print_exc()
+            return False
 
 if __name__ == "__main__":
-    predictor = LotteryPredictor()
-    
     try:
+        # Initialize predictor with configuration
+        predictor = LotteryPredictor(
+            numbers_range=(1, 80),
+            numbers_to_draw=20,
+            use_combined_features=True
+        )
+        
+        print("\n=== Lottery Predictor Initialization ===")
+        print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
         # Load historical data
+        print("\nLoading historical data...")
         historical_data = predictor.load_data()
         if historical_data is None:
             raise ValueError("Failed to load historical data")
+            
+        print(f"Loaded {len(historical_data)} historical draws")
         
         # Generate prediction
+        print("\nGenerating prediction...")
         prediction, probabilities, analysis = predictor.train_and_predict(
             historical_data=historical_data
         )
@@ -1089,12 +1495,24 @@ if __name__ == "__main__":
         if prediction is not None:
             print("\n=== Prediction Results ===")
             print(f"Predicted numbers: {sorted(prediction)}")
+            
+            if probabilities is not None:
+                confidence = np.mean(probabilities) if isinstance(probabilities, (list, np.ndarray)) else 0
+                print(f"Average confidence: {confidence:.4f}")
+            
             print("\n=== Analysis Context ===")
-            for key, value in analysis.items():
-                print(f"{key}: {value}")
+            if analysis:
+                for key, value in analysis.items():
+                    print(f"{key}: {value}")
             
             # Save prediction
             predictor.save_prediction_to_csv(prediction, probabilities)
+            
+        else:
+            print("\nError: Prediction generation failed")
+            
+        print(f"\nExecution completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
     except Exception as e:
-        print(f"\nError in main execution: {e}")
+        print(f"\nCritical error in main execution: {e}")
+        traceback.print_exc()

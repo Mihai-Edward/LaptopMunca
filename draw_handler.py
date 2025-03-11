@@ -1,4 +1,5 @@
 import glob
+import json
 import traceback
 import pandas as pd
 from datetime import datetime, timedelta
@@ -18,39 +19,88 @@ import joblib
 
 class DrawHandler:
     def __init__(self):
-        # Initialize paths using config
-        ensure_directories()
-        self.csv_file = PATHS['HISTORICAL_DATA']
-        self.models_dir = PATHS['MODELS_DIR']
-        self.predictions_dir = os.path.dirname(PATHS['PREDICTIONS'])
-        
-        # Initialize number columns
-        self.number_cols = [f'number{i}' for i in range(1, 21)]
-        
-        # Pipeline status tracking remains the same
-        self.pipeline_status = {
-            'success': False,
-            'stage': None,
-            'error': None,
-            'timestamp': None
-        }
-        
-        # Initialize predictor
-        self.predictor = LotteryPredictor()
+        """Initialize DrawHandler with enhanced configuration and tracking"""
+        try:
+            # Initialize paths using config
+            ensure_directories()
+            self.csv_file = PATHS['HISTORICAL_DATA']
+            self.models_dir = PATHS['MODELS_DIR']
+            self.predictions_dir = os.path.dirname(PATHS['PREDICTIONS'])
+            
+            # Initialize number columns
+            self.number_cols = [f'number{i}' for i in range(1, 21)]
+            
+            # Enhanced pipeline status tracking
+            self.pipeline_status = {
+                'success': False,
+                'stage': None,
+                'error': None,
+                'timestamp': None,
+                'stages_completed': [],
+                'warnings': [],
+                'last_successful_run': None,
+                'performance_metrics': {
+                    'accuracy': None,
+                    'reliability': None,
+                    'last_update': None
+                }
+            }
+            
+            # Initialize predictor with enhanced configuration
+            self.predictor = LotteryPredictor()
+            
+            # Initialize pipeline tracking
+            self.pipeline_tracking = {
+                'start_time': None,
+                'stages_completed': [],
+                'current_stage': None,
+                'error': None,
+                'metrics': {
+                    'processing_time': {},
+                    'success_rate': {},
+                    'error_counts': {}
+                }
+            }
 
-        # Initialize continuous learning tracking
-        self.learning_dir = os.path.join(self.models_dir, 'learning_history')
-        os.makedirs(self.learning_dir, exist_ok=True)
-        self.learning_history_file = os.path.join(self.learning_dir, 'learning_history.csv')
-        self.learning_status = {
-            'last_learning': None,
-            'cycles_completed': 0,
-            'initial_accuracy': None,
-            'current_accuracy': None,
-            'improvement_rate': None,
-            'last_adjustments': []
-        }
-        self._load_learning_status()
+            # Initialize continuous learning tracking with enhanced metrics
+            self.learning_dir = os.path.join(self.models_dir, 'learning_history')
+            os.makedirs(self.learning_dir, exist_ok=True)
+            
+            # Learning history file paths
+            self.learning_history_file = os.path.join(self.learning_dir, 'learning_history.csv')
+            self.learning_metrics_file = os.path.join(self.learning_dir, 'learning_metrics.json')
+            
+            # Enhanced learning status tracking
+            self.learning_status = {
+                'last_learning': None,
+                'cycles_completed': 0,
+                'initial_accuracy': None,
+                'current_accuracy': None,
+                'improvement_rate': None,
+                'last_adjustments': [],
+                'performance_history': [],
+                'model_versions': [],
+                'feature_modes': [],
+                'training_metrics': {
+                    'avg_training_time': None,
+                    'best_accuracy': None,
+                    'worst_accuracy': None,
+                    'stability_score': None
+                }
+            }
+            
+            # Load learning status and validate configuration
+            self._load_learning_status()
+            self._validate_configuration()
+            
+            print("DrawHandler initialized successfully")
+            print(f"Using models directory: {self.models_dir}")
+            print(f"Predictions directory: {self.predictions_dir}")
+            
+        except Exception as e:
+            print(f"Error initializing DrawHandler: {e}")
+            traceback.print_exc()
+            raise
 
     def handle_prediction_pipeline(self, historical_data=None):
         """Coordinates the prediction pipeline process with enhanced analysis"""
@@ -68,6 +118,12 @@ class DrawHandler:
             self.pipeline_status['stage'] = 'data_analysis'
             analyzer = DataAnalysis(historical_data)
             analysis_results = analyzer.get_analysis_results()
+            
+            # Ensure predictor has pipeline_data initialized for compatibility
+            if not hasattr(self.predictor, 'pipeline_data'):
+                self.predictor.pipeline_data = {}
+                
+            # Pass analysis results to predictor
             self.predictor.pipeline_data['analysis_context'] = analysis_results
             
             # 2. Prediction Stage
@@ -108,6 +164,44 @@ class DrawHandler:
             self.pipeline_status['success'] = False
             return None, None, None
 
+    def _validate_configuration(self):
+        """Validate and verify all required configurations"""
+        try:
+            # Verify paths exist
+            required_paths = [self.csv_file, self.models_dir, self.predictions_dir]
+            for path in required_paths:
+                if not os.path.exists(os.path.dirname(path)):
+                    os.makedirs(os.path.dirname(path))
+                    print(f"Created directory: {os.path.dirname(path)}")
+            
+            # Verify predictor initialization
+            if not hasattr(self, 'predictor') or self.predictor is None:
+                self.predictor = LotteryPredictor()
+                print("Initialized new LotteryPredictor instance")
+            
+            # Initialize metrics tracking file if it doesn't exist
+            metrics_file = os.path.join(self.learning_dir, 'performance_metrics.json')
+            if not os.path.exists(metrics_file):
+                initial_metrics = {
+                    'version': '1.0',
+                    'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'metrics': {
+                        'predictions': 0,
+                        'successful_predictions': 0,
+                        'average_accuracy': 0.0,
+                        'last_update': None
+                    }
+                }
+                with open(metrics_file, 'w') as f:
+                    json.dump(initial_metrics, f, indent=4)
+                print("Initialized performance metrics tracking")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error in configuration validation: {e}")
+            return False
+
     def train_ml_models(self, force_retrain=False, use_combined_features=True):
         """Train or retrain ML models"""
         try:
@@ -123,6 +217,13 @@ class DrawHandler:
             # Initialize predictor with combined features setting if it doesn't exist
             if not hasattr(self, 'predictor') or self.predictor is None:
                 self.predictor = LotteryPredictor(use_combined_features=use_combined_features)
+            
+            # Initialize pipeline_data if needed
+            if not hasattr(self.predictor, 'pipeline_data'):
+                self.predictor.pipeline_data = {}
+            
+            # Set feature mode in pipeline_data
+            self.predictor.pipeline_data['use_combined_features'] = use_combined_features
         
             # Prepare data for training
             features, labels = self.predictor.prepare_data(historical_data)
@@ -131,7 +232,7 @@ class DrawHandler:
         
             print(f"Prepared features shape: {features.shape}")
             print(f"Prepared labels shape: {labels.shape}")
-
+            
             # IMPORTANT: Set the feature model type BEFORE training
             self.predictor.pipeline_data['use_combined_features'] = use_combined_features
         
@@ -211,63 +312,7 @@ class DrawHandler:
             print(f"Error in model training: {e}")
             return False
 
-    def save_draw_to_csv(self, draw_date, draw_numbers, csv_file=None):
-        if csv_file is None:
-            csv_file = self.csv_file
-        return save_draw_to_csv(draw_date, draw_numbers, csv_file)
 
-    def save_predictions_to_csv(self, predicted_numbers, probabilities, timestamp, csv_file=None):
-        """Save predictions with validation"""
-        if csv_file is None:
-            csv_file = PATHS['PREDICTIONS']
-        try:
-            # Validate inputs
-            if len(predicted_numbers) != 20:
-                print(f"WARNING: Adjusting prediction length from {len(predicted_numbers)} to 20")
-                predicted_numbers = (predicted_numbers + [0] * 20)[:20]
-            
-            # Ensure probabilities is a list
-            if isinstance(probabilities, np.ndarray):
-                probabilities = probabilities.tolist()
-            
-            # Handle probability array lengths
-            if len(probabilities) == 80:
-                # Full distribution - extract relevant probabilities
-                prob_values = [probabilities[num - 1] for num in predicted_numbers]
-            elif len(probabilities) == len(predicted_numbers):
-                # Direct probability mapping
-                prob_values = probabilities
-            else:
-                # Fallback to uniform distribution
-                prob_values = [1.0/len(predicted_numbers)] * len(predicted_numbers)
-            
-            data = {
-                'Timestamp': [timestamp],
-                'Predicted_Numbers': [','.join(map(str, predicted_numbers))],
-                'Probabilities': [','.join(f'{p:.4f}' for p in prob_values)]
-            }
-            
-            df = pd.DataFrame(data)
-            os.makedirs(os.path.dirname(csv_file), exist_ok=True)
-            
-            if os.path.exists(csv_file):
-                df.to_csv(csv_file, mode='a', header=False, index=False)
-            else:
-                df.to_csv(csv_file, index=False)
-                
-            print(f"DEBUG: Saved predictions to {csv_file}")
-            return True
-            
-        except Exception as e:
-            print(f"Error saving predictions to CSV: {e}")
-            traceback.print_exc()
-            return False
-
-    def save_predictions_to_excel(self, predictions, probabilities, timestamp, excel_file=None):
-        if excel_file is None:
-            excel_file = PATHS['ANALYSIS']
-        return save_predictions_to_excel(predictions, probabilities, timestamp, excel_file)
-    
     def _get_latest_model(self):
         """Get the path to the latest model"""
         try:
@@ -344,8 +389,21 @@ class DrawHandler:
                 if col not in data.columns:
                     data[col] = 0
                     
+            # Add additional preparation for compatibility with new predictor
+            if hasattr(self.predictor, 'pipeline_data') and self.predictor.pipeline_data.get('use_combined_features', False):
+                # Convert numerical columns to float
+                number_cols = [f'number{i}' for i in range(1, 21)]
+                for col in number_cols:
+                    data[col] = data[col].astype(float)
+                
+                # Add timestamp-based features
+                data['timestamp'] = pd.to_datetime(data['date'])
+                data['hour_of_day'] = data['timestamp'].dt.hour
+                data['day_of_week'] = data['timestamp'].dt.dayofweek
+                data['week_of_year'] = data['timestamp'].dt.isocalendar().week
+                
             return data
-            
+                
         except Exception as e:
             print(f"Error preparing data: {e}")
             return None
@@ -385,11 +443,14 @@ class DrawHandler:
                 # Get predictions
                 print("\nDEBUG: Getting predictions...")
                 
-                # CRITICAL CHANGE: Pass analysis results to predictor BEFORE prediction
-                if hasattr(self.predictor, 'pipeline_data'):
-                    self.predictor.pipeline_data['analysis_context'] = analysis_results
-                    print("DEBUG: Added analysis context to predictor pipeline data")
-                    
+                # Ensure predictor has pipeline_data initialized
+                if not hasattr(self.predictor, 'pipeline_data'):
+                    self.predictor.pipeline_data = {}
+                
+                # Pass analysis results to predictor
+                self.predictor.pipeline_data['analysis_context'] = analysis_results
+                
+                # Get prediction
                 prediction_result = self.predictor.predict(data)
                 
                 if prediction_result is None or len(prediction_result) != 3:
@@ -518,36 +579,65 @@ class DrawHandler:
     # NEW METHODS FOR CONTINUOUS LEARNING
     
     def _load_learning_status(self):
-        """Load current learning status from history file"""
+        """Load or initialize learning status tracking"""
         try:
-            if os.path.exists(self.learning_history_file):
-                df = pd.read_csv(self.learning_history_file)
-                if not df.empty:
-                    last_row = df.iloc[-1]
-                    
-                    self.learning_status['last_learning'] = last_row['timestamp']
-                    self.learning_status['cycles_completed'] = len(df)
-                    
-                    if len(df) > 1:
-                        self.learning_status['initial_accuracy'] = df.iloc[0]['accuracy']
-                        self.learning_status['current_accuracy'] = last_row['accuracy']
-                        self.learning_status['improvement_rate'] = (
-                            (last_row['accuracy'] - df.iloc[0]['accuracy']) / df.iloc[0]['accuracy'] * 100
-                            if df.iloc[0]['accuracy'] > 0 else 0
-                        )
-                        
-                        # Get last adjustments if available
-                        if 'adjustments' in last_row:
-                            try:
-                                self.learning_status['last_adjustments'] = eval(last_row['adjustments'])
-                            except:
-                                pass
-                        
-                    print(f"Loaded learning history: {self.learning_status['cycles_completed']} learning cycles completed")
-                    
+            # Check if learning metrics file exists
+            if os.path.exists(self.learning_metrics_file):
+                with open(self.learning_metrics_file, 'r') as f:
+                    self.learning_status.update(json.load(f))
+                print("Loaded existing learning metrics")
+            else:
+                # Initialize new learning metrics
+                self.learning_status.update({
+                    'last_learning': None,
+                    'cycles_completed': 0,
+                    'initial_accuracy': None,
+                    'current_accuracy': None,
+                    'improvement_rate': None,
+                    'last_adjustments': [],
+                    'performance_history': [],
+                    'model_versions': [],
+                    'feature_modes': [],
+                    'training_metrics': {
+                        'avg_training_time': None,
+                        'best_accuracy': None,
+                        'worst_accuracy': None,
+                        'stability_score': None
+                    }
+                })
+                
+                # Create initial metrics file
+                self._save_learning_status()
+                print("Initialized new learning metrics")
+                
+            # Verify predictor has required attributes
+            if not hasattr(self.predictor, 'pipeline_data'):
+                self.predictor.pipeline_data = {}
+                
+            # Pass relevant learning status to predictor
+            self.predictor.pipeline_data['learning_history'] = {
+                'cycles_completed': self.learning_status['cycles_completed'],
+                'current_accuracy': self.learning_status['current_accuracy'],
+                'feature_modes': self.learning_status['feature_modes']
+            }
+            
+            return True
+            
         except Exception as e:
             print(f"Error loading learning status: {e}")
-    
+            return False
+
+    def _save_learning_status(self):
+        """Save current learning status"""
+        try:
+            os.makedirs(os.path.dirname(self.learning_metrics_file), exist_ok=True)
+            with open(self.learning_metrics_file, 'w') as f:
+                json.dump(self.learning_status, f, indent=4)
+            return True
+        except Exception as e:
+            print(f"Error saving learning status: {e}")
+            return False
+        
     def apply_learning_from_evaluations(self):
         """
         Apply continuous learning by analyzing evaluation results
@@ -590,7 +680,6 @@ class DrawHandler:
             self._save_learning_metadata(stats, adjustments)
             
             # Update learning status
-                       # Update learning status
             self.learning_status['last_learning'] = adjustments['timestamp']
             self.learning_status['cycles_completed'] += 1
             self.learning_status['current_accuracy'] = average_accuracy
