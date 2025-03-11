@@ -196,80 +196,46 @@ def check_and_train_model():
     except Exception as e:
         print(f"Error checking/training model: {e}")
         return False
-
 def train_and_predict():
-    """Generate predictions using DrawHandler's pipeline"""
+    """Generate predictions by letting DrawHandler manage everything"""
     try:
         handler = DrawHandler()
-        print("\nStarting prediction process...")
         
-        # Load historical data
-        historical_data = pd.read_csv(PATHS['HISTORICAL_DATA'])
-        if historical_data is None or historical_data.empty:
-            print("No historical data available")
+        # Let DrawHandler do all the work
+        predictions, probabilities, analysis = handler.handle_prediction_pipeline()
+        
+        if predictions:
+            next_draw = get_next_draw_time(datetime.now())
+            
+            print("\n=== Prediction Results ===")
+            print(f"Next Draw Time: {next_draw.strftime('%Y-%m-%d %H:%M')}")
+            print(f"Predicted Numbers: {', '.join(map(str, sorted(predictions)))}")
+            
+            if probabilities:
+                print("\n=== Probabilities ===")
+                for num, prob in zip(sorted(predictions), probabilities):
+                    print(f"Number {num:2d}: {prob:.4f}")
+            
+            if analysis:
+                print("\n=== Analysis Insights ===")
+                if 'hot_cold' in analysis:
+                    hot, cold = analysis['hot_cold']
+                    print(f"Hot Numbers: {hot[:5]}")  # Show top 5
+                    print(f"Cold Numbers: {cold[:5]}") # Show top 5
+                
+                if 'common_pairs' in analysis:
+                    print(f"Common Pairs: {analysis['common_pairs'][:3]}")  # Show top 3
+            
+            print("\n✓ Prediction completed successfully!")
+            return predictions, probabilities, analysis
+            
+        else:
+            print("\n✗ Failed to generate predictions")
             return None, None, None
-            
-        # Format data correctly for DataAnalysis
-        formatted_draws = []
-        for _, row in historical_data.iterrows():
-            try:
-                # Extract date and numbers
-                date = row['date']
-                numbers = sorted([int(row[f'number{i}']) for i in range(1, 21)])
-                
-                # Validate numbers
-                if len(numbers) == 20 and all(1 <= n <= 80 for n in numbers):
-                    formatted_draws.append((date, numbers))
-            except Exception as e:
-                print(f"Error processing row: {e}")
-                continue
-        
-        if not formatted_draws:
-            print("No valid draws to process")
-            return None, None, None
-            
-        print(f"Processed {len(formatted_draws)} valid draws")
-        
-        # Now perform analysis before prediction
-        if not perform_complete_analysis(formatted_draws):
-            print("Warning: Analysis failed, but continuing with prediction...")
-        
-        # Call handle_prediction_pipeline with properly formatted data
-        try:
-            result = handler.handle_prediction_pipeline()
-            
-            if isinstance(result, tuple) and len(result) == 3:
-                predictions, probabilities, analysis_data = result
-                
-                if predictions is not None:
-                    print("\n✓ Prediction generated successfully!")
-                    next_draw_time = get_next_draw_time(datetime.now())
-                    
-                    print(f"\nPredicted numbers for next draw at {next_draw_time.strftime('%Y-%m-%d %H:%M:%S')}:")
-                    print(f"Numbers: {', '.join(map(str, sorted(predictions)))}")
-                    
-                    if probabilities is not None:
-                        print("\nProbabilities for each predicted number:")
-                        for num, prob in zip(sorted(predictions), probabilities):
-                            print(f"Number {num}: {prob:.4f}")
-
-                    if analysis_data and isinstance(analysis_data, dict) and 'hot_numbers' in analysis_data:
-                        print(f"\nHot numbers analysis: {[num for num, _ in analysis_data['hot_numbers'][:5]]}")
-                    
-                    return predictions, probabilities, analysis_data
-                
-        except Exception as e:
-            print(f"Error during prediction generation: {str(e)}")
-            traceback.print_exc()
-        
-        print("\nFailed to generate predictions")
-        return None, None, None
             
     except Exception as e:
-        print(f"\nError in prediction process: {str(e)}")
-        traceback.print_exc()
+        print(f"\n✗ Error: {str(e)}")
         return None, None, None
-    # 6. Pipeline Testing and Integration
 def test_pipeline_integration():
     """Test the integrated prediction pipeline with enhanced monitoring"""
     try:
@@ -445,20 +411,23 @@ def main():
                     
                     print("\nGenerating ML prediction for next draw...")
                     try:
-                        predictor = LotteryPredictor()
-                        if predictor.train_models():
-                            print("\n✓ Models trained successfully")
-                            
-                            result = train_and_predict()
-                            if isinstance(result, tuple) and len(result) == 3:
-                                predictions, probabilities, analysis = result
-                                if predictions is not None:
-                                    print("\n✓ Prediction process completed successfully!")
-                                    print(f"Predicted numbers: {', '.join(map(str, sorted(predictions)))}")
-                                else:
-                                    print("\n✗ Failed to generate predictions")
+                        # Call train_and_predict which now uses DrawHandler to manage everything
+                        result = train_and_predict()
+                        
+                        if result and len(result) == 3:
+                            predictions, probabilities, analysis = result
+                            if predictions is not None:
+                                print("\n✓ Prediction process completed successfully!")
+                                print(f"Predicted numbers: {', '.join(map(str, sorted(predictions)))}")
+                                
+                                if probabilities is not None:
+                                    print("\nProbabilities for each number:")
+                                    for num, prob in zip(sorted(predictions), probabilities):
+                                        print(f"Number {num}: {prob:.4f}")
                             else:
-                                print("\n✗ Invalid prediction format")
+                                print("\n✗ Failed to generate predictions")
+                        else:
+                            print("\n✗ Invalid prediction result format")
                     except Exception as e:
                         print(f"\n✗ Error during prediction: {str(e)}")
                         traceback.print_exc()
