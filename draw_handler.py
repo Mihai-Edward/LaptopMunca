@@ -514,25 +514,27 @@ class DrawHandler:
             return None, None, None
 
     def _handle_pipeline_results(self, predictions, probabilities, analysis_results):
-        """Handle the results from the prediction pipeline"""
+        """Handle the results from the prediction pipeline with enhanced tracking and integration"""
         try:
             print("\nDEBUG: Starting pipeline results handler")
+            
+            # Validate inputs
             if predictions is None or probabilities is None:
                 print("No valid predictions to handle")
+                self.pipeline_status['success'] = False
+                self.pipeline_status['error'] = "Invalid prediction results"
                 return False
 
             # Format timestamp and next draw time
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             next_draw_time = get_next_draw_time(datetime.now())
 
-            # Convert predictions to list if needed
+            # Convert and validate predictions
             if isinstance(predictions, np.ndarray):
                 predictions = predictions.tolist()
-
-            # Ensure predictions are sorted
             predictions = sorted(predictions)
 
-            # Handle probabilities based on array length
+            # Handle probabilities
             if isinstance(probabilities, np.ndarray):
                 probabilities = probabilities.tolist()
 
@@ -542,15 +544,26 @@ class DrawHandler:
             else:  # Direct mapping
                 prob_map = dict(zip(predictions, probabilities))
 
-            # Save predictions
-            save_success = self.save_predictions_to_csv(
-                predictions, 
-                probabilities,
-                timestamp
-            )
+            # Store results in predictor's pipeline data
+            self.predictor.pipeline_data.update({
+                'latest_prediction': {
+                    'numbers': predictions,
+                    'probabilities': prob_map,
+                    'timestamp': timestamp,
+                    'next_draw_time': next_draw_time.strftime('%Y-%m-%d %H:%M:%S')
+                }
+            })
 
-            if not save_success:
-                print("WARNING: Failed to save predictions to CSV")
+            # Update pipeline status
+            self.pipeline_status.update({
+                'success': True,
+                'last_successful_run': timestamp,
+                'performance_metrics': {
+                    'accuracy': None,  # Will be updated by evaluator
+                    'reliability': len(predictions) == 20,  # Basic validation
+                    'last_update': timestamp
+                }
+            })
 
             # Display results
             formatted_numbers = ','.join(map(str, predictions))
@@ -564,32 +577,82 @@ class DrawHandler:
 
             # Handle analysis results
             if analysis_results:
+                print("\nAnalysis Results:")
                 if 'hot_cold' in analysis_results and analysis_results['hot_cold']:
                     hot_numbers = [num for num, _ in analysis_results['hot_cold'][0][:4]]
-                    save_top_4_numbers_to_excel(hot_numbers)
-                    print(f"\nTop 4 numbers based on analysis: {','.join(map(str, hot_numbers))}")
+                    print(f"Top 4 hot numbers: {','.join(map(str, hot_numbers))}")
+                
+                # Store analysis metrics
+                self.pipeline_data.update({
+                    'latest_analysis': {
+                        'timestamp': timestamp,
+                        'metrics': analysis_results
+                    }
+                })
+
+            # Save results to predictor's internal storage
+            try:
+                self.predictor.save_predictions_to_csv(
+                    predicted_numbers=predictions,
+                    probabilities=probabilities,
+                    timestamp=timestamp
+                )
+            except Exception as e:
+                print(f"Warning: Could not save predictions: {e}")
 
             return True
 
         except Exception as e:
             print(f"Error handling pipeline results: {e}")
+            self.pipeline_status.update({
+                'success': False,
+                'error': str(e),
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            })
             traceback.print_exc()
             return False
-
-    # NEW METHODS FOR CONTINUOUS LEARNING
     
     def _load_learning_status(self):
-        """Load or initialize learning status tracking"""
+        """Load or initialize learning status tracking with enhanced metrics and validation"""
         try:
+            print("\nLoading learning status...")
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
             # Check if learning metrics file exists
             if os.path.exists(self.learning_metrics_file):
                 with open(self.learning_metrics_file, 'r') as f:
-                    self.learning_status.update(json.load(f))
+                    loaded_status = json.load(f)
+                    
+                # Validate loaded data structure
+                required_keys = {
+                    'last_learning', 'cycles_completed', 'initial_accuracy',
+                    'current_accuracy', 'improvement_rate', 'last_adjustments',
+                    'performance_history', 'model_versions', 'feature_modes',
+                    'training_metrics'
+                }
+                
+                # Check for missing keys and initialize them if needed
+                for key in required_keys:
+                    if key not in loaded_status:
+                        print(f"Warning: Missing key '{key}' in loaded status, initializing...")
+                        loaded_status[key] = self.learning_status[key]
+                
+                # Update learning status with loaded data
+                self.learning_status.update(loaded_status)
                 print("Loaded existing learning metrics")
+                
+                # Validate training metrics
+                if not isinstance(self.learning_status['training_metrics'], dict):
+                    self.learning_status['training_metrics'] = {
+                        'avg_training_time': None,
+                        'best_accuracy': None,
+                        'worst_accuracy': None,
+                        'stability_score': None
+                    }
             else:
-                # Initialize new learning metrics
+                # Initialize new learning metrics with enhanced tracking
                 self.learning_status.update({
-                    'last_learning': None,
+                    'last_learning': current_time,
                     'cycles_completed': 0,
                     'initial_accuracy': None,
                     'current_accuracy': None,
@@ -603,284 +666,647 @@ class DrawHandler:
                         'best_accuracy': None,
                         'worst_accuracy': None,
                         'stability_score': None
+                    },
+                    'metadata': {
+                        'created_at': current_time,
+                        'last_modified': current_time,
+                        'version': '2.0'
                     }
                 })
                 
                 # Create initial metrics file
                 self._save_learning_status()
                 print("Initialized new learning metrics")
-                
+            
             # Verify predictor has required attributes
             if not hasattr(self.predictor, 'pipeline_data'):
                 self.predictor.pipeline_data = {}
-                
+            
             # Pass relevant learning status to predictor
             self.predictor.pipeline_data['learning_history'] = {
                 'cycles_completed': self.learning_status['cycles_completed'],
                 'current_accuracy': self.learning_status['current_accuracy'],
-                'feature_modes': self.learning_status['feature_modes']
+                'feature_modes': self.learning_status['feature_modes'],
+                'last_learning': self.learning_status['last_learning'],
+                'performance_metrics': self.learning_status['training_metrics']
+            }
+            
+            # Update metadata
+            self.learning_status['metadata'] = {
+                'last_loaded': current_time,
+                'version': '2.0',
+                'predictor_version': getattr(self.predictor, 'version', 'unknown')
             }
             
             return True
             
         except Exception as e:
             print(f"Error loading learning status: {e}")
+            traceback.print_exc()
             return False
 
     def _save_learning_status(self):
-        """Save current learning status"""
+        """Save current learning status with enhanced validation and backup"""
         try:
+            print("\nSaving learning status...")
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Update metadata before saving
+            self.learning_status['metadata'] = {
+                'last_modified': current_time,
+                'version': '2.0',
+                'predictor_version': getattr(self.predictor, 'version', 'unknown')
+            }
+            
+            # Create backup of existing file if it exists
+            if os.path.exists(self.learning_metrics_file):
+                backup_file = self.learning_metrics_file.replace('.json', f'_backup_{current_time.replace(":", "-")}.json')
+                try:
+                    import shutil
+                    shutil.copy2(self.learning_metrics_file, backup_file)
+                    print(f"Created backup: {os.path.basename(backup_file)}")
+                except Exception as e:
+                    print(f"Warning: Could not create backup: {e}")
+            
+            # Ensure directory exists
             os.makedirs(os.path.dirname(self.learning_metrics_file), exist_ok=True)
+            
+            # Validate data before saving
+            required_keys = {
+                'last_learning', 'cycles_completed', 'initial_accuracy',
+                'current_accuracy', 'improvement_rate', 'last_adjustments',
+                'performance_history', 'model_versions', 'feature_modes',
+                'training_metrics'
+            }
+            
+            missing_keys = [key for key in required_keys if key not in self.learning_status]
+            if missing_keys:
+                raise ValueError(f"Missing required keys in learning status: {missing_keys}")
+            
+            # Save with pretty printing
             with open(self.learning_metrics_file, 'w') as f:
                 json.dump(self.learning_status, f, indent=4)
+            
+            print(f"Learning status saved successfully")
+            
+            # Clean up old backups (keep last 5)
+            try:
+                backup_files = glob.glob(self.learning_metrics_file.replace('.json', '_backup_*.json'))
+                if len(backup_files) > 5:
+                    oldest_files = sorted(backup_files)[:-5]
+                    for file in oldest_files:
+                        os.remove(file)
+                    print(f"Cleaned up {len(oldest_files)} old backup files")
+            except Exception as e:
+                print(f"Warning: Could not clean up old backups: {e}")
+            
             return True
+            
         except Exception as e:
             print(f"Error saving learning status: {e}")
+            traceback.print_exc()
             return False
-        
+
     def apply_learning_from_evaluations(self):
-        """
-        Apply continuous learning by analyzing evaluation results
-        and making adjustments to the prediction model.
-        """
+        """Apply continuous learning with enhanced analysis and model adjustments"""
         try:
             print("\nApplying continuous learning from evaluation results...")
+            start_time = datetime.now()
             
+            # Initialize or update learning cycle tracking
+            cycle_tracking = {
+                'start_time': start_time.strftime('%Y-%m-%d %H:%M:%S'),
+                'cycle_number': self.learning_status['cycles_completed'] + 1,
+                'stages_completed': [],
+                'metrics': {}
+            }
+
             # Initialize the evaluator
             evaluator = PredictionEvaluator()
             
-            # Get performance statistics
+            # Get performance statistics with enhanced metrics
             stats = evaluator.get_performance_stats()
             if not stats or stats.get('total_predictions', 0) < 5:
                 print("Not enough evaluation data for learning (need at least 5 predictions)")
                 return False
-                
-            # Extract insights from evaluation results
-            problematic_numbers = list(stats.get('most_frequently_missed', {}).keys())
-            successful_numbers = list(stats.get('most_frequent_correct', {}).keys())
-            recent_trend = stats.get('recent_trend', 0)
-            average_accuracy = stats.get('average_accuracy', 0)
             
-            print(f"\nEvaluation insights:")
-            print(f"- Problematic numbers: {problematic_numbers}")
-            print(f"- Successful numbers: {successful_numbers}")
-            print(f"- Recent trend: {recent_trend:.3f} ({'improving' if recent_trend > 0 else 'declining'})")
-            print(f"- Average accuracy: {average_accuracy:.2f}%")
-            
-            # Create adjustment plan
-            adjustments = {
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'adjustments_made': []
+            # Extract and validate insights
+            insights = {
+                'problematic_numbers': list(stats.get('most_frequently_missed', {}).keys()),
+                'successful_numbers': list(stats.get('most_frequent_correct', {}).keys()),
+                'recent_trend': stats.get('recent_trend', 0),
+                'average_accuracy': stats.get('average_accuracy', 0),
+                'consistency_score': stats.get('consistency_score', 0),
+                'prediction_confidence': stats.get('prediction_confidence', 0)
             }
             
-            # Make appropriate adjustments to model based on insights
-            self._adjust_model_parameters(problematic_numbers, successful_numbers, recent_trend, average_accuracy, adjustments)
+            # Log insights
+            print("\nEvaluation insights:")
+            print(f"- Problematic numbers: {insights['problematic_numbers']}")
+            print(f"- Successful numbers: {insights['successful_numbers']}")
+            print(f"- Recent trend: {insights['recent_trend']:.3f} ({'improving' if insights['recent_trend'] > 0 else 'declining'})")
+            print(f"- Average accuracy: {insights['average_accuracy']:.2f}%")
+            print(f"- Consistency score: {insights['consistency_score']:.2f}")
+            print(f"- Prediction confidence: {insights['prediction_confidence']:.2f}")
             
-            # Save learning metadata
-            self._save_learning_metadata(stats, adjustments)
+            # Create adjustment plan with enhanced tracking
+            adjustments = {
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'adjustments_made': [],
+                'metrics_before': {
+                    'accuracy': insights['average_accuracy'],
+                    'trend': insights['recent_trend'],
+                    'consistency': insights['consistency_score']
+                }
+            }
             
-            # Update learning status
-            self.learning_status['last_learning'] = adjustments['timestamp']
-            self.learning_status['cycles_completed'] += 1
-            self.learning_status['current_accuracy'] = average_accuracy
-            
-            if self.learning_status['initial_accuracy'] is None:
-                self.learning_status['initial_accuracy'] = average_accuracy
-                
-            self.learning_status['improvement_rate'] = (
-                (average_accuracy - self.learning_status['initial_accuracy']) / self.learning_status['initial_accuracy'] * 100
-                if self.learning_status['initial_accuracy'] and self.learning_status['initial_accuracy'] > 0 else 0
+            # Make model adjustments based on insights
+            adjustment_success = self._adjust_model_parameters(
+                insights['problematic_numbers'],
+                insights['successful_numbers'],
+                insights['recent_trend'],
+                insights['average_accuracy'],
+                adjustments
             )
             
-            self.learning_status['last_adjustments'] = adjustments['adjustments_made']
+            if adjustment_success:
+                print("\nModel adjustments applied successfully")
+            else:
+                print("\nNo model adjustments were necessary")
             
+            # Save learning metadata with enhanced tracking
+            metadata = {
+                'cycle_number': cycle_tracking['cycle_number'],
+                'duration': (datetime.now() - start_time).total_seconds(),
+                'insights': insights,
+                'adjustments': adjustments,
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            self._save_learning_metadata(stats, adjustments, metadata)
+            
+            # Update learning status with enhanced metrics
+            self.learning_status.update({
+                'last_learning': adjustments['timestamp'],
+                'cycles_completed': cycle_tracking['cycle_number'],
+                'current_accuracy': insights['average_accuracy'],
+                'last_adjustments': adjustments['adjustments_made'],
+                'training_metrics': {
+                    'avg_training_time': stats.get('avg_training_time', self.learning_status['training_metrics']['avg_training_time']),
+                    'best_accuracy': max(insights['average_accuracy'], 
+                                       self.learning_status['training_metrics'].get('best_accuracy', 0) or 0),
+                    'worst_accuracy': min(insights['average_accuracy'], 
+                                        self.learning_status['training_metrics'].get('worst_accuracy', 100) or 100),
+                    'stability_score': insights['consistency_score']
+                }
+            })
+            
+            # Update initial accuracy if not set
+            if self.learning_status['initial_accuracy'] is None:
+                self.learning_status['initial_accuracy'] = insights['average_accuracy']
+            
+            # Calculate improvement rate
+            if self.learning_status['initial_accuracy'] and self.learning_status['initial_accuracy'] > 0:
+                self.learning_status['improvement_rate'] = (
+                    (insights['average_accuracy'] - self.learning_status['initial_accuracy']) 
+                    / self.learning_status['initial_accuracy'] * 100
+                )
+            
+            # Update predictor's pipeline data
+            self.predictor.pipeline_data.update({
+                'learning_status': {
+                    'last_cycle': metadata,
+                    'current_metrics': self.learning_status['training_metrics'],
+                    'improvement_rate': self.learning_status['improvement_rate']
+                }
+            })
+            
+            # Save updated learning status
+            self._save_learning_status()
+            
+            # Print summary
             print("\nLearning cycle completed:")
             print(f"- Total learning cycles: {self.learning_status['cycles_completed']}")
             print(f"- Current accuracy: {self.learning_status['current_accuracy']:.2f}%")
             print(f"- Total improvement: {self.learning_status['improvement_rate']:.2f}%")
+            print(f"- Cycle duration: {metadata['duration']:.2f} seconds")
             
             return True
             
         except Exception as e:
             print(f"Error applying learning: {e}")
+            traceback.print_exc()
             return False
-    
+
     def _adjust_model_parameters(self, problematic_numbers, successful_numbers, trend, accuracy, adjustments):
-        """Make specific adjustments to model parameters based on insights"""
+        """Make specific adjustments to model parameters with enhanced tracking and validation"""
         try:
-            # Define timestamp here - at the TOP of the method
+            print("\nAdjusting model parameters...")
+            # Define timestamp at the start
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
-            # Ensure predictor is initialized
+            # Initialize adjustment tracking
+            adjustment_tracking = {
+                'start_time': timestamp,
+                'adjustments_applied': [],
+                'parameters_modified': set(),
+                'metrics_before': {
+                    'accuracy': accuracy,
+                    'trend': trend
+                }
+            }
+            
+            # Ensure predictor and its pipeline_data are initialized
             if not hasattr(self.predictor, 'pipeline_data'):
                 self.predictor.pipeline_data = {}
+                
+            # Track original parameters for comparison
+            original_params = {
+                'number_boosts': self.predictor.pipeline_data.get('number_boosts', None),
+                'prediction_weights': self.predictor.pipeline_data.get('prediction_weights', None),
+                'feature_mode': self.predictor.pipeline_data.get('use_combined_features', False)
+            }
             
-            # 1. Create number boosts for problematic numbers
+            needs_adjustment = False
+            
+            # 1. Create number boosts with enhanced logic
             if problematic_numbers:
                 boost_array = np.ones(80)
+                max_boost = 1.15  # Maximum 15% boost
+                min_boost = 1.05  # Minimum 5% boost
+                
+                # Calculate dynamic boost based on accuracy
+                boost_factor = min_boost + (max_boost - min_boost) * (1 - min(accuracy, 50) / 50)
+                
                 for num in problematic_numbers[:10]:  # Take top 10 most missed
                     if 1 <= num <= 80:
-                        boost_array[num-1] = 1.05  # 5% boost for missed numbers
-            
+                        boost_array[num-1] = boost_factor
+                
                 self.predictor.pipeline_data['number_boosts'] = boost_array
-                adjustments['adjustments_made'].append(f"Boosted problematic numbers: {problematic_numbers[:10]}")
+                adjustments['adjustments_made'].append(
+                    f"Boosted problematic numbers with factor {boost_factor:.3f}: {problematic_numbers[:10]}"
+                )
+                adjustment_tracking['parameters_modified'].add('number_boosts')
+                needs_adjustment = True
             
-            # 2. Adjust model weights based on trend
-            if trend < 0:  # If performance is declining
-                # Modify weights between probability and pattern models
+            # 2. Adjust model weights based on trend and accuracy
+            weights = {}
+            if trend < 0 or accuracy < 30:  # More aggressive adjustment for poor performance
+                # Calculate dynamic weights based on performance
+                prob_weight = 0.5 - (0.1 * (trend if trend < 0 else 0))  # Increase probability weight for negative trends
+                pattern_weight = 1 - prob_weight
+                
                 weights = {
-                    'prob_weight': 0.5,  # Default is 0.4
-                    'pattern_weight': 0.5  # Default is 0.6
+                    'prob_weight': max(0.3, min(0.7, prob_weight)),  # Clamp between 0.3 and 0.7
+                    'pattern_weight': max(0.3, min(0.7, pattern_weight))
                 }
+                
                 self.predictor.pipeline_data['prediction_weights'] = weights
-                adjustments['adjustments_made'].append("Modified model weights due to declining trend")
+                adjustments['adjustments_made'].append(
+                    f"Modified model weights: prob={weights['prob_weight']:.2f}, pattern={weights['pattern_weight']:.2f}"
+                )
+                adjustment_tracking['parameters_modified'].add('prediction_weights')
+                needs_adjustment = True
             
-            # 3. If accuracy is very low, make more significant changes
-            if accuracy < 10:  # Below 10% accuracy
-                # Enable enhanced feature extraction
+            # 3. Enhanced feature mode adjustments
+            if accuracy < 20 or (trend < -0.1 and accuracy < 30):
+                # Enable enhanced feature extraction and analysis
                 self.predictor.pipeline_data['use_enhanced_features'] = True
+                self.predictor.pipeline_data['use_combined_features'] = True
                 
-                # Consider adjusting the training data balance
-                if hasattr(self.predictor, 'training_status'):
-                    self.predictor.training_status['require_retraining'] = True
+                # Adjust feature weights
+                self.predictor.pipeline_data['feature_weights'] = {
+                    'frequency': 0.4,
+                    'pattern': 0.3,
+                    'analysis': 0.3
+                }
                 
-                adjustments['adjustments_made'].append("Enabled enhanced features due to low accuracy")
+                adjustments['adjustments_made'].append(
+                    "Enabled enhanced features and adjusted feature weights"
+                )
+                adjustment_tracking['parameters_modified'].add('feature_mode')
+                needs_adjustment = True
+                
+                # Consider retraining if accuracy is very low
+                if accuracy < 10:
+                    if hasattr(self.predictor, 'training_status'):
+                        self.predictor.training_status['require_retraining'] = True
+                        adjustments['adjustments_made'].append("Marked for retraining due to low accuracy")
             
-            # 4. Save a new model if adjustments were made
-            if adjustments['adjustments_made']:
-                model_path = os.path.join(self.models_dir, f'lottery_predictor_adjusted_{timestamp}')
+            # 4. Save adjusted model if changes were made
+            if needs_adjustment:
+                # Create new model path with adjustment identifier
+                model_path = os.path.join(
+                    self.models_dir,
+                    f'lottery_predictor_adjusted_{timestamp}'
+                )
                 
                 # Save the adjusted model
-                self.predictor.save_models(path_prefix=model_path)
-                
-                # Save adjustment metadata
-                adjustment_file = os.path.join(self.models_dir, 'model_adjustments.txt')
-                with open(adjustment_file, 'a') as f:
-                    f.write(f"\n--- Adjustments made at {adjustments['timestamp']} ---\n")
-                    for adjustment in adjustments['adjustments_made']:
-                        f.write(f"- {adjustment}\n")
-                
-                print(f"Model adjusted and saved as: {os.path.basename(model_path)}")
-                
-                # Update timestamp file to point to the new adjusted model
-                timestamp_file = os.path.join(self.models_dir, 'model_timestamp.txt')
-                with open(timestamp_file, 'w') as f:
-                    f.write(timestamp)
-                
-                return True
+                if self.predictor.save_models(path_prefix=model_path):
+                    # Save adjustment metadata
+                    adjustment_file = os.path.join(self.models_dir, 'model_adjustments.txt')
+                    with open(adjustment_file, 'a') as f:
+                        f.write(f"\n--- Adjustments made at {adjustments['timestamp']} ---\n")
+                        for adjustment in adjustments['adjustments_made']:
+                            f.write(f"- {adjustment}\n")
+                        f.write(f"Parameters modified: {', '.join(adjustment_tracking['parameters_modified'])}\n")
+                    
+                    print(f"Model adjusted and saved as: {os.path.basename(model_path)}")
+                    
+                    # Update timestamp file
+                    timestamp_file = os.path.join(self.models_dir, 'model_timestamp.txt')
+                    with open(timestamp_file, 'w') as f:
+                        f.write(timestamp)
+                    
+                    # Store adjustment metrics
+                    self.predictor.pipeline_data['last_adjustment'] = {
+                        'timestamp': timestamp,
+                        'changes': adjustments['adjustments_made'],
+                        'parameters': list(adjustment_tracking['parameters_modified']),
+                        'metrics_before': adjustment_tracking['metrics_before']
+                    }
+                    
+                    return True
             else:
                 print("No adjustments needed at this time")
                 return False
-                
+                    
         except Exception as e:
             print(f"Error adjusting model parameters: {e}")
+            traceback.print_exc()
             return False
-    
-    def _save_learning_metadata(self, stats, adjustments):
-        """Save metadata about the learning process"""
+
+    def _save_learning_metadata(self, stats, adjustments, metadata=None):
+        """Save enhanced metadata about the learning process with improved tracking"""
         try:
-            # Create or append to learning history CSV
-            data = {
-                'timestamp': [adjustments['timestamp']],
-                'accuracy': [stats.get('average_accuracy', 0)],
-                'trend': [stats.get('recent_trend', 0)],
-                'best_prediction': [stats.get('best_prediction', 0)],
-                'adjustments': [str(adjustments['adjustments_made'])]
+            print("\nSaving learning metadata...")
+            current_time = datetime.now()
+            
+            # Prepare base metadata
+            base_metadata = {
+                'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                'stats': {
+                    'accuracy': stats.get('average_accuracy', 0),
+                    'trend': stats.get('recent_trend', 0),
+                    'best_prediction': stats.get('best_prediction', 0),
+                    'total_predictions': stats.get('total_predictions', 0),
+                    'success_rate': stats.get('success_rate', 0),
+                    'consistency_score': stats.get('consistency_score', 0),
+                    'prediction_confidence': stats.get('prediction_confidence', 0)
+                },
+                'adjustments': adjustments.get('adjustments_made', []),
+                'model_state': {
+                    'feature_mode': self.predictor.pipeline_data.get('use_combined_features', False),
+                    'weights': self.predictor.pipeline_data.get('prediction_weights', {}),
+                    'enhanced_features': self.predictor.pipeline_data.get('use_enhanced_features', False)
+                }
             }
             
-            df = pd.DataFrame(data)
+            # Merge with provided metadata if any
+            if metadata:
+                base_metadata.update(metadata)
             
-            if os.path.exists(self.learning_history_file):
-                mode = 'a'
-                header = False
-            else:
-                mode = 'w'
-                header = True
-                
-            df.to_csv(self.learning_history_file, mode=mode, header=header, index=False)
-            print(f"Learning metadata saved to {self.learning_history_file}")
+            # Create learning history DataFrame
+            history_data = {
+                'timestamp': [base_metadata['timestamp']],
+                'accuracy': [base_metadata['stats']['accuracy']],
+                'trend': [base_metadata['stats']['trend']],
+                'success_rate': [base_metadata['stats']['success_rate']],
+                'consistency': [base_metadata['stats']['consistency_score']],
+                'confidence': [base_metadata['stats']['prediction_confidence']],
+                'adjustments': [str(base_metadata['adjustments'])],
+                'feature_mode': [str(base_metadata['model_state']['feature_mode'])]
+            }
+            
+            df = pd.DataFrame(history_data)
+            
+            # Save to CSV with proper handling
+            try:
+                if os.path.exists(self.learning_history_file):
+                    df.to_csv(self.learning_history_file, mode='a', header=False, index=False)
+                else:
+                    os.makedirs(os.path.dirname(self.learning_history_file), exist_ok=True)
+                    df.to_csv(self.learning_history_file, index=False)
+            except Exception as e:
+                print(f"Warning: Could not save to CSV: {e}")
+            
+            # Save detailed metadata to JSON
+            detailed_metadata_file = os.path.join(
+                self.learning_dir,
+                f'learning_metadata_{current_time.strftime("%Y%m%d_%H%M%S")}.json'
+            )
+            
+            try:
+                os.makedirs(os.path.dirname(detailed_metadata_file), exist_ok=True)
+                with open(detailed_metadata_file, 'w') as f:
+                    json.dump(base_metadata, f, indent=4)
+            except Exception as e:
+                print(f"Warning: Could not save detailed metadata: {e}")
+            
+            # Clean up old metadata files (keep last 10)
+            try:
+                metadata_files = glob.glob(os.path.join(self.learning_dir, 'learning_metadata_*.json'))
+                if len(metadata_files) > 10:
+                    for old_file in sorted(metadata_files)[:-10]:
+                        os.remove(old_file)
+                    print(f"Cleaned up {len(metadata_files) - 10} old metadata files")
+            except Exception as e:
+                print(f"Warning: Could not clean up old metadata files: {e}")
+            
+            # Update predictor's pipeline data with latest metadata
+            self.predictor.pipeline_data.update({
+                'latest_learning_metadata': base_metadata,
+                'learning_history_file': self.learning_history_file,
+                'last_metadata_update': current_time.strftime('%Y-%m-%d %H:%M:%S')
+            })
+            
+            print(f"Learning metadata saved successfully")
+            print(f"History file: {os.path.basename(self.learning_history_file)}")
+            print(f"Detailed metadata: {os.path.basename(detailed_metadata_file)}")
+            
+            return True
             
         except Exception as e:
             print(f"Error saving learning metadata: {e}")
-    
+            traceback.print_exc()
+            return False
+
     def run_continuous_learning_cycle(self):
-        """Run a complete continuous learning cycle"""
+        """Run a complete continuous learning cycle with enhanced tracking and validation"""
         try:
-            print("\nStarting continuous learning cycle...")
+            current_time = datetime.now()
+            print(f"\nStarting continuous learning cycle at {current_time.strftime('%Y-%m-%d %H:%M:%S')}...")
             
-            # Initialize pipeline tracking at the beginning of the method
-            self.pipeline_tracking = {
-                'start_time': datetime.now(),
-                'stages_completed': [],
-                'current_stage': None,
-                'error': None
+            # Initialize cycle tracking
+            cycle_tracking = {
+                'start_time': current_time,
+                'cycle_number': self.learning_status['cycles_completed'] + 1,
+                'stages': {
+                    'evaluation': {'status': 'pending', 'start': None, 'end': None, 'error': None},
+                    'learning': {'status': 'pending', 'start': None, 'end': None, 'error': None},
+                    'testing': {'status': 'pending', 'start': None, 'end': None, 'error': None}
+                },
+                'metrics': {},
+                'errors': []
             }
-            
+
+            # Update pipeline tracking
+            self.pipeline_tracking.update({
+                'start_time': current_time,
+                'stages_completed': [],
+                'current_stage': 'initialization',
+                'error': None
+            })
+
             # Step 1: Evaluate past predictions
             print("\nStep 1: Evaluating past predictions...")
-            evaluator = PredictionEvaluator()
-            evaluator.evaluate_past_predictions()
+            cycle_tracking['stages']['evaluation']['start'] = datetime.now()
+            self.pipeline_tracking['current_stage'] = 'evaluation'
             
+            try:
+                evaluator = PredictionEvaluator()
+                evaluation_results = evaluator.evaluate_past_predictions()
+                
+                if evaluation_results:
+                    cycle_tracking['stages']['evaluation']['status'] = 'completed'
+                    cycle_tracking['metrics']['evaluation'] = evaluation_results
+                    self.pipeline_tracking['stages_completed'].append('evaluation')
+                else:
+                    raise ValueError("Evaluation failed to produce results")
+                    
+            except Exception as e:
+                error_msg = f"Evaluation stage failed: {str(e)}"
+                cycle_tracking['stages']['evaluation']['status'] = 'failed'
+                cycle_tracking['stages']['evaluation']['error'] = error_msg
+                cycle_tracking['errors'].append(error_msg)
+                print(f"Error in evaluation stage: {e}")
+                
+            finally:
+                cycle_tracking['stages']['evaluation']['end'] = datetime.now()
+
             # Step 2: Apply learning from evaluations
             print("\nStep 2: Applying learning from evaluations...")
-            learning_success = self.apply_learning_from_evaluations()
+            cycle_tracking['stages']['learning']['start'] = datetime.now()
+            self.pipeline_tracking['current_stage'] = 'learning'
             
-            # Step 3: Test the improved model
-            if learning_success:
-                print("\nStep 3: Testing improved model...")
+            try:
+                learning_success = self.apply_learning_from_evaluations()
                 
-                # Reset predictor status to ensure fresh initialization
+                if learning_success:
+                    cycle_tracking['stages']['learning']['status'] = 'completed'
+                    self.pipeline_tracking['stages_completed'].append('learning')
+                    print("Learning stage completed successfully")
+                else:
+                    raise ValueError("Learning stage failed to complete")
+                    
+            except Exception as e:
+                error_msg = f"Learning stage failed: {str(e)}"
+                cycle_tracking['stages']['learning']['status'] = 'failed'
+                cycle_tracking['stages']['learning']['error'] = error_msg
+                cycle_tracking['errors'].append(error_msg)
+                print(f"Error in learning stage: {e}")
+                
+            finally:
+                cycle_tracking['stages']['learning']['end'] = datetime.now()
+
+            # Step 3: Test the improved model
+            print("\nStep 3: Testing improved model...")
+            cycle_tracking['stages']['testing']['start'] = datetime.now()
+            self.pipeline_tracking['current_stage'] = 'testing'
+            
+            try:
+                # Reset predictor status
                 if hasattr(self.predictor, 'training_status'):
                     self.predictor.training_status['model_loaded'] = False
-                    
-                try:
-                    # Force model reload
-                    model_path = self._get_latest_model()
-                    if (model_path):
-                        print(f"Loading adjusted model: {os.path.basename(model_path)}")
-                        load_success = self.predictor.load_models(model_path)
-                        
-                        if load_success:
-                            print("Model loaded successfully, generating new prediction...")
-                            
-                            # Initialize a fresh pipeline tracking dictionary for prediction test
-                            test_pipeline_tracking = {
-                                'start_time': datetime.now(),
-                                'stages_completed': [],
-                                'current_stage': None,
-                                'error': None
-                            }
-                            
-                            # Store original pipeline_tracking
-                            original_tracking = self.pipeline_tracking
-                            
-                            # Set the test tracking for prediction
-                            self.pipeline_tracking = test_pipeline_tracking
-                            
-                            try:
-                                # Generate prediction with reloaded model
-                                predictions, probabilities, analysis = self.handle_prediction_pipeline()
-                                if predictions is not None:
-                                    print(f"\nGenerated prediction with improved model: {sorted(predictions)}")
-                                else:
-                                    print("Failed to generate prediction with improved model")
-                            finally:
-                                # Restore original pipeline tracking
-                                self.pipeline_tracking = original_tracking
-                        else:
-                            print("Failed to load adjusted model")
-                    else:
-                        print("No adjusted model found")
-                except Exception as e:
-                    print(f"Error testing improved model: {e}")
-                    
-            print("\nContinuous learning cycle complete!")
-            return True
                 
-        except Exception as e:
-            print(f"Error in continuous learning cycle: {e}")
-            return False
+                # Load and test adjusted model
+                model_path = self._get_latest_model()
+                if model_path:
+                    print(f"Loading adjusted model: {os.path.basename(model_path)}")
+                    load_success = self.predictor.load_models(model_path)
+                    
+                    if load_success:
+                        print("Model loaded successfully, generating test prediction...")
+                        
+                        # Store original pipeline tracking
+                        original_tracking = self.pipeline_tracking.copy()
+                        
+                        try:
+                            # Generate test prediction
+                            predictions, probabilities, analysis = self.handle_prediction_pipeline()
+                            
+                            if predictions is not None:
+                                cycle_tracking['stages']['testing']['status'] = 'completed'
+                                cycle_tracking['metrics']['test_prediction'] = {
+                                    'numbers': predictions,
+                                    'confidence': np.mean(probabilities) if isinstance(probabilities, (list, np.ndarray)) else None,
+                                    'analysis_results': bool(analysis)
+                                }
+                                self.pipeline_tracking['stages_completed'].append('testing')
+                                print(f"Generated test prediction: {sorted(predictions)}")
+                            else:
+                                raise ValueError("Test prediction failed")
+                                
+                        finally:
+                            # Restore original pipeline tracking
+                            self.pipeline_tracking = original_tracking
+                    else:
+                        raise ValueError("Failed to load adjusted model")
+                else:
+                    raise ValueError("No adjusted model found")
+                    
+            except Exception as e:
+                error_msg = f"Testing stage failed: {str(e)}"
+                cycle_tracking['stages']['testing']['status'] = 'failed'
+                cycle_tracking['stages']['testing']['error'] = error_msg
+                cycle_tracking['errors'].append(error_msg)
+                print(f"Error in testing stage: {e}")
+                
+            finally:
+                cycle_tracking['stages']['testing']['end'] = datetime.now()
+
+            # Calculate cycle metrics
+            cycle_duration = (datetime.now() - cycle_tracking['start_time']).total_seconds()
+            successful_stages = sum(1 for stage in cycle_tracking['stages'].values() 
+                                  if stage['status'] == 'completed')
             
+            # Update cycle tracking with final metrics
+            cycle_tracking.update({
+                'end_time': datetime.now(),
+                'duration': cycle_duration,
+                'success_rate': (successful_stages / len(cycle_tracking['stages'])) * 100,
+                'total_errors': len(cycle_tracking['errors'])
+            })
+
+            # Save cycle results
+            try:
+                cycle_results_file = os.path.join(
+                    self.learning_dir,
+                    f'learning_cycle_{current_time.strftime("%Y%m%d_%H%M%S")}.json'
+                )
+                
+                os.makedirs(os.path.dirname(cycle_results_file), exist_ok=True)
+                with open(cycle_results_file, 'w') as f:
+                    json.dump(cycle_tracking, f, indent=4, default=str)
+                    
+                print(f"\nCycle results saved to: {os.path.basename(cycle_results_file)}")
+            except Exception as e:
+                print(f"Warning: Could not save cycle results: {e}")
+
+            # Print cycle summary
+            print("\nContinuous learning cycle complete!")
+            print(f"Duration: {cycle_duration:.2f} seconds")
+            print(f"Success rate: {cycle_tracking['success_rate']:.1f}%")
+            print(f"Stages completed: {', '.join(self.pipeline_tracking['stages_completed'])}")
+            if cycle_tracking['errors']:
+                print(f"Errors encountered: {len(cycle_tracking['errors'])}")
+            
+            return len(cycle_tracking['errors']) == 0
+            
+        except Exception as e:
+            print(f"Critical error in learning cycle: {e}")
+            traceback.print_exc()
+            return False
+
     def get_learning_metrics(self):
         """Get current learning metrics for display"""
         return {
@@ -910,59 +1336,6 @@ class DrawHandler:
             return True
         except ValueError:
             return False
-
-def save_draw_to_csv(draw_date, draw_numbers, csv_file=None):
-    """Save draw results to CSV"""
-    if csv_file is None:
-        csv_file = PATHS['HISTORICAL_DATA']
-    try:
-        # Prepare data
-        draw_data = {
-            'date': [draw_date],
-            **{f'number{i+1}': [num] for i, num in enumerate(sorted(draw_numbers))}
-        }
-        df = pd.DataFrame(draw_data)
-        
-        # Save to CSV
-        os.makedirs(os.path.dirname(csv_file), exist_ok=True)
-        if os.path.exists(csv_file):
-            df.to_csv(csv_file, mode='a', header=False, index=False)
-        else:
-            df.to_csv(csv_file, index=False)
-        return True
-    except Exception as e:
-        print(f"Error saving draw to CSV: {e}")
-        return False       
-    
-def save_predictions_to_excel(predictions, probabilities, timestamp, excel_file=None):
-    """Save predictions to Excel"""
-    if excel_file is None:
-        excel_file = PATHS['ANALYSIS']
-    try:
-        data = {
-            'Timestamp': [timestamp],
-            'Predicted_Numbers': [','.join(map(str, predictions))],
-            'Probabilities': [','.join(map(str, [probabilities[num - 1] for num in predictions]))]
-        }
-        df = pd.DataFrame(data)
-        
-        # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(excel_file), exist_ok=True)
-        
-        if os.path.exists(excel_file):
-            # Load existing workbook
-            book = load_workbook(excel_file)
-            with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
-                writer.book = book
-                writer.sheets = {ws.title: ws for ws in book.worksheets}
-                df.to_excel(writer, index=False, header=False, startrow=writer.sheets['Sheet1'].max_row + 1)
-        else:
-            # Create new workbook
-            df.to_excel(excel_file, index=False)
-        return True
-    except Exception as e:
-        print(f"Error saving predictions to Excel: {e}")
-        return False
 
 def load_data(file_path=None):
     """Load and preprocess data from CSV"""
