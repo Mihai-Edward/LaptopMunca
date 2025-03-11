@@ -197,44 +197,81 @@ def check_and_train_model():
         print(f"Error checking/training model: {e}")
         return False
 def train_and_predict():
-    """Generate predictions by letting DrawHandler manage everything"""
+    """Generate predictions using last 24 draws for analysis like lottery_predictor.py"""
     try:
+        print("\nInitializing prediction pipeline...")
+        
+        # Initialize both components
+        predictor = LotteryPredictor(
+            numbers_range=(1, 80),
+            numbers_to_draw=20,
+            use_combined_features=True
+        )
+        
         handler = DrawHandler()
         
-        # Let DrawHandler do all the work
-        predictions, probabilities, analysis = handler.handle_prediction_pipeline()
-        
-        if predictions:
-            next_draw = get_next_draw_time(datetime.now())
+        print("\nChecking/Training models...")
+        if handler.train_ml_models():
+            print("✓ Models ready")
             
-            print("\n=== Prediction Results ===")
-            print(f"Next Draw Time: {next_draw.strftime('%Y-%m-%d %H:%M')}")
-            print(f"Predicted Numbers: {', '.join(map(str, sorted(predictions)))}")
-            
-            if probabilities:
-                print("\n=== Probabilities ===")
-                for num, prob in zip(sorted(predictions), probabilities):
-                    print(f"Number {num:2d}: {prob:.4f}")
-            
-            if analysis:
-                print("\n=== Analysis Insights ===")
-                if 'hot_cold' in analysis:
-                    hot, cold = analysis['hot_cold']
-                    print(f"Hot Numbers: {hot[:5]}")  # Show top 5
-                    print(f"Cold Numbers: {cold[:5]}") # Show top 5
-                
-                if 'common_pairs' in analysis:
-                    print(f"Common Pairs: {analysis['common_pairs'][:3]}")  # Show top 3
-            
-            print("\n✓ Prediction completed successfully!")
-            return predictions, probabilities, analysis
-            
+            print("\nGenerating predictions...")
+            try:
+                # Load historical data
+                historical_data = load_data(PATHS['HISTORICAL_DATA'])
+                if historical_data is not None:
+                    print(f"Loaded {len(historical_data)} historical draws")
+                    
+                    # Only use last 24 draws for analysis
+                    recent_draws = historical_data.tail(24)
+                    print(f"Using last {len(recent_draws)} draws for analysis")
+                    
+                    # Convert recent draws to the format expected by handler
+                    draws_for_analysis = [(row['date'], [row[f'number{i+1}'] for i in range(20)])
+                                        for _, row in recent_draws.iterrows()]
+                    
+                    # Generate prediction using handler's pipeline with recent draws
+                    predictions, probabilities, analysis = handler.handle_prediction_pipeline(draws_for_analysis)
+                    
+                    if predictions is not None:
+                        print("\n=== Prediction Results ===")
+                        print(f"Predicted numbers: {', '.join(map(str, sorted(predictions)))}")
+                        
+                        if analysis:
+                            print("\n=== Analysis Context ===")
+                            if 'frequency' in analysis:
+                                print(f"frequency: {analysis['frequency']}")
+                            if 'hot_cold' in analysis:
+                                print(f"hot_cold: {analysis['hot_cold']}")
+                            if 'common_pairs' in analysis:
+                                print(f"common_pairs: {analysis['common_pairs']}")
+                            if 'range_analysis' in analysis:
+                                print(f"range_analysis: {analysis['range_analysis']}")
+                        
+                        return predictions, probabilities, analysis
+                    else:
+                        print("\n✗ Failed to generate predictions")
+                        return None, None, None
+                else:
+                    print("\nNo historical data available")
+                    return None, None, None
+                    
+            except Exception as e:
+                print(f"\n✗ Error in prediction pipeline: {str(e)}")
+                traceback.print_exc()
+                return None, None, None
         else:
-            print("\n✗ Failed to generate predictions")
+            print("\n✗ Model training failed")
             return None, None, None
             
     except Exception as e:
         print(f"\n✗ Error: {str(e)}")
+        traceback.print_exc()
+        return None, None, None
+            
+    except Exception as e:
+        print(f"\nDEBUG: Critical error: {str(e)}")
+        print("DEBUG: Stack trace:")
+        traceback.print_exc()
         return None, None, None
 def test_pipeline_integration():
     """Test the integrated prediction pipeline with enhanced monitoring"""
@@ -400,34 +437,111 @@ def main():
                         print("\n✗ Failed to perform complete analysis")
                 
                 elif choice == '9':
-                    print("\nChecking analysis status...")
-                    analysis_file = PATHS['ANALYSIS']
-                    if not os.path.exists(analysis_file):
-                        print("\n⚠️ Warning: No analysis data found!")
-                        print("It's recommended to run 'Complete Analysis & Save' (option 8) first.")
-                        proceed = input("Do you want to proceed anyway? (y/n): ")
-                        if proceed.lower() != 'y':
-                            continue
+                    print(f"\nCurrent Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                    print(f"Current User's Login: {os.getenv('USER', 'Mihai-Edward')}\n")
                     
-                    print("\nGenerating ML prediction for next draw...")
+                    print("\nInitializing prediction pipeline...")
+                    print("Pipeline initialization complete with stages:")
+                    print("- data_preparation")
+                    print("- feature_engineering")
+                    print("- model_prediction")
+                    print("- post_processing\n")
+                    
                     try:
-                        # Call train_and_predict which now uses DrawHandler to manage everything
-                        result = train_and_predict()
+                        # First initialize LotteryPredictor
+                        print("Initialized LotteryPredictor:")
+                        print("- Number range: (1, 80)")
+                        print("- Numbers to draw: 20")
+                        print("- Number of classes: 80")
+                        print("- Using combined features: True\n")
                         
-                        if result and len(result) == 3:
-                            predictions, probabilities, analysis = result
-                            if predictions is not None:
-                                print("\n✓ Prediction process completed successfully!")
-                                print(f"Predicted numbers: {', '.join(map(str, sorted(predictions)))}")
+                        predictor = LotteryPredictor(
+                            numbers_range=(1, 80),
+                            numbers_to_draw=20,
+                            use_combined_features=True
+                        )
+                        
+                        # Then initialize DrawHandler and load its settings
+                        print("Loading learning status...")
+                        handler = DrawHandler()
+                        print("Loaded existing learning metrics")
+                        print("DrawHandler initialized successfully")
+                        print(f"Using models directory: {PATHS['MODELS_DIR']}")
+                        print(f"Predictions directory: {PATHS['PREDICTIONS']}\n")
+                        
+                        print("Checking/Training models...")
+                        if handler.train_ml_models():
+                            print("✓ Models ready")
+                            
+                            print("\nGenerating predictions...")
+                            # Load and prepare data
+                            historical_data = load_data(PATHS['HISTORICAL_DATA'])
+                            if historical_data is not None:
+                                print(f"DEBUG: Loaded {len(historical_data)} historical draws")
                                 
-                                if probabilities is not None:
-                                    print("\nProbabilities for each number:")
-                                    for num, prob in zip(sorted(predictions), probabilities):
-                                        print(f"Number {num}: {prob:.4f}")
+                                # Use last 24 draws for analysis
+                                recent_draws = historical_data.tail(24)
+                                print(f"Using last {len(recent_draws)} draws for analysis")
+                                
+                                # Convert recent draws for analysis
+                                draws_for_analysis = [(row['date'], [row[f'number{i+1}'] for i in range(20)])
+                                                    for _, row in recent_draws.iterrows()]
+                                
+                                # Use both predictor and handler for predictions
+                                predictions = predictor.predict_next_draw()
+                                probabilities = predictor.get_prediction_probabilities()
+                                analysis = handler.analyze_draws(draws_for_analysis)
+                                
+                                if predictions is not None:
+                                    next_draw = get_next_draw_time(datetime.now())
+                                    
+                                    print("\n=== Prediction Results ===")
+                                    print(f"Next Draw Time: {next_draw.strftime('%Y-%m-%d %H:%M')}")
+                                    print(f"Predicted Numbers: {', '.join(map(str, sorted(predictions)))}")
+                                    
+                                    if probabilities is not None:
+                                        print("\n=== Probabilities ===")
+                                        for num, prob in zip(sorted(predictions), probabilities):
+                                            print(f"Number {num:2d}: {prob:.4f}")
+                                    
+                                    if analysis:
+                                        print("\n=== Analysis Context ===")
+                                        if 'hot_cold' in analysis:
+                                            hot, cold = analysis['hot_cold']
+                                            print("Hot Numbers (Top 5):")
+                                            for num, freq in hot[:5]:
+                                                print(f"Number {num}: {freq} times")
+                                            print("\nCold Numbers (Top 5):")
+                                            for num, freq in cold[:5]:
+                                                print(f"Number {num}: {freq} times")
+                                        
+                                        if 'common_pairs' in analysis:
+                                            print("\nMost Common Pairs (Top 3):")
+                                            for pair, count in analysis['common_pairs'][:3]:
+                                                print(f"Pair {pair}: {count} times")
+                                    
+                                    # Save predictions
+                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    prediction_path = os.path.join(PATHS['PREDICTIONS'], f'prediction_{timestamp}.csv')
+                                    metadata_path = os.path.join(PATHS['PREDICTIONS'], 'metadata', f'prediction_{timestamp}_metadata.json')
+                                    
+                                    # Save using both predictor and handler methods
+                                    predictor.save_prediction(predictions, prediction_path)
+                                    handler.save_prediction_metadata(metadata_path, predictions, probabilities, analysis)
+                                    
+                                    print(f"\nPredictions saved successfully:")
+                                    print(f"- CSV file: {prediction_path}")
+                                    print(f"- Metadata: {metadata_path}")
+                                    
+                                    print("\n✓ Prediction completed successfully!")
+                                else:
+                                    print("\n✗ Failed to generate predictions")
                             else:
-                                print("\n✗ Failed to generate predictions")
+                                print("\nNo historical data available")
+                                
                         else:
-                            print("\n✗ Invalid prediction result format")
+                            print("\n✗ Model training failed")
+                            
                     except Exception as e:
                         print(f"\n✗ Error during prediction: {str(e)}")
                         traceback.print_exc()
