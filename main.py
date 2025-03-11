@@ -797,16 +797,11 @@ def main():
         print(f"\nSystem initialized at {system_status['start_time']}")
         print(f"User: {os.getenv('USER', 'Mihai-Edward')}")
         
-        # Initialize core components
+        # Initialize core components once
         handler = DrawHandler()
-        predictor = LotteryPredictor(
-            numbers_range=(1, 80),
-            numbers_to_draw=20,
-            use_combined_features=True
-        )
+        predictor = system_status['predictor']  # Get the already initialized predictor
         
         def display_menu():
-            """Display the main menu with categories"""
             print("\n==========================")
             print("    KINO Draw Analyzer    ")
             print("==========================")
@@ -825,7 +820,6 @@ def main():
             print("==========================\n")
 
         def handle_data_collection():
-            """Handle option 3: Update Historical Data"""
             print("\nUpdating historical data...")
             collector = KinoDataCollector(debug=True)
             draws = collector.fetch_latest_draws()
@@ -841,7 +835,6 @@ def main():
                 print(f"\n✗ Data collection failed: {collector.collection_status['last_error']}")
 
         def handle_analysis():
-            """Handle option 8: Complete Analysis"""
             print("\nPerforming complete analysis...")
             success = perform_complete_analysis()
             if success:
@@ -850,135 +843,55 @@ def main():
                 print("\n✗ Failed to perform complete analysis")
 
         def handle_prediction():
-            """Handle option 9: ML Prediction"""
             try:
-                # Load and prepare historical data
-                historical_data = handler.load_historical_data()
-                if historical_data is None:
-                    print("\nNo historical data available")
-                    return
-
-                # Get last 24 draws for analysis
-                recent_draws = historical_data.tail(24)
-                draws_for_analysis = []
-                for _, row in recent_draws.iterrows():
-                    try:
-                        numbers = [int(row[f'number{i}']) for i in range(1, 21)]
-                        if len(numbers) == 20:
-                            draws_for_analysis.append((row['date'], numbers))
-                    except Exception as e:
-                        print(f"DEBUG: Error formatting draw: {e}")
-
-                # Generate predictions
-                if handler.train_ml_models():
-                    predictions = predictor.predict_next_draw()
-                    probabilities = predictor.get_prediction_probabilities()
-                    analysis = handler.analyze_draws(draws_for_analysis)
-
-                    if predictions is not None:
-                        display_prediction_results(predictions, probabilities, analysis)
-                    else:
-                        print("\n✗ Failed to generate predictions")
-                else:
-                    print("\n✗ Model training failed")
-
-            except Exception as e:
-                print(f"\n✗ Error during prediction: {str(e)}")
-                traceback.print_exc()
-
-        def handle_prediction():
-            """Handle option 9: ML Prediction"""
-            try:
-                # 1. Initial Output
-                print(f"\nCurrent Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                print(f"Current User's Login: {os.getenv('USER', 'Mihai-Edward')}\n")
+                # Call the integrated train_and_predict function
+                print("\nStarting prediction process...")
+                predictions, probabilities, analysis = train_and_predict()
                 
-                print("\nInitializing prediction pipeline...")
-                print("Pipeline stages:")
-                print("- Model initialization")
-                print("- Data preparation")
-                print("- Feature engineering")
-                print("- Model prediction")
-                print("- Post-processing")
-                
-                # 2. Initialize both components
-                predictor = LotteryPredictor(
-                    numbers_range=(1, 80),
-                    numbers_to_draw=20,
-                    use_combined_features=True
-                )
-                handler = DrawHandler()
-                
-                print("\nChecking/Training models...")
-                if handler.train_ml_models():
-                    print("✓ Models ready")
+                if predictions is not None:
+                    next_draw = get_next_draw_time(datetime.now())
+                    print("\n=== Prediction Results ===")
+                    print(f"Next Draw Time: {next_draw.strftime('%Y-%m-%d %H:%M')}")
+                    print(f"Predicted Numbers: {', '.join(map(str, sorted(predictions)))}")
                     
-                    print("\nGenerating predictions...")
-                    try:
-                        # Load historical data using the main.py function
-                        historical_data = load_data(PATHS['HISTORICAL_DATA'])
-                        if historical_data is not None:
-                            print(f"\nLoaded {len(historical_data)} historical draws")
-                            
-                            # Use last 24 draws for analysis
-                            recent_draws = historical_data.head(24)
-                            print(f"Using last {len(recent_draws)} draws for analysis")
-                            
-                            # Convert recent draws for handler
-                            draws_for_analysis = [(row['date'], [row[f'number{i}'] for i in range(1, 21)])
-                                                for _, row in recent_draws.iterrows()]
-                            
-                            # Get predictions from both components
-                            predictions = predictor.predict_next_draw()
-                            probabilities = predictor.get_prediction_probabilities()
-                            analysis = handler.analyze_draws(draws_for_analysis)
-                            
-                            if predictions is not None:
-                                next_draw = get_next_draw_time(datetime.now())
-                                
-                                print("\n=== Prediction Results ===")
-                                print(f"Next Draw Time: {next_draw.strftime('%Y-%m-%d %H:%M')}")
-                                print(f"Predicted Numbers: {', '.join(map(str, sorted(predictions)))}")
-                                
-                                if probabilities is not None:
-                                    print("\n=== Probabilities ===")
-                                    for num, prob in zip(sorted(predictions), probabilities):
-                                        print(f"Number {num:2d}: {prob:.4f}")
-                                
-                                if analysis:
-                                    print("\n=== Analysis Context ===")
-                                    if 'hot_cold' in analysis:
-                                        hot, cold = analysis['hot_cold']
-                                        print("Hot Numbers (Top 5):")
-                                        for num, freq in hot[:5]:
-                                            print(f"Number {num}: {freq} times")
-                                        print("\nCold Numbers (Top 5):")
-                                        for num, freq in cold[:5]:
-                                            print(f"Number {num}: {freq} times")
-                                    
-                                    if 'common_pairs' in analysis:
-                                        print("\nMost Common Pairs (Top 3):")
-                                        for pair, count in analysis['common_pairs'][:3]:
-                                            print(f"Pair {pair}: {count} times")
-                                
-                                print("\n✓ Prediction completed successfully!")
-                            else:
-                                print("\n✗ Failed to generate predictions")
-                        else:
-                            print("\n✗ No historical data available")
-                            
-                    except Exception as e:
-                        print(f"\n✗ Error in prediction generation: {e}")
-                        traceback.print_exc()
+                    if probabilities is not None:
+                        print("\n=== Probabilities ===")
+                        for num, prob in zip(sorted(predictions), probabilities):
+                            print(f"Number {num:2d}: {prob:.4f}")
+                    
+                    if analysis:
+                        print("\n=== Analysis Context ===")
+                        if 'hot_cold' in analysis:
+                            hot, cold = analysis['hot_cold']
+                            print("\nHot Numbers (Top 5):")
+                            for num, freq in hot[:5]:
+                                print(f"Number {num}: {freq} times")
+                            print("\nCold Numbers (Top 5):")
+                            for num, freq in cold[:5]:
+                                print(f"Number {num}: {freq} times")
+                        
+                        if 'common_pairs' in analysis:
+                            print("\nMost Common Pairs (Top 3):")
+                            for pair, count in analysis['common_pairs'][:3]:
+                                print(f"Pair {pair}: {count} times")
+                    
+                    print("\n✓ Prediction completed successfully!")
                 else:
-                    print("\n✗ Model training failed")
-
+                    print("\n✗ Failed to generate predictions")
             except Exception as e:
                 print(f"\n✗ Error during prediction: {str(e)}")
                 traceback.print_exc()
-        
+
+        def handle_evaluation():
+            print("\nStarting prediction evaluation...")
+            try:
+                evaluator = PredictionEvaluator()
+                evaluator.evaluate_past_predictions()
+                print("\n✓ Evaluation complete")
+            except Exception as e:
+                print(f"\n✗ Error during evaluation: {e}")
+
         def handle_pipeline_test():
-            """Handle option 11: Pipeline Test"""
             print("\nRunning complete pipeline test...")
             print("This will execute steps 3->8->9->10 in sequence")
             confirm = input("Continue? (y/n): ")
@@ -990,10 +903,19 @@ def main():
                     print("\n✗ Some pipeline steps failed. Check the results above.")
 
         def handle_learning_cycle():
-            """Handle option 12: Continuous Learning"""
             print("\nRunning continuous learning cycle...")
             if handler.run_continuous_learning_cycle():
-                display_learning_metrics(handler.get_learning_metrics())
+                metrics = handler.get_learning_metrics()
+                print("\nLearning Cycle Results:")
+                print(f"- Learning cycles completed: {metrics['cycles_completed']}")
+                if 'current_accuracy' in metrics:
+                    print(f"- Current accuracy: {metrics['current_accuracy']:.2f}%")
+                if 'improvement_rate' in metrics:
+                    print(f"- Total improvement: {metrics['improvement_rate']:.2f}%")
+                if 'last_adjustments' in metrics and metrics['last_adjustments']:
+                    print("\nRecent model adjustments:")
+                    for adj in metrics['last_adjustments']:
+                        print(f"- {adj}")
             else:
                 print("\n✗ Continuous learning cycle failed")
 
