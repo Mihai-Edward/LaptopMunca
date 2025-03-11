@@ -279,81 +279,87 @@ class LotteryPredictor:
             print("\nPreparing training data...")
             if historical_data is None or len(historical_data) < 6:
                 raise ValueError("Insufficient historical data for training (minimum 6 draws required)")
-                
+
             # Sort data chronologically
             historical_data = historical_data.sort_values('date')
             features = []
             labels = []
-            
+
             # Define column names for the 20 numbers
             number_cols = [f'number{i+1}' for i in range(20)]
-            
+
             # Validate number columns exist
             missing_cols = [col for col in number_cols if col not in historical_data.columns]
             if missing_cols:
                 raise ValueError(f"Missing number columns: {missing_cols}")
-            
+
             print(f"\nProcessing {len(historical_data) - 5} potential training samples...")
             valid_samples = 0
             skipped_samples = 0
             errors = defaultdict(int)
-            
+
             # Create sliding window for feature extraction
             for i in range(len(historical_data) - 5):
                 try:
                     # Get current window and next draw
                     window = historical_data.iloc[i:i+5]
                     next_draw = historical_data.iloc[i+5]
-                    
+
                     # Validate window dates are consecutive
                     dates = pd.to_datetime(window['date'])
                     if (dates.diff()[1:] > pd.Timedelta(days=2)).any():
                         errors['non_consecutive_dates'] += 1
+                        print(f"Skipped sample at index {i} due to non-consecutive dates")
                         continue
-                    
+
                     # Create feature vector from window with validation
                     feature_vector = self._create_feature_vector(window)
                     if feature_vector is None:
                         errors['invalid_feature_vector'] += 1
+                        print(f"Skipped sample at index {i} due to invalid feature vector")
                         continue
-                        
+
                     if len(feature_vector) != 84:  # Expected feature dimension
                         errors['wrong_feature_dimension'] += 1
+                        print(f"Skipped sample at index {i} due to wrong feature dimension")
                         continue
-                    
+
                     # Get all 20 numbers as labels with validation
                     try:
                         draw_numbers = next_draw[number_cols].values.astype(int)
-                        
+
                         # Basic number validation
                         if len(draw_numbers) != self.numbers_to_draw:
                             errors['wrong_number_count'] += 1
+                            print(f"Skipped sample at index {i} due to wrong number count")
                             continue
-                            
+
                         if not all((1 <= n <= 80) for n in draw_numbers):
                             errors['numbers_out_of_range'] += 1
+                            print(f"Skipped sample at index {i} due to numbers out of range")
                             continue
-                            
+
                         # Check for duplicates
                         if len(set(draw_numbers)) != self.numbers_to_draw:
                             errors['duplicate_numbers'] += 1
+                            print(f"Skipped sample at index {i} due to duplicate numbers")
                             continue
-                        
+
                         # Sort numbers for consistency
                         draw_numbers = np.sort(draw_numbers)
-                        
+
                         features.append(feature_vector)
                         labels.append(draw_numbers)
                         valid_samples += 1
-                        
+
                         if valid_samples % 100 == 0:  # Progress update every 100 valid samples
                             print(f"Processed {valid_samples} valid samples...")
-                            
+
                     except Exception as e:
                         print(f"Error processing draw at index {i+5}: {e}")
                         errors['draw_processing'] += 1
                         continue
-                        
+
                 except Exception as e:
                     print(f"Error processing window at index {i}: {e}")
                     errors['window_processing'] += 1
@@ -362,14 +368,14 @@ class LotteryPredictor:
             # Convert to numpy arrays with validation
             if len(features) == 0 or len(labels) == 0:
                 raise ValueError("No valid training samples generated")
-                
+
             features = np.array(features)
             labels = np.array(labels)
-            
+
             # Final validation
             if len(features) != len(labels):
                 raise ValueError(f"Feature/label mismatch: {len(features)} features vs {len(labels)} labels")
-            
+
             # Print detailed summary
             print("\nData Preparation Summary:")
             print(f"- Total potential samples: {len(historical_data) - 5}")
@@ -377,20 +383,20 @@ class LotteryPredictor:
             print(f"- Feature shape: {features.shape}")
             print(f"- Labels shape: {labels.shape}")
             print(f"- Feature stats: min={features.min():.4f}, max={features.max():.4f}, mean={features.mean():.4f}")
-            
+
             if errors:
                 print("\nErrors encountered:")
                 for error_type, count in errors.items():
                     print(f"- {error_type}: {count}")
-            
+
             # Additional statistics
             unique_first_numbers = len(np.unique([label[0] for label in labels]))
             print(f"\nLabel Statistics:")
             print(f"- Unique first numbers: {unique_first_numbers}/80")
             print(f"- Numbers distribution range: {labels.min()}-{labels.max()}")
-            
+
             return features, labels
-                
+
         except Exception as e:
             print(f"Error preparing training data: {e}")
             return None, None
