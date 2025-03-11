@@ -119,30 +119,27 @@ class DrawHandler:
                 raise ValueError("Insufficient historical data for training")
 
             print(f"Loaded {len(historical_data)} draws for training")
-                
+            
             # Initialize predictor with combined features setting if it doesn't exist
             if not hasattr(self, 'predictor') or self.predictor is None:
                 self.predictor = LotteryPredictor(use_combined_features=use_combined_features)
-            else:
-                # Reset and update the predictor for fresh training
-                pass
-              
-            
+        
             # Prepare data for training
             features, labels = self.predictor.prepare_data(historical_data)
             if features is None or labels is None or len(features) == 0:
                 raise ValueError("Failed to prepare training data")
-                
+        
             print(f"Prepared features shape: {features.shape}")
+            print(f"Prepared labels shape: {labels.shape}")
 
             # IMPORTANT: Set the feature model type BEFORE training
             self.predictor.pipeline_data['use_combined_features'] = use_combined_features
-            
+        
             # Prepare additional features if using combined approach
             if use_combined_features:
                 try:
                     print("\nEnhancing training data with analysis features...")
-                    
+                
                     # Create DataAnalysis instance for feature generation
                     formatted_draws = []
                     for _, row in historical_data.iterrows():
@@ -152,23 +149,23 @@ class DrawHandler:
                                 formatted_draws.append((row['date'], numbers))
                         except Exception as e:
                             print(f"DEBUG: Error formatting draw: {e}")
-                    
+                
                     if formatted_draws:
                         analyzer = DataAnalysis(formatted_draws)
-                        
+                    
                         # Calculate analysis features
                         frequency = analyzer.count_frequency()
                         hot_numbers, cold_numbers = analyzer.hot_and_cold_numbers()
-                        
+                    
                         # Prepare feature expansion (add 20 analysis features to each sample)
                         print("Adding analysis features to training data...")
-                        
+                    
                         # Get top 20 hot numbers for feature expansion
                         top_hot = [num for num, _ in hot_numbers[:20]]
-                        
+                    
                         # Create hot number features (20 dimensions)
                         hot_features = np.zeros((features.shape[0], 20))
-                        
+                    
                         # Set values based on frequency (simple method)
                         for i, num in enumerate(top_hot):
                             if 1 <= num <= 80:
@@ -176,11 +173,11 @@ class DrawHandler:
                                 # Normalize by max frequency
                                 max_freq = max(frequency.values()) if frequency else 1
                                 hot_features[:, i] = freq / max_freq
-                        
+                    
                         # Combine with original features
                         enhanced_features = np.hstack([features, hot_features])
                         print(f"Enhanced training data shape: {enhanced_features.shape}")
-                        
+                    
                         # Use enhanced features
                         features = enhanced_features
                 except Exception as e:
@@ -191,24 +188,24 @@ class DrawHandler:
 
             # Train models using predictor with prepared data
             training_success = self.predictor.train_models(features, labels)
-            
+        
             if training_success:
                 # Save feature mode used for training
                 feature_mode_file = os.path.join(self.models_dir, 'feature_mode.txt')
                 with open(feature_mode_file, 'w') as f:
                     f.write('combined' if use_combined_features else 'base')
                     f.write(f"\nfeature_dim:{features.shape[1]}")
-                
+            
                 # Save models immediately after successful training
                 if not self.predictor.save_models():
                     raise Exception("Failed to save trained models")
-                    
+                
                 self.pipeline_status['success'] = True
                 print(f"Models trained and saved successfully with {'combined' if use_combined_features else 'base'} features")
                 return True
             else:
                 raise Exception("Model training failed")
-                
+            
         except Exception as e:
             self.pipeline_status['error'] = str(e)
             print(f"Error in model training: {e}")

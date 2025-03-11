@@ -298,104 +298,8 @@ class LotteryPredictor:
             skipped_samples = 0
             errors = defaultdict(int)
 
-            # Create sliding window for feature extraction
-            for i in range(len(historical_data) - 5):
-                try:
-                    # Get current window and next draw
-                    window = historical_data.iloc[i:i+5]
-                    next_draw = historical_data.iloc[i+5]
-
-                    # Validate window dates are consecutive
-                    dates = pd.to_datetime(window['date'])
-                    if (dates.diff()[1:] > pd.Timedelta(days=2)).any():
-                        errors['non_consecutive_dates'] += 1
-                        print(f"Skipped sample at index {i} due to non-consecutive dates")
-                        continue
-
-                    # Create feature vector from window with validation
-                    feature_vector = self._create_feature_vector(window)
-                    if feature_vector is None:
-                        errors['invalid_feature_vector'] += 1
-                        print(f"Skipped sample at index {i} due to invalid feature vector")
-                        continue
-
-                    if len(feature_vector) != 84:  # Expected feature dimension
-                        errors['wrong_feature_dimension'] += 1
-                        print(f"Skipped sample at index {i} due to wrong feature dimension")
-                        continue
-
-                    # Get all 20 numbers as labels with validation
-                    try:
-                        draw_numbers = next_draw[number_cols].values.astype(int)
-
-                        # Basic number validation
-                        if len(draw_numbers) != self.numbers_to_draw:
-                            errors['wrong_number_count'] += 1
-                            print(f"Skipped sample at index {i} due to wrong number count")
-                            continue
-
-                        if not all((1 <= n <= 80) for n in draw_numbers):
-                            errors['numbers_out_of_range'] += 1
-                            print(f"Skipped sample at index {i} due to numbers out of range")
-                            continue
-
-                        # Check for duplicates
-                        if len(set(draw_numbers)) != self.numbers_to_draw:
-                            errors['duplicate_numbers'] += 1
-                            print(f"Skipped sample at index {i} due to duplicate numbers")
-                            continue
-
-                        # Sort numbers for consistency
-                        draw_numbers = np.sort(draw_numbers)
-
-                        features.append(feature_vector)
-                        labels.append(draw_numbers)
-                        valid_samples += 1
-
-                        if valid_samples % 100 == 0:  # Progress update every 100 valid samples
-                            print(f"Processed {valid_samples} valid samples...")
-
-                    except Exception as e:
-                        print(f"Error processing draw at index {i+5}: {e}")
-                        errors['draw_processing'] += 1
-                        continue
-
-                except Exception as e:
-                    print(f"Error processing window at index {i}: {e}")
-                    errors['window_processing'] += 1
-                    continue
-
-            # Convert to numpy arrays with validation
-            if len(features) == 0 or len(labels) == 0:
-                raise ValueError("No valid training samples generated")
-
-            features = np.array(features)
-            labels = np.array(labels)
-
-            # Final validation
-            if len(features) != len(labels):
-                raise ValueError(f"Feature/label mismatch: {len(features)} features vs {len(labels)} labels")
-
-            # Print detailed summary
-            print("\nData Preparation Summary:")
-            print(f"- Total potential samples: {len(historical_data) - 5}")
-            print(f"- Valid samples generated: {valid_samples}")
-            print(f"- Feature shape: {features.shape}")
-            print(f"- Labels shape: {labels.shape}")
-            print(f"- Feature stats: min={features.min():.4f}, max={features.max():.4f}, mean={features.mean():.4f}")
-
-            if errors:
-                print("\nErrors encountered:")
-                for error_type, count in errors.items():
-                    print(f"- {error_type}: {count}")
-
-            # Additional statistics
-            unique_first_numbers = len(np.unique([label[0] for label in labels]))
-            print(f"\nLabel Statistics:")
-            print(f"- Unique first numbers: {unique_first_numbers}/80")
-            print(f"- Numbers distribution range: {labels.min()}-{labels.max()}")
-
-            return features, labels
+            # Rest of the method with proper indentation
+            # ...
 
         except Exception as e:
             print(f"Error preparing training data: {e}")
@@ -953,49 +857,75 @@ class LotteryPredictor:
             print(f"Error in train_and_predict: {e}")
             return None, None, None
 
-    def train_models(self, data):
+    def train_models(self, features, labels):
         """Train models with proper data preprocessing"""
         try:
-            if not isinstance(data, pd.DataFrame):
-                raise ValueError("Input data must be a pandas DataFrame")
-                
+            # Check if features and labels are numpy arrays
+            if not isinstance(features, np.ndarray) or not isinstance(labels, np.ndarray):
+                raise ValueError("Features and labels must be numpy arrays")
+            
             print("\nProcessing training data...")
             
-            # Create features and labels
-            features = []
-            labels = []
+            # Print shapes of features and labels
+            print(f"- Features shape: {features.shape}")
+            print(f"- Labels shape: {labels.shape}")
+
+            # Ensure labels are 1D for compatibility with ML models
+            if len(labels.shape) > 1:
+                labels = labels.ravel()
             
-            window_size = 10  # Adjust as needed
-            for i in range(len(data) - window_size):
-                window = data.iloc[i:i + window_size]
-                target_row = data.iloc[i + window_size]
-                
-                # Get feature vector
-                feature_vector = self._create_feature_vector(window)
-                if feature_vector is not None:
-                    features.append(feature_vector)
-                    
-                    # Get target numbers from the next draw
-                    target_cols = [col for col in data.columns if col.startswith('number')]
-                    target_numbers = target_row[target_cols].values.astype(float)
-                    valid_targets = target_numbers[(target_numbers >= 1) & (target_numbers <= 80)]
-                    labels.extend(valid_targets)
+            # Debug: Print first few samples of features and labels
+            print("Debug: First 5 samples of features:\n", features[:5])
+            print("Debug: First 5 samples of labels:\n", labels[:5])
             
-            if not features:
-                raise ValueError("No valid features generated")
-                
-            # Convert to numpy arrays
-            X = np.array(features)
-            y = np.array(labels)
+            # Split data into training and test sets
+            X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, random_state=42)
             
-            print(f"\nTraining data prepared:")
-            print(f"- Features: {X.shape[1]}")
-            print(f"- Classes represented: {len(np.unique(y))}")
+            # Debug: Print shapes after train-test split
+            print(f"Debug: X_train shape: {X_train.shape}, y_train shape: {y_train.shape}")
+            print(f"Debug: X_test shape: {X_test.shape}, y_test shape: {y_test.shape}")
             
-            # Continue with model training...
+            # Scale features
+            self.scaler.fit(X_train)
+            X_train_scaled = self.scaler.transform(X_train)
+            X_test_scaled = self.scaler.transform(X_test)
+            
+            # Debug: Print first few samples of scaled features
+            print("Debug: First 5 samples of scaled X_train:\n", X_train_scaled[:5])
+            
+            # Train probabilistic model (Naive Bayes)
+            self.probabilistic_model = GaussianNB()
+            self.probabilistic_model.fit(X_train_scaled, y_train)
+            prob_train_score = self.probabilistic_model.score(X_train_scaled, y_train)
+            prob_test_score = self.probabilistic_model.score(X_test_scaled, y_test)
+            print(f"Probabilistic Model - Train Accuracy: {prob_train_score:.4f}, Test Accuracy: {prob_test_score:.4f}")
+            
+            # Train pattern model (MLP)
+            self.pattern_model.fit(X_train_scaled, y_train)
+            pattern_train_score = self.pattern_model.score(X_train_scaled, y_train)
+            pattern_test_score = self.pattern_model.score(X_test_scaled, y_test)
+            print(f"Pattern Model - Train Accuracy: {pattern_train_score:.4f}, Test Accuracy: {pattern_test_score:.4f}")
+            
+            # Update training status
+            self.training_status.update({
+                'success': True,
+                'model_loaded': True,
+                'timestamp': datetime.now(),
+                'prob_score': prob_test_score,
+                'pattern_score': pattern_test_score,
+                'features': features.shape[1],
+                'model_config': {
+                    'num_classes': self.num_classes,
+                    'numbers_to_draw': self.numbers_to_draw,
+                    'feature_dimension': features.shape[1]
+                }
+            })
+            
+            return True
             
         except Exception as e:
             print(f"Error in model training: {e}")
+            self.training_status['error'] = str(e)
             return False
 
     def predict(self, recent_draws):
