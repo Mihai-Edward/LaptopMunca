@@ -1,18 +1,23 @@
+# Add at the top of main.py
 import sys
 import os
 import traceback
 import pandas as pd
 import numpy as np
-from lottery_predictor import LotteryPredictor
 from datetime import datetime, timedelta
 import pytz
-from data_collector_selenium import KinoDataCollector
-from data_analysis import DataAnalysis
-from draw_handler import DrawHandler
-from prediction_evaluator import PredictionEvaluator
-import joblib
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Add the project root to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(project_root)
+
 from config.paths import PATHS, ensure_directories
+from src.lottery_predictor import LotteryPredictor
+from src.data_collector_selenium import KinoDataCollector
+from src.data_analysis import DataAnalysis
+from src.draw_handler import DrawHandler
+from src.prediction_evaluator import PredictionEvaluator
 
 # 1. System Initialization
 def initialize_system():
@@ -782,20 +787,17 @@ def test_pipeline_integration():
         return None
 # 7. Main Program Entry Point
 def main():
-    """Main program entry point with enhanced organization and error handling"""
     try:
-        # 1. System Initialization with timestamp
-        print(f"\nCurrent Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Current User's Login: {os.getenv('USER', 'Mihai-Edward')}\n")
-        
+        # Initialize system
         system_status = initialize_system()
         if not system_status['system_ready']:
             print("System initialization failed.")
             return
         
         print(f"\nSystem initialized at {system_status['start_time']}")
+        print(f"User: {os.getenv('USER', 'Mihai-Edward')}")
         
-        # 2. Initialize core components
+        # Initialize core components
         handler = DrawHandler()
         predictor = LotteryPredictor(
             numbers_range=(1, 80),
@@ -875,7 +877,6 @@ def main():
 
                     if predictions is not None:
                         display_prediction_results(predictions, probabilities, analysis)
-                        save_prediction_results(predictor, predictions, probabilities)
                     else:
                         print("\n✗ Failed to generate predictions")
                 else:
@@ -885,16 +886,97 @@ def main():
                 print(f"\n✗ Error during prediction: {str(e)}")
                 traceback.print_exc()
 
-        def handle_evaluation():
-            """Handle option 10: Prediction Evaluation"""
-            print("\nStarting prediction evaluation...")
+        def handle_prediction():
+            """Handle option 9: ML Prediction"""
             try:
-                evaluator = PredictionEvaluator()
-                evaluator.evaluate_past_predictions()
-                print("\n✓ Evaluation complete")
-            except Exception as e:
-                print(f"\n✗ Error during evaluation: {e}")
+                # 1. Initial Output
+                print(f"\nCurrent Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                print(f"Current User's Login: {os.getenv('USER', 'Mihai-Edward')}\n")
+                
+                print("\nInitializing prediction pipeline...")
+                print("Pipeline stages:")
+                print("- Model initialization")
+                print("- Data preparation")
+                print("- Feature engineering")
+                print("- Model prediction")
+                print("- Post-processing")
+                
+                # 2. Initialize both components
+                predictor = LotteryPredictor(
+                    numbers_range=(1, 80),
+                    numbers_to_draw=20,
+                    use_combined_features=True
+                )
+                handler = DrawHandler()
+                
+                print("\nChecking/Training models...")
+                if handler.train_ml_models():
+                    print("✓ Models ready")
+                    
+                    print("\nGenerating predictions...")
+                    try:
+                        # Load historical data using the main.py function
+                        historical_data = load_data(PATHS['HISTORICAL_DATA'])
+                        if historical_data is not None:
+                            print(f"\nLoaded {len(historical_data)} historical draws")
+                            
+                            # Use last 24 draws for analysis
+                            recent_draws = historical_data.head(24)
+                            print(f"Using last {len(recent_draws)} draws for analysis")
+                            
+                            # Convert recent draws for handler
+                            draws_for_analysis = [(row['date'], [row[f'number{i}'] for i in range(1, 21)])
+                                                for _, row in recent_draws.iterrows()]
+                            
+                            # Get predictions from both components
+                            predictions = predictor.predict_next_draw()
+                            probabilities = predictor.get_prediction_probabilities()
+                            analysis = handler.analyze_draws(draws_for_analysis)
+                            
+                            if predictions is not None:
+                                next_draw = get_next_draw_time(datetime.now())
+                                
+                                print("\n=== Prediction Results ===")
+                                print(f"Next Draw Time: {next_draw.strftime('%Y-%m-%d %H:%M')}")
+                                print(f"Predicted Numbers: {', '.join(map(str, sorted(predictions)))}")
+                                
+                                if probabilities is not None:
+                                    print("\n=== Probabilities ===")
+                                    for num, prob in zip(sorted(predictions), probabilities):
+                                        print(f"Number {num:2d}: {prob:.4f}")
+                                
+                                if analysis:
+                                    print("\n=== Analysis Context ===")
+                                    if 'hot_cold' in analysis:
+                                        hot, cold = analysis['hot_cold']
+                                        print("Hot Numbers (Top 5):")
+                                        for num, freq in hot[:5]:
+                                            print(f"Number {num}: {freq} times")
+                                        print("\nCold Numbers (Top 5):")
+                                        for num, freq in cold[:5]:
+                                            print(f"Number {num}: {freq} times")
+                                    
+                                    if 'common_pairs' in analysis:
+                                        print("\nMost Common Pairs (Top 3):")
+                                        for pair, count in analysis['common_pairs'][:3]:
+                                            print(f"Pair {pair}: {count} times")
+                                
+                                print("\n✓ Prediction completed successfully!")
+                            else:
+                                print("\n✗ Failed to generate predictions")
+                        else:
+                            print("\n✗ No historical data available")
+                            
+                    except Exception as e:
+                        print(f"\n✗ Error in prediction generation: {e}")
+                        traceback.print_exc()
+                else:
+                    print("\n✗ Model training failed")
 
+            except Exception as e:
+                print(f"\n✗ Error during prediction: {str(e)}")
+                traceback.print_exc()
+        
         def handle_pipeline_test():
             """Handle option 11: Pipeline Test"""
             print("\nRunning complete pipeline test...")
