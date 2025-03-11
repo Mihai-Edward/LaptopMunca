@@ -1,5 +1,6 @@
 import sys
 import os
+import traceback
 import pandas as pd
 import numpy as np
 from lottery_predictor import LotteryPredictor
@@ -25,30 +26,13 @@ def check_and_train_model():
     """Check if a trained model exists and train if needed using DrawHandler"""
     try:
         handler = DrawHandler()
-        model_path = handler._get_latest_model()
-        
-        if not model_path:
-            print("No trained model found. Training new model...")
-            if handler.train_ml_models():
-                print("✓ Model training completed successfully")
-                return True
-            else:
-                print("✗ Model training failed")
-                return False
+        if handler.train_ml_models():
+            print("✓ Model training completed successfully")
+            return True
         else:
-            # Verify model files exist
-            model_files = [
-                f"{model_path}_prob_model.pkl",
-                f"{model_path}_pattern_model.pkl",
-                f"{model_path}_scaler.pkl"
-            ]
-            if all(os.path.exists(file) for file in model_files):
-                print(f"✓ Model found: {os.path.basename(model_path)}")
-                return True
-            else:
-                print("Model files incomplete. Attempting retraining...")
-                return handler.train_ml_models()
-                
+            print("✗ Model training failed")
+            return False
+            
     except Exception as e:
         print(f"Error checking/training model: {e}")
         return False
@@ -99,54 +83,6 @@ def save_top_4_numbers_to_excel(top_4_numbers, file_path=None):
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     df.to_excel(file_path, index=False)
 
-def save_standardized_prediction(predictions, next_draw_time, probabilities=None):
-    """
-    Save predictions in standardized format to a single file (predictions.csv)
-    Format: Date,Predicted_Numbers,Probabilities
-    """
-    try:
-        # Create predictions directory if it doesn't exist
-        predictions_dir = os.path.dirname(PATHS['PREDICTIONS'])
-        os.makedirs(predictions_dir, exist_ok=True)
-        
-        # Prepare the data in standardized format
-        sorted_predictions = sorted(predictions)
-        formatted_date = next_draw_time.strftime('%H:%M %d-%m-%Y')
-        
-        # Create data dictionary for DataFrame
-        prediction_data = {
-            'Date': [formatted_date],
-            'Predicted_Numbers': [','.join(map(str, sorted_predictions))]
-        }
-        
-        # Add probabilities if they exist
-        if probabilities is not None:
-            # Use direct probability mapping
-            probability_str = ','.join(f"{p:.4f}" for p in probabilities)
-            prediction_data['Probabilities'] = [probability_str]
-        else:
-            prediction_data['Probabilities'] = ['']
-        
-        # Create DataFrame
-        df = pd.DataFrame(prediction_data)
-        
-        # Save to single predictions file
-        prediction_file = PATHS['PREDICTIONS']
-        mode = 'a' if os.path.exists(prediction_file) else 'w'
-        header = not os.path.exists(prediction_file)
-        df.to_csv(prediction_file, mode=mode, header=header, index=False)
-        
-        print(f"\nPrediction saved to: {prediction_file}")
-        print(f"Date: {formatted_date}")
-        print(f"Numbers: {','.join(map(str, sorted_predictions))}")
-        print("Probabilities included")
-        
-        return True
-        
-    except Exception as e:
-        print(f"Error saving prediction: {e}")
-        return False
-
 def evaluate_numbers(historical_data):
     """
     Evaluate numbers based on criteria other than frequency.
@@ -164,188 +100,253 @@ def evaluate_numbers(historical_data):
     return sorted_numbers[:4]  # Return top 4 numbers
 
 def train_and_predict():
+    """Generate predictions using DrawHandler's pipeline"""
     try:
         handler = DrawHandler()
+        print("\nStarting prediction process...")
         
-        # First ensure models are trained
-        print("Checking/Training models...")
-        if handler.train_ml_models():
-            print("Models ready")
-        else:
-            raise Exception("Model training failed")
-        
-        # Generate prediction using pipeline
-        print("\nGenerating predictions...")
-        predictions, probabilities, analysis = handler.handle_prediction_pipeline()
-        
-        if predictions is not None:
-            # Format and display predictions
-            formatted_numbers = ','.join(map(str, sorted(predictions)))
-            next_draw_time = get_next_draw_time(datetime.now())
-            print(f"\nPredicted numbers for next draw at {next_draw_time.strftime('%H:%M %d-%m-%Y')}:")
-            print(f"Numbers: {formatted_numbers}")
-            
-            # Display probabilities in a readable format - FIXED VERSION
-            print("\nProbabilities for each predicted number:")
-            for num, prob in zip(sorted(predictions), probabilities):
-                print(f"Number {num}: {prob:.4f}")
-
-            # Save predictions in standardized format
-            save_standardized_prediction(predictions, next_draw_time, probabilities)
-
-            # Handle top 4 numbers if available
-            if analysis and 'hot_numbers' in analysis:
-                top_4_numbers = analysis['hot_numbers'][:4]
-                top_4_file_path = os.path.join(os.path.dirname(PATHS['PREDICTIONS']), 'top_4.xlsx')
-                save_top_4_numbers_to_excel(top_4_numbers, top_4_file_path)
-                print(f"\nTop 4 numbers based on analysis: {','.join(map(str, top_4_numbers))}")
-            
-            return predictions, probabilities, analysis
-        else:
-            print("\nFailed to generate predictions")
+        # Load historical data
+        historical_data = pd.read_csv(PATHS['HISTORICAL_DATA'])
+        if historical_data is None or historical_data.empty:
+            print("No historical data available")
             return None, None, None
+            
+        # Format data correctly for DataAnalysis
+        formatted_draws = []
+        for _, row in historical_data.iterrows():
+            try:
+                # Extract date and numbers
+                date = row['date']
+                numbers = sorted([int(row[f'number{i}']) for i in range(1, 21)])
+                
+                # Validate numbers
+                if len(numbers) == 20 and all(1 <= n <= 80 for n in numbers):
+                    formatted_draws.append((date, numbers))
+            except Exception as e:
+                print(f"Error processing row: {e}")
+                continue
+        
+        if not formatted_draws:
+            print("No valid draws to process")
+            return None, None, None
+            
+        print(f"Processed {len(formatted_draws)} valid draws")
+        
+        # Now call handle_prediction_pipeline with properly formatted data
+        try:
+            result = handler.handle_prediction_pipeline()
+            
+            if isinstance(result, tuple) and len(result) == 3:
+                predictions, probabilities, analysis_data = result
+                
+                if predictions is not None:
+                    print("\n✓ Prediction generated successfully!")
+                    next_draw_time = get_next_draw_time(datetime.now())
+                    
+                    print(f"\nPredicted numbers for next draw at {next_draw_time.strftime('%Y-%m-%d %H:%M:%S')}:")
+                    print(f"Numbers: {', '.join(map(str, sorted(predictions)))}")
+                    
+                    if probabilities is not None:
+                        print("\nProbabilities for each predicted number:")
+                        for num, prob in zip(sorted(predictions), probabilities):
+                            print(f"Number {num}: {prob:.4f}")
+
+                    if analysis_data and isinstance(analysis_data, dict) and 'hot_numbers' in analysis_data:
+                        print(f"\nHot numbers analysis: {[num for num, _ in analysis_data['hot_numbers'][:5]]}")
+                    
+                    return predictions, probabilities, analysis_data
+                
+        except Exception as e:
+            print(f"Error during prediction generation: {str(e)}")
+            traceback.print_exc()
+        
+        print("\nFailed to generate predictions")
+        return None, None, None
             
     except Exception as e:
         print(f"\nError in prediction process: {str(e)}")
+        traceback.print_exc()
         return None, None, None
-
-def perform_complete_analysis(draws):
-    """Perform all analyses and save to Excel"""
+def perform_complete_analysis(draws=None):
+    """Perform comprehensive analysis using DataAnalysis class"""
     try:
+        # If no draws provided, use DrawHandler to get data
         if not draws:
-            collector = KinoDataCollector()
-            draws = collector.fetch_latest_draws()
+            handler = DrawHandler()
+            historical_data = handler.load_historical_data()
+            if historical_data is None:
+                print("\nNo historical data available for analysis")
+                return False
+            
+            # Convert DataFrame to draws format expected by DataAnalysis
+            draws = [(row['date'], [row[f'number{i}'] for i in range(1, 21)])
+                    for _, row in historical_data.iterrows()]
         
-        if draws:
-            analysis = DataAnalysis(draws)
+        # Initialize analysis
+        analysis = DataAnalysis(draws)
+        
+        # Perform comprehensive analysis
+        analysis_data = {
+            'frequency': analysis.count_frequency(),
+            'hot_cold': analysis.hot_and_cold_numbers(),
+            'common_pairs': analysis.find_common_pairs(),
+            'range_analysis': analysis.number_range_analysis()
+        }
+        
+        # Save to Excel using config path
+        excel_path = PATHS['ANALYSIS']
+        os.makedirs(os.path.dirname(excel_path), exist_ok=True)
+        
+        with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
+            # Frequency Analysis
+            freq_df = pd.DataFrame([(num, count) for num, count in analysis_data['frequency'].items()],
+                                 columns=['Number', 'Frequency'])
+            freq_df.sort_values('Frequency', ascending=False).to_excel(writer, 
+                sheet_name='Frequency Analysis', index=False)
             
-            # Perform all analyses
-            analysis_data = {
-                'frequency': analysis.get_top_numbers(20),
-                'suggested_numbers': analysis.suggest_numbers(),
-                'common_pairs': analysis.find_common_pairs(),
-                'consecutive_numbers': analysis.find_consecutive_numbers(),
-                'range_analysis': analysis.number_range_analysis(),
-                'hot_cold_numbers': analysis.hot_and_cold_numbers()
-            }
+            # Hot and Cold Numbers
+            hot_numbers, cold_numbers = analysis_data['hot_cold']
+            hot_cold_df = pd.DataFrame({
+                'Hot Numbers': [x[0] for x in hot_numbers[:20]],
+                'Count': [x[1] for x in hot_numbers[:20]],
+                'Cold Numbers': [x[0] for x in cold_numbers[:20]],
+                'Count': [x[1] for x in cold_numbers[:20]]
+            })
+            hot_cold_df.to_excel(writer, sheet_name='Hot Cold Analysis', index=False)
             
-            # Save to Excel file using config path
-            excel_path = PATHS['ANALYSIS']
-            os.makedirs(os.path.dirname(excel_path), exist_ok=True)
+            # Common Pairs
+            pairs_df = pd.DataFrame(analysis_data['common_pairs'],
+                                  columns=['Pair', 'Frequency'])
+            pairs_df.to_excel(writer, sheet_name='Common Pairs', index=False)
             
-            # Create Excel writer
-            with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
-                # Frequency Analysis
-                pd.DataFrame({
-                    'Top 20 Numbers': analysis_data['frequency'],
-                    'Frequency Count': [analysis.count_frequency().get(num, 0) for num in analysis_data['frequency']]
-                }).to_excel(writer, sheet_name='Frequency Analysis', index=False)
-                
-                # Suggested Numbers
-                pd.DataFrame({
-                    'Suggested Numbers': analysis_data['suggested_numbers']
-                }).to_excel(writer, sheet_name='Suggested Numbers', index=False)
-                
-                # Common Pairs
-                pd.DataFrame(analysis_data['common_pairs'], 
-                           columns=['Pair', 'Frequency']
-                ).to_excel(writer, sheet_name='Common Pairs', index=False)
-                
-                # Consecutive Numbers
-                pd.DataFrame({
-                    'Consecutive Sets': [str(x) for x in analysis_data['consecutive_numbers']]
-                }).to_excel(writer, sheet_name='Consecutive Numbers', index=False)
-                
-                # Range Analysis
-                pd.DataFrame(analysis_data['range_analysis'].items(),
-                           columns=['Range', 'Count']
-                ).to_excel(writer, sheet_name='Range Analysis', index=False)
-                
-                # Hot and Cold Numbers
-                hot, cold = analysis_data['hot_cold_numbers']
-                pd.DataFrame({
-                    'Hot Numbers': hot,
-                    'Cold Numbers': cold
-                }).to_excel(writer, sheet_name='Hot Cold Analysis', index=False)
-            
-            print(f"\nComplete analysis saved to: {excel_path}")
-            return True
+            # Range Analysis
+            range_df = pd.DataFrame(list(analysis_data['range_analysis'].items()),
+                                  columns=['Range', 'Count'])
+            range_df.to_excel(writer, sheet_name='Range Analysis', index=False)
+        
+        print(f"\nComplete analysis saved to: {excel_path}")
+        return True
             
     except Exception as e:
         print(f"\nError in complete analysis: {str(e)}")
+        traceback.print_exc()
         return False
 
 def test_pipeline_integration():
-    """Test the integrated prediction pipeline"""
+    """Test the integrated prediction pipeline with enhanced monitoring"""
     try:
         handler = DrawHandler()
         pipeline_status = {
             'data_collection': False,
             'analysis': False,
             'prediction': False,
-            'evaluation': False
+            'evaluation': False,
+            'timestamps': {},
+            'metrics': {}
         }
 
         # 1. Data Collection
-        print("\nStep 1: Collecting data...")
-        collector = KinoDataCollector()
-        draws = collector.fetch_latest_draws()
-        if draws:
+        print("\nStep 1: Testing data collection...")
+        pipeline_status['timestamps']['collection_start'] = datetime.now()
+        
+        historical_data = handler.load_historical_data()
+        if historical_data is not None and not historical_data.empty:
             pipeline_status['data_collection'] = True
-            print("✓ Data collection successful")
+            pipeline_status['metrics']['data_rows'] = len(historical_data)
+            print(f"✓ Data collection successful ({len(historical_data)} draws loaded)")
             
-            # Save draws to CSV
-            for draw_date, numbers in draws:
-                handler.save_draw_to_csv(draw_date, numbers)
-
             # 2. Analysis
-            print("\nStep 2: Performing analysis...")
-            if perform_complete_analysis(draws):
+            print("\nStep 2: Testing analysis integration...")
+            pipeline_status['timestamps']['analysis_start'] = datetime.now()
+            
+            if perform_complete_analysis():
                 pipeline_status['analysis'] = True
                 print("✓ Analysis complete and saved")
+                
+                # Store analysis metrics
+                analysis_file = PATHS['ANALYSIS']
+                if os.path.exists(analysis_file):
+                    pipeline_status['metrics']['analysis_file'] = os.path.getsize(analysis_file)
 
-            # 3. ML Prediction
-            print("\nStep 3: Generating prediction...")
+            # 3. Prediction Generation
+            print("\nStep 3: Testing prediction pipeline...")
+            pipeline_status['timestamps']['prediction_start'] = datetime.now()
+            
             predictions, probabilities, analysis = handler.handle_prediction_pipeline()
             if predictions is not None:
                 pipeline_status['prediction'] = True
-                print("✓ Prediction generated")
+                pipeline_status['metrics']['prediction_count'] = len(predictions)
+                print("✓ Prediction generated successfully")
                 
-                # Display prediction results
-                formatted_numbers = ','.join(map(str, predictions))
-                print(f"Predicted numbers: {formatted_numbers}")
+                # Display prediction summary
+                print(f"\nPredicted numbers: {', '.join(map(str, sorted(predictions)))}")
                 if analysis and 'hot_numbers' in analysis:
-                    print(f"Hot numbers: {analysis['hot_numbers'][:10]}")
+                    print(f"Top hot numbers: {[num for num, _ in analysis['hot_numbers'][:5]]}")
 
             # 4. Evaluation
-            print("\nStep 4: Evaluating predictions...")
+            print("\nStep 4: Testing evaluation system...")
+            pipeline_status['timestamps']['evaluation_start'] = datetime.now()
+            
             evaluator = PredictionEvaluator()
             evaluator.evaluate_past_predictions()
-            pipeline_status['evaluation'] = True
-            print("✓ Evaluation complete")
+            
+            # Check if evaluation results exist
+            if os.path.exists(evaluator.results_file):
+                pipeline_status['evaluation'] = True
+                print("✓ Evaluation complete")
+                
+                # Load and store evaluation metrics
+                try:
+                    eval_df = pd.read_excel(evaluator.results_file)
+                    pipeline_status['metrics']['total_evaluations'] = len(eval_df)
+                    pipeline_status['metrics']['average_accuracy'] = eval_df['Number_Correct'].mean() / 20 * 100
+                except Exception as e:
+                    print(f"Note: Could not load evaluation metrics: {e}")
+
+        # Calculate execution times
+        pipeline_status['timestamps']['completion'] = datetime.now()
+        
+        # Print detailed pipeline report
+        print("\n=== Pipeline Integration Test Report ===")
+        print(f"Test completed at: {pipeline_status['timestamps']['completion'].strftime('%Y-%m-%d %H:%M:%S')}")
+        print("\nStage Status:")
+        for stage, status in {k: v for k, v in pipeline_status.items() 
+                            if k not in ['timestamps', 'metrics']}.items():
+            print(f"{stage.replace('_', ' ').title()}: {'✓' if status else '✗'}")
+        
+        print("\nMetrics:")
+        if 'data_rows' in pipeline_status['metrics']:
+            print(f"- Historical draws processed: {pipeline_status['metrics']['data_rows']}")
+        if 'prediction_count' in pipeline_status['metrics']:
+            print(f"- Numbers predicted: {pipeline_status['metrics']['prediction_count']}")
+        if 'average_accuracy' in pipeline_status['metrics']:
+            print(f"- Average accuracy: {pipeline_status['metrics']['average_accuracy']:.2f}%")
+        
+        print("\nExecution Times:")
+        start_time = pipeline_status['timestamps']['collection_start']
+        for stage, time in pipeline_status['timestamps'].items():
+            if stage != 'collection_start':
+                duration = (time - start_time).total_seconds()
+                print(f"- {stage.replace('_', ' ').title()}: {duration:.2f} seconds")
 
         return pipeline_status
 
     except Exception as e:
-        print(f"\nError in pipeline: {str(e)}")
+        print(f"\nError in pipeline integration test: {str(e)}")
+        traceback.print_exc()
         return pipeline_status
-
 def run_data_collector_standalone():
-    """
-    Run the data collector in standalone mode just like running the data_collector_selenium.py script directly.
-    This function exactly mimics the behavior of the __main__ block in data_collector_selenium.py.
-    """
-    print("\n--- Running Data Collector in Standalone Mode ---")
+    """Run the data collector in standalone mode"""
+    print("\n--- Running Data Collector ---")
     
-    # Create a collector instance
-    collector = KinoDataCollector()
+    collector = KinoDataCollector(debug=True)
     
     # First try to sort existing data
     print("\nSorting historical draws...")
     collector.sort_historical_draws()
     
     # Then fetch new draws
-    draws = collector.fetch_latest_draws()
+    draws = collector.fetch_latest_draws(num_draws=24)  # Default value from original
     if draws:
         print("\nCollected draws:")
         for draw_date, numbers in draws:
@@ -359,115 +360,148 @@ def run_data_collector_standalone():
             print("Error occurred while sorting draws")
             
     print("\nCollection Status:", collector.collection_status)
-    print("\n--- Data Collection Complete ---")
     
     return draws
 
 def main():
-    # Initialize system
-    system_status = initialize_system()
-    if not system_status['system_ready']:
-        print("System initialization failed.")
-        return
-    
-    print(f"\nSystem initialized at {system_status['start_time']}")
-    
-    # Initialize core components
-    collector = KinoDataCollector()
-    handler = DrawHandler()  # Initialize handler once here
-    draws = None
+    try:
+        # Initialize system
+        system_status = initialize_system()
+        if not system_status['system_ready']:
+            print("System initialization failed.")
+            return
+        
+        print(f"\nSystem initialized at {system_status['start_time']}")
+        print(f"User: {os.getenv('USER', 'Mihai-Edward')}")
+        
+        # Initialize core components once
+        handler = DrawHandler()
+        
+        while True:
+            print("\n==========================")
+            print("    KINO Draw Analyzer    ")
+            print("==========================")
+            print("3. Update Historical Data")
+            print("8. Complete Analysis & Save")
+            print("9. Get ML prediction")
+            print("10. Evaluate prediction accuracy")
+            print("11. Run pipeline test")
+            print("12. Run continuous learning cycle")
+            print("13. Exit")
+            print("==========================\n")
 
-   
-    while True:
-        print("\n==========================")
-        print("3. Fetch latest draws from lotostats.ro")
-        print("8. Complete Analysis & Save")
-        print("9. Get ML prediction")
-        print("10. Evaluate prediction accuracy")
-        print("11. Run pipeline test")
-        print("12. Run continuous learning cycle")  # New option
-        print("13. Exit")  # Updated exit option
-        print("==========================\n")
-
-        try:
-            choice = input("Choose an option (3,8-13): ")
-            
-            if choice == '3':
-                # Run data collector in standalone mode to mimic behavior of data_collector_selenium.py
-                draws = run_data_collector_standalone()
-            
-            elif choice == '8':
-                success = perform_complete_analysis(draws)
-                if success:
-                    print("\nComplete analysis performed and saved successfully")
-                else:
-                    print("\nFailed to perform complete analysis")
-            
-            elif choice == '9':
-                # Use the existing handler instead of creating a new one in check_and_train_model
-                                # Use the existing handler instead of creating a new one in check_and_train_model
-                if check_and_train_model():
+            try:
+                choice = input("Choose an option (3,8-13): ")
+                
+                if choice == '3':
+                    print("\nUpdating historical data...")
+                    collector = KinoDataCollector(debug=True)
+                    draws = collector.fetch_latest_draws()
+                    
+                    if collector.collection_status['success']:
+                        print(f"\n✓ Successfully collected {collector.collection_status['draws_collected']} draws")
+                        if collector.sort_historical_draws():
+                            print("✓ Historical data sorted successfully")
+                            print(f"Last successful draw: {collector.collection_status['last_successful_draw']}")
+                        else:
+                            print("! Warning: Could not sort historical data")
+                    else:
+                        print(f"\n✗ Data collection failed: {collector.collection_status['last_error']}")
+                
+                elif choice == '8':
+                    print("\nPerforming complete analysis...")
+                    success = perform_complete_analysis(draws)
+                    if success:
+                        print("\n✓ Complete analysis performed and saved successfully")
+                    else:
+                        print("\n✗ Failed to perform complete analysis")
+                
+                elif choice == '9':
                     print("\nGenerating ML prediction for next draw...")
-                    predictions, probabilities, analysis = train_and_predict()
-                    if predictions is not None:
-                        print("\nPrediction process completed successfully!")
-                        # Results are already displayed in train_and_predict
+                    try:
+                        # First train the models
+                        predictor = LotteryPredictor()
+                        if predictor.train_models():
+                            print("\n✓ Models trained successfully")
+                            
+                            # Then generate prediction
+                            result = train_and_predict()
+                            if isinstance(result, tuple) and len(result) == 3:
+                                predictions, probabilities, analysis = result
+                                if predictions is not None:
+                                    print("\n✓ Prediction process completed successfully!")
+                                    print(f"Predicted numbers: {', '.join(map(str, sorted(predictions)))}")
+                                    
+                                    # Save prediction if needed
+                                    # You might want to add prediction saving logic here
+                                else:
+                                    print("\n✗ Failed to generate predictions")
+                            else:
+                                print("\n✗ Invalid prediction format")
+                    except Exception as e:
+                        print(f"\n✗ Error during prediction: {str(e)}")
+                        traceback.print_exc()
+                
+                elif choice == '10':
+                    print("\nStarting prediction evaluation...")
+                    try:
+                        evaluator = PredictionEvaluator()
+                        evaluator.evaluate_past_predictions()
+                        print("\n✓ Evaluation complete")
+                    except Exception as e:
+                        print(f"\n✗ Error during evaluation: {e}")
+                
+                elif choice == '11':
+                    print("\nRunning complete pipeline test...")
+                    print("This will execute steps 3->8->9->10 in sequence")
+                    confirm = input("Continue? (y/n): ")
+                    if confirm.lower() == 'y':
+                        status = test_pipeline_integration()
+                        print("\nPipeline Test Results:")
+                        for step, success in {k: v for k, v in status.items() 
+                                           if k not in ['timestamps', 'metrics']}.items():
+                            print(f"{step}: {'✓' if success else '✗'}")
+                        
+                        if all(v for k, v in status.items() if k not in ['timestamps', 'metrics']):
+                            print("\n✓ Complete pipeline test successful!")
+                        else:
+                            print("\n✗ Some pipeline steps failed. Check the results above.")
+                
+                elif choice == '12':
+                    print("\nRunning continuous learning cycle...")
+                    if handler.run_continuous_learning_cycle():
+                        metrics = handler.get_learning_metrics()
+                        print("\nLearning Cycle Results:")
+                        print(f"- Learning cycles completed: {metrics['cycles_completed']}")
+                        if 'current_accuracy' in metrics:
+                            print(f"- Current accuracy: {metrics['current_accuracy']:.2f}%")
+                        if 'improvement_rate' in metrics:
+                            print(f"- Total improvement: {metrics['improvement_rate']:.2f}%")
+                        if 'last_adjustments' in metrics and metrics['last_adjustments']:
+                            print("\nRecent model adjustments:")
+                            for adj in metrics['last_adjustments']:
+                                print(f"- {adj}")
                     else:
-                        print("\nPrediction generation failed after model training")
+                        print("\n✗ Continuous learning cycle failed")
+                
+                elif choice == '13':
+                    print("\nExiting program...")
+                    sys.exit(0)
+                
                 else:
-                    print("\nFailed to prepare model for predictions")
-            
-            elif choice == '10':
-                print("\nStarting prediction evaluation...")
-                try:
-                    evaluator = PredictionEvaluator()
-                    evaluator.evaluate_past_predictions()
-                    print("Evaluation complete")
-                except Exception as e:
-                    print(f"\nError during evaluation: {e}")
-                    
-            elif choice == '11':
-                print("\nRunning complete pipeline...")
-                print("This will execute steps 3->8->9->10 in sequence")
-                confirm = input("Continue? (y/n): ")
-                if confirm.lower() == 'y':
-                    # Use the existing handler in test_pipeline_integration
-                    status = test_pipeline_integration()
-                    print("\nPipeline Test Results:")
-                    for step, success in status.items():
-                        print(f"{step}: {'✓' if success else '✗'}")
-                    
-                    if all(status.values()):
-                        print("\nComplete pipeline test successful!")
-                    else:
-                        print("\nSome pipeline steps failed. Check the results above.")
-            
-             
-            elif choice == '12':
-                print("\nRunning continuous learning cycle...")
-                if handler.run_continuous_learning_cycle():
-                    metrics = handler.get_learning_metrics()
-                    print("\nContinuous Learning Results:")
-                    print(f"- Learning cycles completed: {metrics['cycles_completed']}")
-                    print(f"- Current prediction accuracy: {metrics['current_accuracy']:.2f}%" if metrics['current_accuracy'] else "- Current accuracy: Not available")
-                    print(f"- Total improvement: {metrics['improvement_rate']:.2f}%" if metrics['improvement_rate'] else "- Total improvement: Not available")
-                    print("\nMost recent adjustments:")
-                    if metrics['last_adjustments']:
-                        for adj in metrics['last_adjustments']:
-                            print(f"- {adj}")
-                    else:
-                        print("- No adjustments made")
-                else:
-                    print("\nContinuous learning cycle did not complete successfully")
-            elif choice == '13':
-                print("\nExiting program...")
-                sys.exit(0)
-            else:
-                print("\nInvalid option. Please choose 3,8-13")
+                    print("\nInvalid option. Please choose 3,8-13")
 
-        except Exception as e:
-            print(f"\nAn error occurred: {str(e)}")
-            print("Please try again.")
+            except KeyboardInterrupt:
+                print("\n\nOperation cancelled by user.")
+                continue
+            except Exception as e:
+                print(f"\nError processing option: {str(e)}")
+                traceback.print_exc()
+                print("\nPlease try again.")
+
+    except Exception as e:
+        print(f"\nCritical error in main program: {str(e)}")
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
