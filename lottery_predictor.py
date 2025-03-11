@@ -390,7 +390,7 @@ class LotteryPredictor:
             print(f"- Numbers distribution range: {labels.min()}-{labels.max()}")
             
             return features, labels
-                    
+                
         except Exception as e:
             print(f"Error preparing training data: {e}")
             return None, None

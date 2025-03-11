@@ -125,9 +125,8 @@ class DrawHandler:
                 self.predictor = LotteryPredictor(use_combined_features=use_combined_features)
             else:
                 # Reset and update the predictor for fresh training
-                self.predictor.reset_for_training(use_combined_features=use_combined_features)
-            
-            print(f"Training with {'combined' if use_combined_features else 'base'} features")
+                pass
+              
             
             # Prepare data for training
             features, labels = self.predictor.prepare_data(historical_data)

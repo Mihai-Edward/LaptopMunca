@@ -145,7 +145,7 @@ class KinoDataCollector:
             self.collection_status['last_error'] = str(e)
             return False
 
-    def fetch_latest_draws(self, num_draws=99, delay=1):
+    def fetch_latest_draws(self, num_draws=24, delay=1):
         driver = None
         try:
             print(f"\nFetching {num_draws} latest draws...")
