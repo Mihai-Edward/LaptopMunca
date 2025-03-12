@@ -144,6 +144,15 @@ class DrawHandler:
                     if result and len(result) == 3:
                         numbers, probs, analysis = result
                         if numbers is not None:
+                            # Save to consolidated format
+                            if hasattr(self.predictor, 'save_prediction'):
+                                success = self.predictor.save_prediction(
+                                    prediction=numbers,
+                                    probabilities=probs
+                                )
+                                if not success:
+                                    print("WARNING: Failed to save to consolidated format")
+                    
                             self.pipeline_status['success'] = True
                             return numbers, probs, analysis
                     
@@ -460,49 +469,16 @@ class DrawHandler:
                 
                 predicted_numbers, probabilities, context = prediction_result
                 
-                if predicted_numbers is None or probabilities is None:
-                    print("ERROR: Prediction failed to generate valid results")
-                    return None, None, None
-                
-                # Convert numpy arrays to lists if needed
-                if isinstance(predicted_numbers, np.ndarray):
-                    predicted_numbers = predicted_numbers.tolist()
-                if isinstance(probabilities, np.ndarray):
-                    probabilities = probabilities.tolist()
-                
-                # Ensure we have matching lengths
-                if len(predicted_numbers) != len(probabilities) and len(probabilities) != 80:
-                    print("WARNING: Adjusting probability array length")
-                    if len(probabilities) == 80:
-                        # Extract relevant probabilities
-                        prob_map = {num: probabilities[num-1] for num in predicted_numbers}
-                        probabilities = [prob_map.get(num, 1.0/len(predicted_numbers)) for num in predicted_numbers]
-                    else:
-                        # Create uniform distribution
-                        probabilities = [1.0/len(predicted_numbers)] * len(predicted_numbers)
-                
-                # Normalize probabilities
-                sum_probs = sum(probabilities)
-                if sum_probs > 0:
-                    probabilities = [p/sum_probs for p in probabilities]
-                
-                print(f"DEBUG: Processed predictions:")
-                print(f"Numbers: {predicted_numbers}")
-                print(f"Probabilities length: {len(probabilities)}")
-                print(f"Sample probabilities: {probabilities[:5]}")
-                
-                # Log if we're using combined features for this prediction
-                feature_mode = "combined" if self.predictor.pipeline_data.get('use_combined_features', False) else "base only"
-                print(f"DEBUG: Prediction used {feature_mode} features")
-                
-                # Update analysis results with context
-                if context:
-                    analysis_results.update(context)
+                if predicted_numbers is not None and probabilities is not None:
+                    # Save to consolidated format using predictor's new method
+                    success = self.predictor.save_prediction(
+                        prediction=predicted_numbers,
+                        probabilities=probabilities
+                    )
                     
-                # Add feature usage info to results
-                analysis_results['feature_mode'] = feature_mode
-                analysis_results['using_analysis_features'] = self.predictor.pipeline_data.get('use_combined_features', False)
-                
+                    if not success:
+                        print("WARNING: Failed to save prediction to consolidated format")
+                        
                 return predicted_numbers, probabilities, analysis_results
                 
             else:

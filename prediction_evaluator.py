@@ -20,32 +20,66 @@ from config.paths import PATHS, ensure_directories
 
 class PredictionEvaluator:
     def __init__(self):
-        """Initialize PredictionEvaluator with enhanced configuration"""
-        # Use PATHS configuration
-        ensure_directories()
-        
-        # Fix path assignments
-        self.predictions_dir = PATHS['PREDICTIONS_DIR']
-        self.metadata_dir = PATHS['PREDICTIONS_METADATA_DIR']
-        self.historical_file = PATHS['HISTORICAL_DATA']
-        self.results_dir = PATHS['PROCESSED_DIR']
-        self.results_file = os.path.join(self.results_dir, 'evaluation_results.xlsx')
-        
-        # Create required directories
-        os.makedirs(self.predictions_dir, exist_ok=True)
-        os.makedirs(self.metadata_dir, exist_ok=True)
-        os.makedirs(self.results_dir, exist_ok=True)
-        
-        # Validate the historical data file
-        self.historical_data_valid = self.validate_historical_data()
-        
-        # Initialize evaluation metrics tracking
-        self.evaluation_metrics = {
-            'accuracy_history': [],
-            'precision_history': [],
-            'recall_history': [],
-            'f1_history': []
-        }
+        """Initialize evaluator with consolidated file support"""
+        self.excel_file = os.path.join(PATHS['PROCESSED_DIR'], 'all_predictions.xlsx')
+        self.evaluation_metrics = {}
+
+    def evaluate_predictions(self):
+        """Evaluate predictions from consolidated Excel file"""
+        try:
+            if not os.path.exists(self.excel_file):
+                print(f"No consolidated predictions file found at: {self.excel_file}")
+                return False
+
+            # Load predictions from Excel
+            predictions_df = pd.read_excel(self.excel_file)
+            
+            # Get historical data for comparison
+            historical_df = pd.read_csv(PATHS['HISTORICAL_DATA'])
+            
+            results = []
+            for _, pred_row in predictions_df.iterrows():
+                # Extract prediction time and numbers
+                pred_time = pred_row['next_draw_time']
+                predicted_numbers = [
+                    pred_row[f'number{i}'] 
+                    for i in range(1, 21) 
+                    if f'number{i}' in pred_row.columns
+                ]
+                
+                # Find matching draw in historical data
+                actual_draw = historical_df[historical_df['date'].str.contains(pred_time)]
+                
+                if not actual_draw.empty:
+                    actual_numbers = [
+                        actual_draw.iloc[0][f'number{i}'] 
+                        for i in range(1, 21)
+                    ]
+                    
+                    # Count matches
+                    matches = len(set(predicted_numbers) & set(actual_numbers))
+                    
+                    results.append({
+                        'prediction_time': pred_time,
+                        'predicted': predicted_numbers,
+                        'actual': actual_numbers,
+                        'matches': matches
+                    })
+            
+            # Store evaluation results
+            self.evaluation_metrics.update({
+                'total_evaluated': len(results),
+                'average_matches': np.mean([r['matches'] for r in results]) if results else 0,
+                'best_prediction': max([r['matches'] for r in results]) if results else 0,
+                'last_evaluation': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            })
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error in evaluation: {e}")
+            traceback.print_exc()
+            return False
 
     def compare_prediction_with_actual(self, predicted_numbers, actual_numbers):
         """Compare predicted numbers with actual draw numbers"""
@@ -354,6 +388,37 @@ class PredictionEvaluator:
             print(f"Error calculating performance stats: {e}")
             traceback.print_exc()
             return None
+
+    def set_evaluation_stats(self, stats):
+        """
+        Store evaluation statistics for later use by other components
+        
+        Args:
+            stats: Dictionary containing evaluation statistics
+        """
+        try:
+            print("Storing evaluation statistics for external use")
+            
+            # Store the stats in the instance for later use
+            if not hasattr(self, 'stored_stats'):
+                self.stored_stats = {}
+                
+            # Update the stored stats with new values
+            self.stored_stats.update(stats)
+            
+            # Save a copy to the evaluation_metrics attribute too
+            self.evaluation_metrics.update({
+                'last_evaluation': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'total_predictions': stats.get('total_predictions', 0),
+                'avg_accuracy': stats.get('avg_accuracy', 0),
+                'best_prediction': stats.get('best_prediction', 0)
+            })
+            
+            return True
+        except Exception as e:
+            print(f"Error storing evaluation stats: {e}")
+            traceback.print_exc()
+            return False
 
     def _calculate_trend(self, recent_values):
         """Calculate trend using linear regression"""

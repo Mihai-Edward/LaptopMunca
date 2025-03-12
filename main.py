@@ -265,53 +265,22 @@ def create_backup_prediction():
         debug_print(f"Error creating backup prediction: {e}", "ERROR")
         return None, None
 
-def save_prediction(numbers, probabilities, is_backup=False):
-    """Save prediction to files"""
+def save_prediction(predictions, probabilities, is_backup=False):
+    """Save prediction using consolidated format"""
     try:
-        if numbers is None or len(numbers) == 0:
-            debug_print("No valid numbers to save", "ERROR")
-            return False
-            
-        # Calculate next draw time
-        now = datetime.now()
-        next_draw_time = get_next_draw_time(now)
-        next_draw_time_formatted = next_draw_time.strftime('%H:%M  %d-%m-%Y')
-        
-        # Create timestamp for filenames
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Save predictions to CSV
-        pred_file = os.path.join(PATHS['PREDICTIONS_DIR'], f"prediction_{timestamp}.csv")
-        debug_print(f"Saving predictions to: {pred_file}")
-        
-        # Create DataFrame and save to CSV
-        pred_data = {
-            'number': numbers,
-            'probability': probabilities if probabilities else [1.0/len(numbers)] * len(numbers)
-        }
-        pred_df = pd.DataFrame(pred_data)
-        pred_df.to_csv(pred_file, index=False)
-        
-        # Save metadata
-        metadata = {
-            'timestamp': timestamp,
-            'next_draw_time': next_draw_time_formatted,
-            'source': 'backup_prediction' if is_backup else 'ml_prediction',
-            'prediction_count': len(numbers),
-            'creation_time': now.strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        metadata_file = os.path.join(PATHS['PREDICTIONS_METADATA_DIR'], f"prediction_{timestamp}_metadata.json")
-        debug_print(f"Saving metadata to: {metadata_file}")
-        
-        with open(metadata_file, 'w') as f:
-            json.dump(metadata, f, indent=4)
-            
-        debug_print(f"Successfully saved {'backup' if is_backup else 'primary'} prediction")
-        return True
+        # Create a new DrawHandler instance
+        draw_handler = DrawHandler()
+        success = draw_handler.predictor.save_prediction(
+            prediction=predictions,
+            probabilities=probabilities
+        )
+        if success:
+            print("Prediction saved successfully")
+            return True
+        print("Failed to save prediction")
+        return False
     except Exception as e:
-        debug_print(f"Error saving prediction: {e}", "ERROR")
-        traceback.print_exc()
+        print(f"Error saving prediction: {e}")
         return False
 
 def generate_prediction():
@@ -366,12 +335,198 @@ def get_next_draw_time(current_time):
         next_time += timedelta(days=1)
     
     return next_time
+def save_prediction_to_excel(predictions, probabilities, next_draw_time=None):
+    """
+    Save prediction to consolidated Excel file for easier evaluation.
+    
+    Args:
+        predictions: List of predicted numbers
+        probabilities: List of corresponding probabilities
+        next_draw_time: The formatted time of the next draw (optional)
+    
+    Returns:
+        bool: Success status
+    """
+    try:
+        debug_print("\nSaving prediction to consolidated Excel file...")
+        import pandas as pd
+        from datetime import datetime
+        
+        # Set up paths and ensure directories exist
+        excel_file = os.path.join(PATHS['PROCESSED_DIR'], 'all_predictions.xlsx')
+        
+        # Create timestamps
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if next_draw_time is None:
+            next_draw_time = get_next_draw_time(datetime.now()).strftime('%H:%M  %d-%m-%Y')
+        
+        # Format data for new record
+        new_data = {
+            'timestamp': timestamp,
+            'next_draw_time': next_draw_time,
+            'prediction_date': datetime.now().strftime('%Y-%m-%d'),
+            'prediction_time': datetime.now().strftime('%H:%M:%S')
+        }
+        
+        # Add predicted numbers to record
+        for i, num in enumerate(predictions, 1):
+            new_data[f'number{i}'] = int(num)
+            
+        # Add probabilities to record (if available)
+        if probabilities and len(probabilities) == len(predictions):
+            for i, prob in enumerate(probabilities, 1):
+                new_data[f'probability{i}'] = float(prob)
 
+        # Create a DataFrame for the new record
+        new_row = pd.DataFrame([new_data])
+        
+        # Check if file exists
+        if os.path.exists(excel_file):
+            try:
+                # Load existing data
+                existing_df = pd.read_excel(excel_file)
+                
+                # Check if we already have this prediction
+                if 'next_draw_time' in existing_df.columns:
+                    date_matches = existing_df['next_draw_time'] == next_draw_time
+                    if any(date_matches):
+                        # Update existing prediction
+                        for col, value in new_data.items():
+                            if col in existing_df.columns:
+                                existing_df.loc[date_matches, col] = value
+                        result_df = existing_df
+                    else:
+                        # Append new prediction
+                        result_df = pd.concat([existing_df, new_row], ignore_index=True)
+                else:
+                    # No matching column, just append
+                    result_df = pd.concat([existing_df, new_row], ignore_index=True)
+            except Exception as e:
+                debug_print(f"Error reading existing Excel file: {e}", "WARNING")
+                debug_print("Creating new Excel file", "INFO")
+                result_df = new_row
+        else:
+            # Create new file
+            result_df = new_row
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(excel_file), exist_ok=True)
+        
+        # Save to Excel
+        result_df.to_excel(excel_file, index=False)
+        debug_print(f"Prediction saved to consolidated Excel file: {excel_file}")
+        return True
+        
+    except Exception as e:
+        debug_print(f"Error saving prediction to Excel: {e}", "ERROR")
+        traceback.print_exc()
+        return False
 def evaluate_predictions():
     """Execute prediction evaluation"""
     try:
         debug_print("Starting prediction evaluation...")
         evaluator = PredictionEvaluator()
+        
+        # First check if consolidated Excel file exists
+        excel_file = os.path.join(PATHS['PROCESSED_DIR'], 'all_predictions.xlsx')
+        if os.path.exists(excel_file):
+            debug_print(f"Found consolidated predictions Excel file: {excel_file}")
+            debug_print("Using consolidated file for evaluation...")
+            
+            try:
+                # Load historical data
+                historical_df = pd.read_csv(PATHS['HISTORICAL_DATA'])
+                if historical_df is None or len(historical_df) == 0:
+                    debug_print("No historical data found, falling back to standard evaluation", "WARNING")
+                else:
+                    # Load the Excel file with predictions
+                    try:
+                        predictions_df = pd.read_excel(excel_file)
+                        debug_print(f"Loaded {len(predictions_df)} predictions from Excel file")
+                        
+                        # Track evaluation results
+                        total_evaluated = 0
+                        total_correct = 0
+                        best_prediction = 0
+                        
+                        # Process each prediction
+                        for idx, row in predictions_df.iterrows():
+                            try:
+                                if 'next_draw_time' not in row:
+                                    debug_print(f"Missing next_draw_time in row {idx}, skipping", "WARNING")
+                                    continue
+                                    
+                                next_draw_time = row['next_draw_time']
+                                
+                                # Find corresponding draw in historical data
+                                matching_draws = historical_df[historical_df['date'] == next_draw_time]
+                                if len(matching_draws) == 0:
+                                    debug_print(f"No matching draw found for {next_draw_time}, skipping", "INFO")
+                                    continue
+                                    
+                                # Extract predicted numbers
+                                predicted_numbers = []
+                                for i in range(1, 21):
+                                    column_name = f'number{i}'
+                                    if column_name in row and not pd.isna(row[column_name]):
+                                        predicted_numbers.append(int(row[column_name]))
+                                
+                                if len(predicted_numbers) != 20:
+                                    debug_print(f"Invalid prediction count: {len(predicted_numbers)}, skipping", "WARNING")
+                                    continue
+                                    
+                                # Extract actual drawn numbers
+                                actual_numbers = []
+                                for i in range(1, 21):
+                                    column_name = f'number{i}'
+                                    if column_name in matching_draws.columns:
+                                        val = matching_draws.iloc[0][column_name]
+                                        if not pd.isna(val):
+                                            actual_numbers.append(int(val))
+                                
+                                if len(actual_numbers) != 20:
+                                    debug_print(f"Invalid actual draw count: {len(actual_numbers)}, skipping", "WARNING")
+                                    continue
+                                    
+                                # Compare and count matches
+                                correct_count = len(set(predicted_numbers).intersection(set(actual_numbers)))
+                                
+                                # Update statistics
+                                total_evaluated += 1
+                                total_correct += correct_count
+                                best_prediction = max(best_prediction, correct_count)
+                                
+                                debug_print(f"Prediction for {next_draw_time}: {correct_count} correct", "INFO")
+                                
+                            except Exception as row_error:
+                                debug_print(f"Error processing prediction row {idx}: {row_error}", "ERROR")
+                                continue
+                                
+                        # Calculate and display stats
+                        if total_evaluated > 0:
+                            avg_accuracy = (total_correct / (total_evaluated * 20)) * 100
+                            debug_print("\n=== Evaluation Results (Excel) ===")
+                            debug_print(f"Total evaluated: {total_evaluated}")
+                            debug_print(f"Average accuracy: {avg_accuracy:.2f}%")
+                            debug_print(f"Best prediction: {best_prediction} correct")
+                            
+                            # Store results for later use
+                            evaluator.set_evaluation_stats({
+                                'total_predictions': total_evaluated,
+                                'total_correct': total_correct,
+                                'best_prediction': best_prediction,
+                                'avg_accuracy': avg_accuracy
+                            })
+                            
+                            return True
+                    except Exception as excel_error:
+                        debug_print(f"Error processing Excel file: {excel_error}", "ERROR")
+                        debug_print("Falling back to standard evaluation", "WARNING")
+            except Exception as e:
+                debug_print(f"Error in Excel evaluation: {e}", "ERROR")
+                debug_print("Falling back to standard evaluation", "WARNING")
+        
+        # Fall back to the original evaluation method
         evaluator.evaluate_past_predictions()
         
         # Get and display performance stats
