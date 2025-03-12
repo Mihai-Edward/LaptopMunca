@@ -7,6 +7,9 @@ import traceback
 from pathlib import Path
 from datetime import datetime, timedelta
 import pandas as pd
+import numpy as np
+
+from lottery_predictor import LotteryPredictor
 
 # Add project root to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))  # Gets src directory
@@ -202,12 +205,13 @@ def run_analysis():
         traceback.print_exc()
         return False
 def generate_prediction():
-    """Execute prediction generation with proper error handling"""
+    """Execute prediction generation with proper pipeline flow"""
     try:
         debug_print("\n=== Starting Prediction Generation ===")
         debug_print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-        # Initialize DrawHandler
+        # Initialize DrawHandler and ensure directories
+        debug_print("\nInitializing prediction pipeline...")
         handler = DrawHandler()
         ensure_directories()
 
@@ -218,97 +222,91 @@ def generate_prediction():
             debug_print("Failed to load historical data", "ERROR")
             return False
 
-        # Format data using the formatter
+        # Format data for analysis
         formatted_draws = DrawDataFormatter.format_historical_data(historical_data)
         if not formatted_draws:
             debug_print("No valid draws after formatting", "ERROR")
             return False
 
-        # Validate first draw format
-        is_valid, message = DrawDataFormatter.validate_draw_format(formatted_draws[0])
-        if not is_valid:
-            debug_print(f"Invalid draw format: {message}", "ERROR")
-            return False
-
-        debug_print(f"Successfully formatted {len(formatted_draws)} draws")
-
+        # Initialize DataAnalysis
+        analyzer = DataAnalysis(formatted_draws)
+        
         # Train models
         debug_print("\nChecking/Training models...")
-        if handler.train_ml_models():
-            debug_print("Models ready")
-
-            try:
-                # Initialize DataAnalysis with validated data
-                analyzer = DataAnalysis(formatted_draws)
-                
-                # Get analysis results
-                debug_print("\nGetting analysis results...")
-                analysis_results = analyzer.get_analysis_results()
-
-                # Execute prediction pipeline
-                debug_print("\nExecuting prediction pipeline...")
-                pipeline_result = handler.handle_prediction_pipeline()
-
-                if pipeline_result is not None and isinstance(pipeline_result, tuple):
-                    predictions, probabilities, analysis = pipeline_result
-                    
-                    if predictions is not None:
-                        # Convert numpy values if needed
-                        if hasattr(predictions[0], 'item'):
-                            predictions = [p.item() for p in predictions]
-                        
-                        # Save results
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        next_draw = get_next_draw_time(datetime.now())
-                        
-                        # Save prediction CSV
-                        csv_path = os.path.join(PATHS['PREDICTIONS_DIR'], f'prediction_{timestamp}.csv')
-                        pd.DataFrame({
-                            'number': sorted(predictions),
-                            'probability': [0.0500] * len(predictions)
-                        }).to_csv(csv_path, index=False)
-                        
-                        # Save analysis Excel
-                        analysis_path = os.path.join(PATHS['ANALYSIS'], f'analysis_{timestamp}.xlsx')
-                        analyzer.save_to_excel(analysis_path)
-                        
-                        # Save metadata JSON
-                        metadata_path = os.path.join(PATHS['PREDICTIONS_METADATA_DIR'], f'prediction_{timestamp}_metadata.json')
-                        metadata = {
-                            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                            'next_draw_time': next_draw.strftime('%H:%M  %d-%m-%Y'),
-                            'prediction_info': {
-                                'numbers': sorted(predictions),
-                                'confidence': 0.0500
-                            },
-                            'analysis_context': analysis_results
-                        }
-                        
-                        with open(metadata_path, 'w') as f:
-                            json.dump(metadata, f, indent=4)
-                        
-                        debug_print("\nResults saved successfully")
-                        return True
-                    else:
-                        debug_print("No valid predictions generated", "ERROR")
-                        return False
-                else:
-                    debug_print(f"Invalid pipeline result: {pipeline_result}", "ERROR")
-                    return False
-                    
-            except Exception as e:
-                debug_print(f"Error in prediction generation: {str(e)}", "ERROR")
-                debug_print(f"Full error context: {traceback.format_exc()}", "DEBUG")
-                return False
-        else:
+        if not handler.train_ml_models():
             debug_print("Model training failed", "ERROR")
             return False
-            
-    except Exception as e:
-        debug_print(f"Critical error in prediction generation: {str(e)}", "ERROR")
-        debug_print(f"Critical error details: {traceback.format_exc()}", "DEBUG")
-        return False
+        debug_print("Models ready")
 
+        # Get analysis results
+        debug_print("\nGetting analysis results...")
+        analysis_results = analyzer.get_analysis_results()
+        if not analysis_results:
+            debug_print("Failed to get analysis results", "ERROR")
+            return False
+
+        # Update handler's predictor with analysis context
+        handler.predictor.pipeline_data['analysis_context'] = analysis_results
+
+        # Generate prediction using pipeline
+        debug_print("\nExecuting prediction pipeline...")
+        result = handler.handle_prediction_pipeline()
+
+        if result is not None:
+            predictions, probabilities, analysis = result  # This should now work correctly
+            
+            if predictions is not None:
+                # Save results
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                next_draw = get_next_draw_time(datetime.now())
+
+                # Save predictions CSV
+                predictions_file = os.path.join(PATHS['PREDICTIONS_DIR'], f'prediction_{timestamp}.csv')
+                pd.DataFrame({
+                    'number': sorted(predictions),
+                    'probability': probabilities if probabilities else [0.0500] * len(predictions)
+                }).to_csv(predictions_file, index=False)
+
+                # Save analysis results
+                analysis_file = os.path.join(PATHS['PROCESSED_DIR'], f'analysis_{timestamp}.xlsx')
+                analyzer.save_to_excel(analysis_file)
+
+                # Update main analysis file
+                analyzer.save_to_excel(PATHS['ANALYSIS'])
+
+                # Save metadata
+                metadata_file = os.path.join(PATHS['PREDICTIONS_METADATA_DIR'], 
+                                          f'prediction_{timestamp}_metadata.json')
+                metadata = {
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'next_draw_time': next_draw.strftime('%H:%M  %d-%m-%Y'),
+                    'prediction_info': {
+                        'numbers': sorted(predictions),
+                        'confidence': float(np.mean(probabilities)) if probabilities else 0.0500
+                    },
+                    'analysis_context': analysis_results,
+                    'feature_config': {
+                        'use_combined_features': True,
+                        'feature_dimension': handler.predictor.training_status.get('model_config', {}).get('feature_dimension')
+                    }
+                }
+
+                with open(metadata_file, 'w') as f:
+                    json.dump(metadata, f, indent=4)
+
+                debug_print("\nResults saved successfully")
+                return True
+            else:
+                debug_print("No valid predictions generated", "ERROR")
+                return False
+        else:
+            debug_print("Pipeline execution failed", "ERROR")
+            return False
+
+    except Exception as e:
+        debug_print(f"Error in prediction generation: {e}", "ERROR")
+        debug_print(f"Full error context: {traceback.format_exc()}", "DEBUG")
+        return False
 def get_next_draw_time(current_time):
     """Calculate the next draw time (5 minute intervals)"""
     minute = (current_time.minute // 5 * 5 + 5) % 60
