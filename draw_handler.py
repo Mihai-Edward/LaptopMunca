@@ -25,7 +25,8 @@ class DrawHandler:
             ensure_directories()
             self.csv_file = PATHS['HISTORICAL_DATA']
             self.models_dir = PATHS['MODELS_DIR']
-            self.predictions_dir = os.path.dirname(PATHS['PREDICTIONS'])
+            # Fix: Use PREDICTIONS_DIR directly instead of os.path.dirname(PATHS['PREDICTIONS'])
+            self.predictions_dir = PATHS['PREDICTIONS_DIR']
             
             # Initialize number columns
             self.number_cols = [f'number{i}' for i in range(1, 21)]
@@ -1392,7 +1393,9 @@ def get_next_draw_time(current_time):
 
 def save_top_4_numbers_to_excel(top_4_numbers, file_path=None):
     if file_path is None:
-        file_path = os.path.join(os.path.dirname(PATHS['PREDICTIONS']), 'top_4.xlsx')
+        file_path = os.path.join(PATHS['PREDICTIONS_DIR'], 'top_4.xlsx')
+        # or if you want it one level up:
+        # file_path = os.path.join(os.path.dirname(PATHS['PREDICTIONS_DIR']), 'top_4.xlsx')
     df = pd.DataFrame({'Top 4 Numbers': top_4_numbers})
     
     # Create directory if it doesn't exist

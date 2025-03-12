@@ -2,37 +2,42 @@ import os
 import sys
 import platform
 from pathlib import Path
+from datetime import datetime  # Added this import which was missing
 
-# Keep original BASE_DIR definition for compatibility
+# Calculate BASE_DIR dynamically
+# This takes the directory of the current file (paths.py) and goes up one level to the project root
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Keep original platform check
+# Platform check for driver
 IS_WINDOWS = platform.system().lower() == 'windows'
 DRIVER_FILENAME = "msedgedriver.exe" if IS_WINDOWS else "msedgedriver"
 
-# Keep your original PATHS dictionary but make it more robust
+# Complete PATHS dictionary with all required paths
 PATHS = {
     'HISTORICAL_DATA': os.path.join(BASE_DIR, "src", "historical_draws.csv"),
-    'PREDICTIONS': os.path.join(BASE_DIR, "data", "processed", "predictions.csv"),
+    'PREDICTIONS_DIR': os.path.join(BASE_DIR, "data", "processed", "predictions"),
+    'PREDICTIONS_METADATA_DIR': os.path.join(BASE_DIR, "data", "processed", "metadata"),
     'ANALYSIS': os.path.join(BASE_DIR, "data", "processed", "analysis_results.xlsx"),
     'MODELS_DIR': os.path.join(BASE_DIR, "models"),
     'DRIVER': os.path.join(BASE_DIR, "drivers", DRIVER_FILENAME),
     'PROCESSED_DIR': os.path.join(BASE_DIR, "data", "processed"),
     'SRC_DIR': os.path.join(BASE_DIR, "src"),
+    'CONFIG_DIR': os.path.join(BASE_DIR, "config")
 }
 
-# Add new helper function but don't change existing ones
 def get_project_root():
-    """Get the project root directory in a reliable way"""
-    return Path(BASE_DIR).resolve()
+    """Get the project root directory"""
+    return Path(BASE_DIR)
 
 def ensure_directories():
-    """Ensure all required directories exist with proper structure"""
+    """Ensure all required directories exist"""
     try:
-        # Keep your original required directories
+        # Define required directory structure
         required_dirs = [
             os.path.join(BASE_DIR, "data"),
             os.path.join(BASE_DIR, "data", "processed"),
+            os.path.join(BASE_DIR, "data", "processed", "predictions"),
+            os.path.join(BASE_DIR, "data", "processed", "metadata"),
             os.path.join(BASE_DIR, "models"),
             os.path.join(BASE_DIR, "drivers"),
             os.path.join(BASE_DIR, "src"),
@@ -44,9 +49,9 @@ def ensure_directories():
             os.makedirs(directory, exist_ok=True)
             print(f"Ensured directory exists: {directory}")
         
-        # Create path directories
+        # Create path directories for all PATHS entries
         for name, path in PATHS.items():
-            directory = os.path.dirname(path)
+            directory = path if name.endswith('_DIR') else os.path.dirname(path)
             os.makedirs(directory, exist_ok=True)
             print(f"Ensured path exists for {name}: {directory}")
         
@@ -57,9 +62,8 @@ def ensure_directories():
         print(f"BASE_DIR: {BASE_DIR}")
         return False
 
-# Keep all your original functions
 def validate_paths():
-    """Validate that all required paths exist and are accessible"""
+    """Validate all paths exist and are accessible"""
     missing_paths = []
     inaccessible_paths = []
     
@@ -68,14 +72,19 @@ def validate_paths():
         return False
     
     for name, path in PATHS.items():
-        dir_path = os.path.dirname(path)
+        dir_path = path if name.endswith('_DIR') else os.path.dirname(path)
         
         if not os.path.exists(dir_path):
             missing_paths.append(f"{name}: {dir_path}")
             continue
             
         try:
-            test_file = os.path.join(dir_path, '.test')
+            # For directories, test write permission in the directory
+            if name.endswith('_DIR'):
+                test_file = os.path.join(dir_path, '.test')
+            else:
+                test_file = os.path.join(os.path.dirname(path), '.test')
+                
             with open(test_file, 'w') as f:
                 f.write('test')
             os.remove(test_file)
@@ -96,30 +105,53 @@ def validate_paths():
     return True
 
 def get_absolute_path(path_key):
-    """Get the absolute path for a given path key"""
+    """Get absolute path for a key"""
     if path_key not in PATHS:
         raise KeyError(f"Unknown path key: {path_key}")
     return os.path.abspath(PATHS[path_key])
 
 def print_system_info():
-    """Print system information for debugging"""
+    """Print system information"""
     print("\nSystem Information:")
     print(f"Operating System: {platform.system()} {platform.release()}")
     print(f"Python Version: {sys.version}")
     print(f"Working Directory: {os.getcwd()}")
     print(f"Base Directory: {BASE_DIR}")
-    print(f"User Home: {os.path.expanduser('~')}")
+    print(f"Current Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Current User's Login: {os.getenv('USER', 'Mihai-Edward')}")
 
-# Add new helper function for relative paths
 def get_relative_path(path):
-    """Convert absolute path to relative path from project root"""
+    """Get relative path from project root"""
     return os.path.relpath(path, BASE_DIR)
 
+def get_predictions_path(timestamp=None):
+    """Get the path for predictions with optional timestamp"""
+    if timestamp is None:
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return os.path.join(PATHS['PREDICTIONS_DIR'], f'prediction_{timestamp}.csv')
+
+def get_metadata_path(timestamp=None):
+    """Get the path for metadata with optional timestamp"""
+    if timestamp is None:
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return os.path.join(PATHS['PREDICTIONS_METADATA_DIR'], f'prediction_{timestamp}_metadata.json')
+
 if __name__ == "__main__":
+    from datetime import datetime
     print_system_info()
     ensure_directories()
     if validate_paths():
         print("\nAll paths are valid and accessible")
+        print("\nProject directory structure:")
+        for name, path in PATHS.items():
+            print(f"- {name}: {path}")
         print("\nProject is ready to run on this system")
+        
+        # Test prediction and metadata paths
+        test_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        print(f"\nTest prediction path: {get_predictions_path(test_timestamp)}")
+        print(f"Test metadata path: {get_metadata_path(test_timestamp)}")
     else:
         print("\nSome paths have issues. Please check the warnings above")

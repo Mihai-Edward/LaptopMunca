@@ -11,17 +11,16 @@ from sklearn.cluster import KMeans
 import joblib
 from collections import OrderedDict, Counter
 from collections import defaultdict
-
-from xgboost import XGBClassifier
 from data_analysis import DataAnalysis
 from datetime import datetime
 import os
 import glob
 from sklearn.model_selection import train_test_split
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.paths import PATHS, ensure_directories
 
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class LotteryPredictor:
     def __init__(self, numbers_range=(1, 80), numbers_to_draw=20, use_combined_features=True):
         """Initialize LotteryPredictor with enhanced model configuration"""
@@ -40,7 +39,8 @@ class LotteryPredictor:
         ensure_directories()
         self.models_dir = PATHS['MODELS_DIR']
         self.data_file = PATHS['HISTORICAL_DATA']
-        self.predictions_file = PATHS['PREDICTIONS']
+        # Fix: Use PREDICTIONS_DIR instead of non-existent PREDICTIONS key
+        self.predictions_dir = PATHS['PREDICTIONS_DIR']  # Use the correct key
         
         # Models initialization with enhanced configuration
         self.scaler = StandardScaler()
@@ -111,7 +111,9 @@ class LotteryPredictor:
                 
             # Validate date format
             try:
-                data['date'] = pd.to_datetime(data['date'].str.strip())
+                data['date'] = data['date'].str.strip()
+                data['date'] = data['date'].str.replace(r'\s+', ' ', regex=True)
+                data['date'] = pd.to_datetime(data['date'], format='%H:%M %d-%m-%Y')
             except:
                 raise ValueError("Invalid date format in data")
                 
@@ -361,7 +363,8 @@ class LotteryPredictor:
             # Clean and convert dates
             try:
                 df['date'] = df['date'].str.strip()
-                df['date'] = pd.to_datetime(df['date'], format='%H:%M  %d-%m-%Y')
+                df['date'] = df['date'].str.replace(r'\s+', ' ', regex=True)
+                df['date'] = pd.to_datetime(df['date'], format='%H:%M %d-%m-%Y')
             except Exception as e:
                 try:
                     # Fallback to single space format
@@ -425,10 +428,6 @@ class LotteryPredictor:
             if historical_data is None or len(historical_data) < 6:
                 raise ValueError("Insufficient historical data (minimum 6 draws required)")
 
-            # Validate data first
-            if not self._validate_data(historical_data):
-                raise ValueError("Data validation failed")
-
             # Sort chronologically and reset index
             historical_data = historical_data.sort_values('date').reset_index(drop=True)
             
@@ -473,12 +472,12 @@ class LotteryPredictor:
                     # Combine features
                     feature_vector = np.concatenate([frequency_vector, time_features])
                     
-                    # Create label (the actual numbers that were drawn)
-                    label = np.array([int(target_draw[col]) for col in number_cols])
-                    
-                    features.append(feature_vector)
-                    labels.append(label)
-
+                    # Create label - CHANGED: Use the numbers as individual labels
+                    for num in [int(target_draw[col]) for col in number_cols]:
+                        if 1 <= num <= 80:
+                            features.append(feature_vector)
+                            labels.append(num - 1)  # Convert to 0-based index for classification
+                            self.label_mapping = {i: i+1 for i in range(80)}
                 except Exception as e:
                     print(f"Warning: Error processing window {i}: {e}")
                     continue
@@ -490,10 +489,6 @@ class LotteryPredictor:
             features = np.array(features)
             labels = np.array(labels)
 
-            # Update training status with feature information
-            self.training_status['feature_dimension'] = features.shape[1]
-            self.training_status['samples_processed'] = len(features)
-
             print(f"\nTraining data preparation complete:")
             print(f"- Number of samples: {len(features)}")
             print(f"- Feature vector shape: {features.shape}")
@@ -502,7 +497,7 @@ class LotteryPredictor:
             return features, labels
 
         except Exception as e:
-            print(f"Exception during data preparation: {str(e)}")
+            print(f"Error in data preparation: {e}")
             traceback.print_exc()
             return None, None
 
@@ -526,36 +521,40 @@ class LotteryPredictor:
                 numbers = row[number_cols].values.astype(float)
                 valid_numbers = numbers[(numbers >= 1) & (numbers <= 80)]
                 for num in valid_numbers:
-                    frequency_vector[int(num)-1] += 1
+                    frequency_vector[int(num)-1] += 1  # Convert to 0-based index
                     
             # Normalize frequency vector
             total_numbers = np.sum(frequency_vector)
             if total_numbers > 0:
                 frequency_vector = frequency_vector / total_numbers
                 
-            # Add time-based features if target_date is provided
-            if target_date is not None:
-                if isinstance(target_date, str):
-                    target_date = pd.to_datetime(target_date)
+            # Always include time features to maintain consistent 84-dimensional vector
+            if target_date is None:
+                # Use the last date from the window if target_date not provided
+                target_date = pd.to_datetime(window['date'].iloc[-1])
+            elif isinstance(target_date, str):
+                target_date = pd.to_datetime(target_date)
                     
-                time_features = np.array([
-                    target_date.hour,
-                    target_date.minute,
-                    target_date.dayofweek,
-                    target_date.day
-                ])
-                
-                # Combine frequency and time features
-                feature_vector = np.concatenate([frequency_vector, time_features])
-            else:
-                feature_vector = frequency_vector
+            time_features = np.array([
+                target_date.hour,
+                target_date.minute,
+                target_date.dayofweek,
+                target_date.day
+            ])
+            
+            # Combine frequency and time features
+            feature_vector = np.concatenate([frequency_vector, time_features])
+            
+            # Validate final dimension
+            if len(feature_vector) != 84:  # 80 numbers + 4 time features
+                raise ValueError(f"Invalid feature vector dimension: expected 84, got {len(feature_vector)}")
                 
             print(f"Created feature vector with shape: {feature_vector.shape}")
             
             # Store feature metadata
             self.pipeline_data['latest_feature_vector'] = {
                 'frequency_dims': 80,
-                'time_dims': 4 if target_date is not None else 0,
+                'time_dims': 4,
                 'total_dims': len(feature_vector),
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
@@ -929,9 +928,10 @@ class LotteryPredictor:
                     if isinstance(hot_cold, tuple) and len(hot_cold) > 0:
                         hot_numbers = hot_cold[0]
                         
-                        # Create weights from hot numbers
+                        # Create weights from hot numbers - using label mapping
                         for num, count in hot_numbers:
                             if 1 <= num <= self.num_classes:
+                                # Convert to 0-based index for internal processing
                                 analysis_pred[num-1] = count
                         
                         # Normalize analysis predictions
@@ -949,6 +949,7 @@ class LotteryPredictor:
                         if total_freq > 0:
                             for num, freq in frequency.items():
                                 if 1 <= num <= self.num_classes:
+                                    # Convert to 0-based index for internal processing
                                     analysis_pred[num-1] = freq / total_freq
                             analysis_weight = 0.6
                             print("Using 60% weight from frequency analysis")
@@ -970,11 +971,12 @@ class LotteryPredictor:
             final_numbers = []
             used_indices = set()
             
-            # Select unique valid numbers
+            # Select unique valid numbers and map back to 1-80 range
             for idx in top_indices:
                 if len(final_numbers) >= self.numbers_to_draw:
                     break
-                number = int(idx) + 1  # Convert to 1-based index
+                # Convert to 1-based number using label mapping
+                number = idx + 1  # Map back to 1-80 range
                 if number not in final_numbers and 1 <= number <= 80:
                     final_numbers.append(number)
                     used_indices.add(idx)
@@ -986,7 +988,7 @@ class LotteryPredictor:
             # Sort final numbers
             final_numbers.sort()
             
-            # Create probability mapping
+            # Create probability mapping using 1-based numbers
             prob_map = {num: float(combined_pred[num-1]) for num in final_numbers}
             
             # Create final probability array
@@ -1138,6 +1140,20 @@ class LotteryPredictor:
                 second=0, 
                 microsecond=0
             )
+            
+            # Format the next_draw_time to match historical_draws.csv format (07:50  12-03-2025)
+            next_draw_time_formatted = next_draw_time.strftime('%H:%M  %d-%m-%Y')
+
+            # Add next draw time to analysis context
+            if analysis_context is None:
+                analysis_context = {}
+            analysis_context['next_draw_time'] = next_draw_time_formatted
+
+            # Also add it to pipeline data for saving in metadata
+            if hasattr(self, 'pipeline_data'):
+                self.pipeline_data['next_draw_time'] = next_draw_time_formatted
+            
+            print(f"\nPrediction for next draw at: {analysis_context['next_draw_time']}")
             
             return predicted_numbers, probabilities, analysis_context
             
@@ -1419,45 +1435,96 @@ class LotteryPredictor:
         except Exception as e:
             print(f"Error processing raw data: {e}")
             return None
-    def save_predictions_to_csv(self, predicted_numbers, probabilities, timestamp=None, csv_file=None):
-        """Save prediction results to CSV with enhanced metadata"""
+
+    def save_predictions_to_csv(self, prediction, probabilities):
+        """Save predictions and metadata to files"""
         try:
-            # Use provided csv_file or generate default filename
-            if csv_file is None:
-                current_timestamp = timestamp or datetime.now().strftime('%Y%m%d_%H%M%S')
-                csv_file = os.path.join(PATHS['PREDICTIONS'], f'prediction_{current_timestamp}.csv')
+            # Create timestamp for filenames
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(csv_file), exist_ok=True)
+            # Use PATHS for directories directly from the config
+            predictions_dir = PATHS['PREDICTIONS_DIR']
+            metadata_dir = PATHS['PREDICTIONS_METADATA_DIR']
             
-            # Create prediction DataFrame
-            prediction_data = pd.DataFrame({
-                'number': sorted(predicted_numbers),
-                'probability': [float(p) for p in probabilities],
-                'timestamp': timestamp or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # Ensure directories exist
+            os.makedirs(predictions_dir, exist_ok=True)
+            os.makedirs(metadata_dir, exist_ok=True)
+            
+            # Define filenames with proper paths
+            predictions_file = os.path.join(predictions_dir, f'prediction_{timestamp}.csv')
+            metadata_file = os.path.join(metadata_dir, f'prediction_{timestamp}_metadata.json')
+            
+            # Convert numpy int64 to regular integers if needed
+            if hasattr(prediction[0], 'item'):
+                prediction = [num.item() for num in prediction]
+            
+            # Save predictions to CSV
+            pred_df = pd.DataFrame({
+                'number': prediction,
+                'probability': probabilities if probabilities else [0] * len(prediction)
             })
+            pred_df.to_csv(predictions_file, index=False)
             
-            # Add metadata
+            # Get next draw time if it exists in pipeline data
+            next_draw_time = self.pipeline_data.get('next_draw_time', 
+                                                   datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            
+            # Prepare single consolidated metadata with all information
             metadata = {
-                'prediction_time': timestamp or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'model_version': self.training_status.get('timestamp', 'unknown'),
-                'prob_score': self.training_status.get('prob_score', 0),
-                'pattern_score': self.training_status.get('pattern_score', 0),
-                'feature_dimension': self.training_status.get('features', 0),
-                'feature_mode': self.pipeline_data.get('use_combined_features', False)
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'next_draw_time': next_draw_time,  # Include next draw time
+                'prediction_info': {
+                    'total_numbers': len(prediction),
+                    'number_range': self.numbers_range,
+                    'numbers_to_draw': self.numbers_to_draw,
+                    'average_probability': float(np.mean(probabilities)) if probabilities else 0
+                },
+                'model_info': {
+                    'prob_model': self.pipeline_data.get('prediction_metadata', {}).get('prob_weight', 0.4),
+                    'pattern_model': self.pipeline_data.get('prediction_metadata', {}).get('pattern_weight', 0.6),
+                    'analysis_weight': self.pipeline_data.get('prediction_metadata', {}).get('analysis_weight', 0),
+                    'training_status': {
+                        'success': self.training_status['success'],
+                        'timestamp': self.training_status['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if isinstance(self.training_status['timestamp'], datetime) else self.training_status['timestamp'],
+                        'prob_score': self.training_status['prob_score'],
+                        'pattern_score': self.training_status['pattern_score']
+                    }
+                },
+                'analysis_context': self.pipeline_data.get('analysis_context', {}),
+                'feature_config': {
+                    'use_combined_features': getattr(self, 'use_combined_features', True),
+                    'feature_dimension': self.training_status.get('model_config', {}).get('feature_dimension', None)
+                }
             }
             
-            # Save prediction data
-            prediction_data.to_csv(csv_file, index=False)
+            # Convert any numpy types to native Python types for JSON serialization
+            def convert_to_native(obj):
+                if isinstance(obj, np.integer):
+                    return int(obj)
+                elif isinstance(obj, np.floating):
+                    return float(obj)
+                elif isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                elif isinstance(obj, tuple):
+                    return list(obj)
+                elif isinstance(obj, datetime):  # Add datetime handling
+                    return obj.strftime('%Y-%m-%d %H:%M:%S')
+                elif isinstance(obj, dict):
+                    return {k: convert_to_native(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_to_native(v) for v in obj]
+                return obj
             
-            # Save metadata to separate file
-            metadata_file = csv_file.replace('.csv', '_metadata.json')
+            # Convert numpy types in metadata
+            metadata = convert_to_native(metadata)
+            
+            # Save metadata to JSON
             with open(metadata_file, 'w') as f:
                 json.dump(metadata, f, indent=4)
                 
-            print(f"\nPrediction saved successfully:")
-            print(f"- Data file: {os.path.basename(csv_file)}")
-            print(f"- Metadata file: {os.path.basename(metadata_file)}")
+            print(f"\nPredictions saved successfully:")
+            print(f"- CSV file: {predictions_file}")
+            print(f"- Metadata: {metadata_file}")
             
             return True
             
@@ -1506,7 +1573,7 @@ if __name__ == "__main__":
                     print(f"{key}: {value}")
             
             # Save prediction
-            predictor.save_prediction_to_csv(prediction, probabilities)
+            predictor.save_predictions_to_csv(prediction, probabilities)
             
         else:
             print("\nError: Prediction generation failed")

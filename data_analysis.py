@@ -184,7 +184,10 @@ class DataAnalysis:
         try:
             # Ensure directories exist
             ensure_directories()
-            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            
+            # Make sure we have a directory path
+            if os.path.dirname(filename):
+                os.makedirs(os.path.dirname(filename), exist_ok=True)
 
             # Get all analysis results
             frequency = self.count_frequency()
@@ -239,27 +242,60 @@ class DataAnalysis:
             return False
 
 if __name__ == "__main__":
-    # Example usage with debugging
+    # Example draws for testing if real data fails to load
+    example_draws = [
+        ("20:15 26-02-2025", [1, 2, 2, 9, 12, 14, 17, 25, 26, 30, 38, 44, 54, 57, 58, 61, 65, 71, 72, 76, 79]),
+        ("20:10 26-02-2025", [4, 5, 7, 7, 9, 18, 24, 27, 29, 34, 40, 45, 48, 52, 55, 57, 70, 71, 72, 74, 77]),
+    ]
+    
     try:
-        example_draws = [
-            ("20:15 26-02-2025", [1, 2, 2, 9, 12, 14, 17, 25, 26, 30, 38, 44, 54, 57, 58, 61, 65, 71, 72, 76, 79]),
-            ("20:10 26-02-2025", [4, 5, 7, 7, 9, 18, 24, 27, 29, 34, 40, 45, 48, 52, 55, 57, 70, 71, 72, 74, 77]),
-        ]
+        # Try to load real data from the CSV file
+        real_draws = []
+        csv_file = PATHS['HISTORICAL_DATA']
         
-        print("\nDEBUG: Testing DataAnalysis with example draws...")
-        analysis = DataAnalysis(example_draws)
+        if os.path.exists(csv_file):
+            print(f"\nLoading historical draws from: {csv_file}")
+            
+            import csv
+            with open(csv_file, 'r', encoding='utf-8') as file:
+                csv_reader = csv.reader(file)
+                header = next(csv_reader, None)  # Skip header if exists
+                
+                for row in csv_reader:
+                    if len(row) >= 21:  # Date/time + 20 numbers
+                        draw_date = row[0]
+                        try:
+                            # Convert all number strings to integers
+                            numbers = [int(num.strip()) for num in row[1:21] if num.strip()]
+                            real_draws.append((draw_date, numbers))
+                        except ValueError as e:
+                            print(f"Skipping row with invalid numbers: {e}")
+            
+            if real_draws:
+                print(f"Successfully loaded {len(real_draws)} historical draws")
+                draws_to_analyze = real_draws
+            else:
+                print(f"No valid draws found in {csv_file}, using example draws instead")
+                draws_to_analyze = example_draws
+        else:
+            print(f"Historical data file not found: {csv_file}")
+            print("Using example draws instead")
+            draws_to_analyze = example_draws
+            
+        # Initialize analysis with loaded data
+        analysis = DataAnalysis(draws_to_analyze)
         
-        print("\nDEBUG: Testing frequency analysis...")
+        # Run analyses
         frequency = analysis.count_frequency()
         print(f"Number of unique numbers: {len(frequency)}")
         
-        print("\nDEBUG: Testing top numbers...")
         top_numbers = analysis.get_top_numbers(20)
         print(f"Top 20 numbers: {', '.join(map(str, top_numbers))}")
         
-        print("\nDEBUG: Saving to Excel...")
-        analysis.save_to_excel("lottery_analysis.xlsx")
+        # Save results
+        analysis.save_to_excel(PATHS['ANALYSIS'])
+        print("Analysis complete!")
         
     except Exception as e:
-        print(f"Error in example usage: {e}")
+        print(f"Error in data analysis: {e}")
         traceback.print_exc()
