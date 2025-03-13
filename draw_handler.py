@@ -25,10 +25,9 @@ class DrawHandler:
             ensure_directories()
             self.csv_file = PATHS['HISTORICAL_DATA']
             self.models_dir = PATHS['MODELS_DIR']
-            # Fix: Use PREDICTIONS_DIR directly instead of os.path.dirname(PATHS['PREDICTIONS'])
             self.predictions_dir = PATHS['PREDICTIONS_DIR']
             
-            # Initialize number columns
+        
             self.number_cols = [f'number{i}' for i in range(1, 21)]
             
             # Enhanced pipeline status tracking
@@ -91,7 +90,7 @@ class DrawHandler:
             }
             
             # Load learning status and validate configuration
-            self._load_learning_status()
+            self.load_learning_status()
             self._validate_configuration()
             
             print("DrawHandler initialized successfully")
@@ -146,9 +145,11 @@ class DrawHandler:
                         if numbers is not None:
                             # Save to consolidated format
                             if hasattr(self.predictor, 'save_prediction'):
+                                next_draw_time = get_next_draw_time(datetime.now()).strftime('%H:%M  %d-%m-%Y')
                                 success = self.predictor.save_prediction(
                                     prediction=numbers,
-                                    probabilities=probs
+                                    probabilities=probs,
+                                    next_draw_time=next_draw_time
                                 )
                                 if not success:
                                     print("WARNING: Failed to save to consolidated format")
@@ -424,6 +425,11 @@ class DrawHandler:
             print("\nDEBUG: Starting prediction run...")
             analysis_results = {}
             
+            # Calculate next draw time at the start
+            current_time = datetime.now()
+            next_draw_time = get_next_draw_time(current_time)
+            print(f"\nGenerating prediction for draw at: {next_draw_time}")
+            
             # Load historical data and create DataAnalysis instance
             historical_data = self._load_historical_data()
             if historical_data is not None:
@@ -457,8 +463,15 @@ class DrawHandler:
                 if not hasattr(self.predictor, 'pipeline_data'):
                     self.predictor.pipeline_data = {}
                 
-                # Pass analysis results to predictor
-                self.predictor.pipeline_data['analysis_context'] = analysis_results
+                # Pass analysis results and next draw time to predictor
+                self.predictor.pipeline_data.update({
+                    'analysis_context': analysis_results,
+                    'next_draw_time': next_draw_time,  # Add next draw time to pipeline data
+                    'prediction_metadata': {
+                        'generation_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                        'target_draw_time': next_draw_time
+                    }
+                })
                 
                 # Get prediction
                 prediction_result = self.predictor.predict(data)
@@ -470,13 +483,18 @@ class DrawHandler:
                 predicted_numbers, probabilities, context = prediction_result
                 
                 if predicted_numbers is not None and probabilities is not None:
-                    # Save to consolidated format using predictor's new method
+                    print(f"DEBUG: Saving prediction for draw at {next_draw_time}")
+                    
+                    # Save to consolidated format using predictor's new method with next_draw_time
                     success = self.predictor.save_prediction(
                         prediction=predicted_numbers,
-                        probabilities=probabilities
+                        probabilities=probabilities,
+                        next_draw_time=next_draw_time  # Pass the next draw time
                     )
                     
-                    if not success:
+                    if success:
+                        print(f"Successfully saved prediction for draw at {next_draw_time}")
+                    else:
                         print("WARNING: Failed to save prediction to consolidated format")
                         
                 return predicted_numbers, probabilities, analysis_results
@@ -589,7 +607,7 @@ class DrawHandler:
             traceback.print_exc()
             return False
     
-    def _load_learning_status(self):
+    def load_learning_status(self):
         """Load or initialize learning status tracking with enhanced metrics and validation"""
         try:
             print("\nLoading learning status...")
@@ -1363,7 +1381,8 @@ def get_next_draw_time(current_time):
         if hour >= 24:
             next_time += timedelta(days=1)
             
-        return next_time
+        # Return formatted string
+        return next_time.strftime('%H:%M  %d-%m-%Y')  # Note the double space
     except Exception as e:
         raise ValueError(f"Error calculating next draw time: {e}")
 

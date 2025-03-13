@@ -12,7 +12,7 @@ import joblib
 from collections import OrderedDict, Counter
 from collections import defaultdict
 from data_analysis import DataAnalysis
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import glob
 from sklearn.model_selection import train_test_split
@@ -1587,23 +1587,36 @@ class LotteryPredictor:
             traceback.print_exc()
             return False
 
-    def save_prediction(self, prediction, probabilities):
+    def save_prediction(self, prediction, probabilities, next_draw_time=None):
         """Save predictions in consolidated format with proper timestamp handling"""
         try:
-            # Get current timestamp in the required format
+            # Get current timestamp and calculate next draw time if not provided
             current_time = datetime.now()
-            timestamp = current_time.strftime('%H:%M  %d-%m-%Y')
+            if next_draw_time is None:
+                # Calculate minutes since midnight
+                minutes_since_midnight = current_time.hour * 60 + current_time.minute
+                # Find next 5-minute interval
+                next_interval = ((minutes_since_midnight // 5) + 1) * 5
+                # Calculate new hour and minute
+                next_hour = (next_interval // 60) % 24
+                next_minute = next_interval % 60
+                # Create next draw time
+                next_time = current_time.replace(hour=next_hour, minute=next_minute, second=0, microsecond=0)
+                # If we've crossed to next day
+                if next_hour < current_time.hour:
+                    next_time += timedelta(days=1)
+                next_draw_time = next_time.strftime('%H:%M  %d-%m-%Y')
 
             # Use ALL_PREDICTIONS_FILE directly from PATHS
             excel_file = PATHS['ALL_PREDICTIONS_FILE']
             
-            # Ensure the directory exists before trying to save
+            # Ensure directory exists
             os.makedirs(os.path.dirname(excel_file), exist_ok=True)
 
-            # Prepare prediction data with correct timestamp format
+            # Prepare prediction data
             prediction_data = {
                 'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
-                'next_draw_time': timestamp,  # Using the correctly formatted timestamp
+                'next_draw_time': next_draw_time,  # Use the calculated or provided next_draw_time
                 'prediction_date': current_time.strftime('%Y-%m-%d'),
                 'prediction_time': current_time.strftime('%H:%M:%S')
             }
@@ -1616,7 +1629,6 @@ class LotteryPredictor:
             # Create DataFrame for new prediction
             new_row = pd.DataFrame([prediction_data])
             
-            # Save to consolidated Excel
             try:
                 if os.path.exists(excel_file):
                     # Load existing predictions
@@ -1624,36 +1636,32 @@ class LotteryPredictor:
                     
                     # Check if we already have a prediction for this draw time
                     if 'next_draw_time' in existing_df.columns:
-                        date_matches = existing_df['next_draw_time'] == timestamp
+                        # IMPORTANT: Exact match for next_draw_time
+                        date_matches = existing_df['next_draw_time'].str.strip() == next_draw_time.strip()
                         if any(date_matches):
-                            # Update existing prediction
-                            for col, value in prediction_data.items():
-                                if col in existing_df.columns:
-                                    existing_df.loc[date_matches, col] = value
-                            result_df = existing_df
+                            print(f"Warning: Prediction already exists for {next_draw_time}")
+                            # Skip saving duplicate prediction
+                            return False
                         else:
-                            # Append new prediction
+                            # Append new prediction only if it doesn't exist
                             result_df = pd.concat([existing_df, new_row], ignore_index=True)
                     else:
-                        # No matching column, just append
-                        result_df = pd.concat([existing_df, new_row], ignore_index=True)
+                        # No next_draw_time column, create new file
+                        result_df = new_row
                 else:
-                    # Create new file with this prediction
+                    # Create new file
                     result_df = new_row
 
-                # Ensure directory exists
-                os.makedirs(os.path.dirname(excel_file), exist_ok=True)
-                
                 # Save to Excel
                 result_df.to_excel(excel_file, index=False)
-                print(f"Prediction saved to: {excel_file}")
+                print(f"Prediction saved for draw at {next_draw_time}")
 
-                # Save metadata for analysis
+                # Save metadata
                 metadata_file = os.path.join(PATHS['PREDICTIONS_METADATA_DIR'], 
                                              f'prediction_{current_time.strftime("%Y%m%d_%H%M%S")}_metadata.json')
                 metadata = {
                     'timestamp': prediction_data['timestamp'],
-                    'next_draw_time': prediction_data['next_draw_time'],
+                    'next_draw_time': next_draw_time,
                     'prediction_info': {
                         'total_numbers': len(prediction),
                         'number_range': self.numbers_range,

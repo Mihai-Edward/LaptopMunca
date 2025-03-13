@@ -277,17 +277,27 @@ def create_backup_prediction():
 def save_prediction(predictions, probabilities, is_backup=False):
     """Save prediction using consolidated format"""
     try:
+        # Calculate next draw time first
+        current_time = datetime.now()
+        next_draw_time = get_next_draw_time(current_time)
+        
         # Create a new DrawHandler instance
         draw_handler = DrawHandler()
+        
+        # Pass the next_draw_time to the save_prediction method
         success = draw_handler.predictor.save_prediction(
             prediction=predictions,
-            probabilities=probabilities
+            probabilities=probabilities,
+            next_draw_time=next_draw_time  # Add this parameter
         )
+        
         if success:
-            print("Prediction saved successfully")
+            print(f"Prediction saved successfully for next draw at {next_draw_time}")
             return True
+            
         print("Failed to save prediction")
         return False
+        
     except Exception as e:
         print(f"Error saving prediction: {e}")
         return False
@@ -311,7 +321,12 @@ def generate_prediction():
         if not handler.train_ml_models():
             debug_print("Model training failed - trying to continue with existing models", "WARNING")
         
-        # Call the prediction pipeline directly (no modification)
+        # Get the next draw time
+        current_time = datetime.now()
+        next_draw_time = get_next_draw_time(current_time)
+        debug_print(f"\nGenerating prediction for next draw at: {next_draw_time}")
+        
+        # Call the prediction pipeline
         debug_print("\nExecuting prediction pipeline...")
         predictions, probabilities, analysis = handler.handle_prediction_pipeline()
         
@@ -565,7 +580,7 @@ def wait_for_next_action():
     """Wait until the next action time (50 seconds after draw)"""
     try:
         current_time = datetime.now()
-        next_draw = get_next_draw_time(current_time)
+        next_draw = datetime.strptime(get_next_draw_time(current_time), '%H:%M  %d-%m-%Y')  # Convert string to datetime
         action_time = next_draw + timedelta(seconds=CONFIG['automated_mode']['wait_time'])
         
         # If we're past the action time, wait for next draw
@@ -618,8 +633,10 @@ def run_automated_cycle():
             debug_print("Prediction evaluation failed", "ERROR")
             return False
         
-        next_cycle = get_next_draw_time(datetime.now() + timedelta(minutes=5))
-        debug_print(f"\nNext cycle scheduled for: {next_cycle.strftime('%H:%M:%S')}")
+        # Convert the string to datetime before formatting
+        next_cycle_str = get_next_draw_time(datetime.now() + timedelta(minutes=5))
+        next_cycle_dt = datetime.strptime(next_cycle_str, '%H:%M  %d-%m-%Y')
+        debug_print(f"\nNext cycle scheduled for: {next_cycle_dt.strftime('%H:%M:%S')}")
         return True
         
     except Exception as e:

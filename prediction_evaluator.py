@@ -29,11 +29,13 @@ class PredictionEvaluator:
         self.evaluation_metrics = {
             'accuracy_history': [],
             'precision_history': [],  # Add this
-            'recall_history': [],     # Add this
+            'recall_history': [],
+            'f1_history': [],     # Add this
             'total_evaluated': 0,
             'total_correct': 0,
             'best_prediction': 0,
-            'avg_accuracy': 0.0
+            'avg_accuracy': 0.0,
+            'matched_numbers': Counter()
         }
     def evaluate_predictions(self):
         """Evaluate predictions from consolidated Excel file"""
@@ -594,7 +596,7 @@ class PredictionEvaluator:
             if not os.path.exists(self.excel_file):
                 print(f"\nNo predictions file found at: {self.excel_file}")
                 return
-            
+                
             try:
                 # Load predictions from Excel
                 predictions_df = pd.read_excel(self.excel_file)
@@ -605,29 +607,18 @@ class PredictionEvaluator:
                     return
                 
                 # Load historical data
-                if not os.path.exists(self.historical_file):
-                    print(f"\nHistorical draw data file not found: {self.historical_file}")
-                    return
-
                 historical_df = pd.read_csv(self.historical_file)
                 print(f"Loaded {len(historical_df)} historical draws")
                 
-                # Clean timestamps
+                # Clean up any extra whitespace in timestamps
                 historical_df['date'] = historical_df['date'].str.strip()
                 predictions_df['next_draw_time'] = predictions_df['next_draw_time'].str.strip()
-                
-                # Print sample timestamps for debugging
-                print(f"\nSample timestamps:")
-                print(f"Historical: {historical_df['date'].iloc[0]}")
-                print(f"Prediction: {predictions_df['next_draw_time'].iloc[0]}")
                 
                 evaluation_results = []
                 
                 for idx, pred_row in predictions_df.iterrows():
                     try:
-                        # Get and standardize draw time
-                        next_draw_time = self._standardize_timestamp(pred_row['next_draw_time'])
-                        print(f"\nProcessing prediction for: {next_draw_time}")
+                        draw_time = pred_row['next_draw_time']
                         
                         # Extract predicted numbers
                         predicted_numbers = []
@@ -637,20 +628,14 @@ class PredictionEvaluator:
                                 predicted_numbers.append(int(pred_row[col_name]))
                         
                         if len(predicted_numbers) != 20:
-                            print(f"Warning: Invalid prediction - wrong number count")
+                            print(f"Warning: Invalid prediction for {draw_time} - wrong number count")
                             continue
                         
-                        # Try exact match first
-                        matching_draws = historical_df[historical_df['date'] == next_draw_time]
+                        # Use exact match instead of str.contains()
+                        matching_draws = historical_df[historical_df['date'] == draw_time]
                         
                         if len(matching_draws) == 0:
-                            # Try removing extra spaces and compare
-                            hist_clean = historical_df['date'].str.replace(r'\s+', ' ', regex=True)
-                            pred_clean = next_draw_time.replace(r'\s+', ' ', regex=True)
-                            matching_draws = historical_df[hist_clean == pred_clean]
-                        
-                        if len(matching_draws) == 0:
-                            print(f"No matching draw found")
+                            print(f"No matching draw found for {draw_time}")
                             continue
                         
                         # Get actual numbers
@@ -665,15 +650,15 @@ class PredictionEvaluator:
                         result = self.save_comparison(
                             predicted_numbers,
                             actual_numbers,
-                            draw_date=next_draw_time
+                            draw_date=draw_time
                         )
                         
                         if result:
                             evaluation_results.append(result)
-                            print(f"Evaluated: {result['num_correct']} correct")
-                    
+                            print(f"Evaluated prediction for {draw_time}: {result['num_correct']} correct")
+                        
                     except Exception as row_error:
-                        print(f"Error processing row {idx}: {row_error}")
+                        print(f"Error processing prediction row {idx}: {row_error}")
                         continue
                 
                 # Get and display performance stats
@@ -684,7 +669,7 @@ class PredictionEvaluator:
                     print(f"\nSuccessfully evaluated {len(evaluation_results)} predictions")
                 else:
                     print("\nNo valid predictions found to evaluate.")
-                
+                    
             except Exception as e:
                 print(f"Error processing predictions: {e}")
                 traceback.print_exc()
@@ -874,3 +859,6 @@ def main():
     except Exception as e:
         print(f"\nCritical error in evaluation: {e}")
         traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
