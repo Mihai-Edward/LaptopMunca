@@ -263,6 +263,10 @@ class DrawHandler:
                             print(f"DEBUG: Error formatting draw: {e}")
                 
                     if formatted_draws:
+                        print("\nDEBUG: Sample of formatted data being passed to predictor:")
+                        print(f"First draw: {formatted_draws[0]}")
+                        print(f"Number of draws: {len(formatted_draws)}")
+                        print(f"Data format: {type(formatted_draws[0])}")
                         analyzer = DataAnalysis(formatted_draws)
                     
                         # Calculate analysis features
@@ -349,31 +353,53 @@ class DrawHandler:
             return None
 
     def _load_historical_data(self):
-        """Load historical data with validation"""
+        """Load historical data with validation and enhanced debugging"""
         try:
-            if not os.path.exists(self.csv_file):
-                raise FileNotFoundError(f"Data file {self.csv_file} not found")
-                
-            print(f"\nDEBUG: Loading data from {self.csv_file}")
-            df = pd.read_csv(self.csv_file, header=0)
-            print(f"DEBUG: Initial data shape: {df.shape}")
+            print(f"\nDEBUG: Attempting to load historical data from: {self.csv_file}")
+            print(f"DEBUG: File exists: {os.path.exists(self.csv_file)}")
+            print(f"DEBUG: File size: {os.path.getsize(self.csv_file)} bytes")
             
+            # Try to read the first few lines of the file directly
+            print("\nDEBUG: First few lines of the file:")
+            with open(self.csv_file, 'r', encoding='utf-8') as f:
+                for i, line in enumerate(f):
+                    if i < 5:  # Print first 5 lines
+                        print(f"Line {i}: {line.strip()}")
+            
+            # Now try to load with pandas
+            print("\nDEBUG: Loading with pandas...")
+            df = pd.read_csv(self.csv_file, header=0)
+            print(f"DEBUG: DataFrame shape: {df.shape}")
+            print(f"DEBUG: DataFrame columns: {df.columns.tolist()}")
+            print("\nDEBUG: First row of data:")
+            print(df.iloc[0])
+                
             # Handle the specific date format with potential spaces
             try:
                 # First clean up any extra spaces in the date column
+                print("\nDEBUG: Attempting date conversion...")
+                print(f"DEBUG: Date column before cleaning: {df['date'].head()}")
+                
                 df['date'] = df['date'].str.strip()
+                print(f"DEBUG: Date column after cleaning: {df['date'].head()}")
+                
                 # Convert using the exact format from your file
                 df['date'] = pd.to_datetime(df['date'], format='%H:%M  %d-%m-%Y')
-                print("DEBUG: Date conversion successful")
+                print("DEBUG: Date conversion successful with double space format")
+                print(f"DEBUG: Converted dates: {df['date'].head()}")
                 
             except Exception as e:
-                print(f"WARNING: Date conversion issue: {e}")
+                print(f"WARNING: Initial date conversion issue: {e}")
                 try:
                     # Fallback: Try with single space if double space fails
+                    print("\nDEBUG: Attempting fallback date conversion...")
                     df['date'] = pd.to_datetime(df['date'], format='%H:%M %d-%m-%Y')
                     print("DEBUG: Date conversion successful with fallback format")
+                    print(f"DEBUG: Converted dates: {df['date'].head()}")
                 except Exception as e2:
                     print(f"WARNING: Fallback date conversion failed: {e2}")
+                    print("\nDEBUG: Sample of problematic dates:")
+                    print(df['date'].head(10))
                     
             return df
                 
@@ -420,7 +446,6 @@ class DrawHandler:
             return None
 
     def _run_prediction(self, data):
-        """Run prediction with integrated analysis"""
         try:
             print("\nDEBUG: Starting prediction run...")
             analysis_results = {}
@@ -430,81 +455,102 @@ class DrawHandler:
             next_draw_time = get_next_draw_time(current_time)
             print(f"\nGenerating prediction for draw at: {next_draw_time}")
             
-            # Load historical data and create DataAnalysis instance
+            # Load historical data
             historical_data = self._load_historical_data()
             if historical_data is not None:
                 print(f"DEBUG: Loaded historical data shape: {historical_data.shape}")
                 
-                # Format data for DataAnalysis
+                # Format data for prediction
+                print("\nDEBUG: Starting data formatting for prediction...")
                 formatted_draws = []
-                for _, row in historical_data.iterrows():
-                    try:
-                        numbers = [int(float(row[f'number{i}'])) for i in range(1, 21)]
-                        if len(numbers) == 20 and all(1 <= n <= 80 for n in numbers):
-                            formatted_draws.append((row['date'], numbers))
-                    except Exception as e:
-                        print(f"DEBUG: Error formatting draw: {e}")
                 
-                if not formatted_draws:
+                for idx, row in historical_data.iterrows():
+                    try:
+                        # Extract numbers
+                        numbers = []
+                        for i in range(1, 21):
+                            col = f'number{i}'
+                            if col in row and pd.notnull(row[col]):
+                                num = int(float(row[col]))
+                                if 1 <= num <= 80:
+                                    numbers.append(num)
+                        
+                        # Only process if we have all 20 numbers
+                        if len(numbers) == 20:
+                            # Format date string
+                            date_str = str(row['date']).strip()
+                            # Create tuple with exactly 2 elements
+                            draw_tuple = (date_str, sorted(numbers))
+                            formatted_draws.append(draw_tuple)
+                            
+                            if idx < 2:  # Debug output for first 2 draws
+                                print(f"\nDEBUG: Draw {idx} formatted:")
+                                print(f"Date: {date_str}")
+                                print(f"Numbers: {sorted(numbers)}")
+                                print(f"Tuple format: {draw_tuple}")
+                        
+                    except Exception as e:
+                        print(f"DEBUG: Error formatting draw {idx}: {e}")
+                        continue
+                
+                print(f"\nDEBUG: Total formatted draws: {len(formatted_draws)}")
+                
+                if formatted_draws:
+                    print("\nDEBUG: Creating DataAnalysis instance...")
+                    try:
+                        analyzer = DataAnalysis(formatted_draws)
+                        print("DEBUG: Successfully created DataAnalysis instance")
+                        analysis_results = analyzer.get_analysis_results()
+                    except Exception as e:
+                        print(f"ERROR in analysis: {e}")
+                        traceback.print_exc()
+                    
+                    # Get predictions
+                    print("\nDEBUG: Getting predictions...")
+                    
+                    # Ensure predictor has pipeline_data initialized
+                    if not hasattr(self.predictor, 'pipeline_data'):
+                        self.predictor.pipeline_data = {}
+                    
+                    # Pass analysis results and next draw time to predictor
+                    self.predictor.pipeline_data.update({
+                        'analysis_context': analysis_results,
+                        'next_draw_time': next_draw_time,
+                        'prediction_metadata': {
+                            'generation_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                            'target_draw_time': next_draw_time,
+                            'data_records': len(data) if isinstance(data, pd.DataFrame) else 0,
+                            'historical_records': len(historical_data) if historical_data is not None else 0
+                        }
+                    })
+                    
+                    # Get prediction
+                    try:
+                        print("DEBUG: Calling predictor.predict()...")
+                        prediction_result = self.predictor.predict(formatted_draws)
+                        
+                        if prediction_result is None:
+                            print("ERROR: Predictor returned None")
+                            return None, None, None
+                        
+                        predicted_numbers, probabilities, context = prediction_result
+                        return predicted_numbers, probabilities, analysis_results
+                        
+                    except Exception as e:
+                        print(f"ERROR in prediction: {e}")
+                        traceback.print_exc()
+                        return None, None, None
+                
+                else:
                     print("ERROR: No valid draws found for analysis!")
                     return None, None, None
-                
-                # Create analyzer and run analysis
-                analyzer = DataAnalysis(formatted_draws)
-                analysis_results = analyzer.get_analysis_results()
-                
-                if not analysis_results:
-                    print("WARNING: Analysis results are empty")
-                
-                # Get predictions
-                print("\nDEBUG: Getting predictions...")
-                
-                # Ensure predictor has pipeline_data initialized
-                if not hasattr(self.predictor, 'pipeline_data'):
-                    self.predictor.pipeline_data = {}
-                
-                # Pass analysis results and next draw time to predictor
-                self.predictor.pipeline_data.update({
-                    'analysis_context': analysis_results,
-                    'next_draw_time': next_draw_time,  # Add next draw time to pipeline data
-                    'prediction_metadata': {
-                        'generation_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
-                        'target_draw_time': next_draw_time
-                    }
-                })
-                
-                # Get prediction
-                prediction_result = self.predictor.predict(data)
-                
-                if prediction_result is None or len(prediction_result) != 3:
-                    print("ERROR: Invalid prediction result format")
-                    return None, None, None
-                
-                predicted_numbers, probabilities, context = prediction_result
-                
-                if predicted_numbers is not None and probabilities is not None:
-                    print(f"DEBUG: Saving prediction for draw at {next_draw_time}")
                     
-                    # Save to consolidated format using predictor's new method with next_draw_time
-                    success = self.predictor.save_prediction(
-                        prediction=predicted_numbers,
-                        probabilities=probabilities,
-                        next_draw_time=next_draw_time  # Pass the next draw time
-                    )
-                    
-                    if success:
-                        print(f"Successfully saved prediction for draw at {next_draw_time}")
-                    else:
-                        print("WARNING: Failed to save prediction to consolidated format")
-                        
-                return predicted_numbers, probabilities, analysis_results
-                
             else:
                 print("ERROR: No historical data available")
                 return None, None, None
                 
         except Exception as e:
-            print(f"\nError in prediction run: {e}")
+            print(f"\nERROR in prediction run: {e}")
             traceback.print_exc()
             return None, None, None
 
