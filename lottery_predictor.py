@@ -87,7 +87,7 @@ class LotteryPredictor:
         # Initialize pipeline data storage
         self.pipeline_data = {
             # NEW: Flag to control whether to use combined features or just base features
-            'use_combined_features': use_combined_features
+           'use_combined_features':use_combined_features
         }
         
         # Initialize pipeline stages
@@ -149,16 +149,28 @@ class LotteryPredictor:
             # Validate feature dimensions
             if hasattr(self.probabilistic_model, 'n_features_in_'):
                 expected_features = self.probabilistic_model.n_features_in_
-                # Check if using combined features (base + analysis)
-                use_combined = self.pipeline_data.get('use_combined_features', False)
-                if use_combined:
-                    # When using combined features, we expect 84 base + 20 analysis = 104 features
-                    if expected_features != 104:
-                        return False, f"Invalid feature dimension for combined model: {expected_features}"
-                else:
-                    # When using only base features, we expect 84 features
-                    if expected_features != 84:
-                        return False, f"Invalid feature dimension: {expected_features}"
+                use_combined = self.pipeline_data.get('use_combined_features', True)
+                
+                # When using combined features, we expect 84 base + 80 analysis = 164 features
+                if use_combined and expected_features != 164:
+                    return False, f"Invalid feature dimension for combined model: expected 164, got {expected_features}"
+                elif not use_combined and expected_features != 84:
+                    return False, f"Invalid feature dimension for base features: expected 84, got {expected_features}"
+
+            # Check feature dimension consistency between models
+            if hasattr(self.probabilistic_model, 'n_features_in_') and \
+               hasattr(self.pattern_model, 'n_features_in_'):
+                if self.probabilistic_model.n_features_in_ != self.pattern_model.n_features_in_:
+                    return False, "Feature dimension mismatch between models"
+
+            # Verify training status
+            if not self.training_status.get('model_loaded', False):
+                return False, "Models not marked as loaded"
+
+            # Verify feature dimension in training status
+            model_dim = self.training_status.get('model_config', {}).get('feature_dimension')
+            if model_dim is not None and model_dim != expected_features:
+                return False, f"Feature dimension mismatch with training status: {model_dim} vs {expected_features}"
 
             return True, "Model state valid"
         except Exception as e:
@@ -444,7 +456,7 @@ class LotteryPredictor:
                     # Get window of 5 consecutive draws
                     window = historical_data.iloc[i:i+window_size]
                     
-                    # Create base features (80-dimensional frequency vector)
+                    # Get base features (80-dimensional frequency vector)
                     frequency_vector = np.zeros(80)
                     for _, row in window.iterrows():
                         for col in number_cols:
@@ -469,10 +481,44 @@ class LotteryPredictor:
                         target_date.day
                     ])
 
-                    # Combine features
-                    feature_vector = np.concatenate([frequency_vector, time_features])
+                    # Create base feature vector
+                    base_features = np.concatenate([frequency_vector, time_features])
                     
-                    # Create label - CHANGED: Use the numbers as individual labels
+                    # Get analysis features for the window
+                    try:
+                        # Convert window data to format expected by DataAnalysis
+                        window_draws = [(row['date'], 
+                                       [int(row[f'number{j}']) for j in range(1, 21)]) 
+                                      for _, row in window.iterrows()]
+                        
+                        analyzer = DataAnalysis(window_draws)
+                        
+                        # Get frequency and hot-cold analysis
+                        freq = analyzer.count_frequency()
+                        hot_nums, _ = analyzer.hot_and_cold_numbers()
+                        
+                        # Create analysis feature vector (80 dimensions)
+                        analysis_features = np.zeros(80)
+                        
+                        # Fill with frequency data
+                        for num, count in freq.items():
+                            if 1 <= num <= 80:
+                                analysis_features[num-1] = count / len(window)
+                                
+                        # Normalize analysis features
+                        if np.sum(analysis_features) > 0:
+                            analysis_features = analysis_features / np.sum(analysis_features)
+                    except Exception as e:
+                        print(f"Warning: Error generating analysis features for window {i}: {e}")
+                        analysis_features = np.zeros(80)  # Fallback to zeros if analysis fails
+
+                    # Combine base and analysis features if enabled
+                    if self.pipeline_data.get('use_combined_features', True):
+                        feature_vector = np.concatenate([base_features, analysis_features])
+                    else:
+                        feature_vector = base_features
+                    
+                    # Create label - Use the numbers as individual labels
                     for num in [int(target_draw[col]) for col in number_cols]:
                         if 1 <= num <= 80:
                             features.append(feature_vector)
@@ -493,6 +539,9 @@ class LotteryPredictor:
             print(f"- Number of samples: {len(features)}")
             print(f"- Feature vector shape: {features.shape}")
             print(f"- Label shape: {labels.shape}")
+            
+            # Store feature dimension in training status
+            self.training_status['model_config']['feature_dimension'] = features.shape[1]
 
             return features, labels
 
@@ -735,15 +784,13 @@ class LotteryPredictor:
                 self.pipeline_data['analysis_features'] = analysis_features
                 
                 # Check if we should use combined features or just base features
-                use_combined = self.pipeline_data.get('use_combined_features', False)
+                use_combined = self.pipeline_data.get('use_combined_features', True)
                 
                 if use_combined:
-                    # CHANGE: Actually use the analysis features by combining them with base features
-                    # This is the key change - we're combining both feature sets
+                 
                     try:
                         # Take the first 20 analysis features (most important ones) to avoid dimensionality issues
-                        analysis_subset = analysis_features[:20]
-                        enhanced_features = np.concatenate([base_features, analysis_subset])
+                        enhanced_features = np.concatenate([base_features, analysis_features[:80]])  # Use first 80 analysis features
                         print(f"Using COMBINED feature vector of shape: {enhanced_features.shape}")
                         print("Using 60% analysis features weight")
                     except Exception as e:
@@ -1111,6 +1158,13 @@ class LotteryPredictor:
             return False
 
     def train_and_predict(self, historical_data=None, recent_draws=None):
+            
+        print("\n=== Training State Debug Info ===")
+        print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Historical data rows: {len(historical_data) if historical_data is not None else 'None'}")
+        print(f"Recent draws rows: {len(recent_draws) if recent_draws is not None else 'None'}")
+        print(f"Model loaded: {self.training_status.get('model_loaded')}")
+        print("==============================\n")
         """Enhanced prediction generation with analysis integration"""
         try:
             if historical_data is None:
@@ -1279,6 +1333,14 @@ class LotteryPredictor:
             return False
 
     def predict(self, recent_draws):
+        # Add these logging lines right after the first print statement
+        print("\nStarting prediction pipeline...")
+        print("=== Model State Debug Info ===")
+        print(f"Model timestamp: {self.training_status.get('timestamp')}")
+        print(f"Model loaded status: {self.training_status.get('model_loaded')}")
+        print(f"Using combined features: {self.pipeline_data.get('use_combined_features', False)}")
+        print(f"Latest model file: {self.models_dir}")
+        print("===========================\n")
         """Enhanced prediction with improved pipeline execution and validation"""
         pipeline_tracking = {
             'start_time': datetime.now(),
