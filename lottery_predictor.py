@@ -87,9 +87,12 @@ class LotteryPredictor:
         # Initialize pipeline data storage
         self.pipeline_data = {
             # NEW: Flag to control whether to use combined features or just base features
-           'use_combined_features':use_combined_features
+           'use_combined_features': use_combined_features,
+           'model_config': {
+            'use_combined_features': use_combined_features
+            }
         }
-        
+        self.use_combined_features = use_combined_features
         # Initialize pipeline stages
         self._initialize_pipeline()
         
@@ -180,6 +183,9 @@ class LotteryPredictor:
         try:
             print("\nInitializing prediction pipeline...")
             
+            # Preserve the existing use_combined_features value
+            use_combined = getattr(self, 'use_combined_features', True)
+            
             # Define ordered pipeline stages with better structure
             self.pipeline_stages = OrderedDict({
                 'data_preparation': {
@@ -208,13 +214,14 @@ class LotteryPredictor:
                 }
             })
             
-            # Initialize pipeline data storage
-            self.pipeline_data = {
+            # Create new pipeline data while preserving existing settings
+            new_pipeline_data = {
                 'pipeline_config': {
                     'initialized_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'use_combined_features': self.pipeline_data.get('use_combined_features', True),
+                    'use_combined_features': use_combined,  # Use preserved value
                     'stages': list(self.pipeline_stages.keys())
                 },
+                'use_combined_features': use_combined,  # Keep original setting
                 'execution_context': {
                     'current_stage': None,
                     'completed_stages': [],
@@ -226,7 +233,8 @@ class LotteryPredictor:
                     'model_config': {
                         'num_classes': self.num_classes,
                         'numbers_to_draw': self.numbers_to_draw,
-                        'feature_dimension': None  # Will be set during execution
+                        'feature_dimension': None,  # Will be set during execution
+                        'use_combined_features': use_combined  # Add here too
                     },
                     'runtime_config': {
                         'use_analysis': True,
@@ -237,6 +245,17 @@ class LotteryPredictor:
                 }
             }
             
+            # Update existing pipeline data instead of overwriting
+            if hasattr(self, 'pipeline_data'):
+                # Preserve any existing data
+                existing_data = self.pipeline_data.copy()
+                # Update with new configuration while preserving use_combined_features
+                existing_data.update(new_pipeline_data)
+                self.pipeline_data = existing_data
+            else:
+                # Initialize if not exists
+                self.pipeline_data = new_pipeline_data
+            
             # Convert stage definitions to actual functions
             self.pipeline_stages = OrderedDict({
                 name: stage['function'] 
@@ -246,16 +265,22 @@ class LotteryPredictor:
             print("Pipeline initialization complete with stages:")
             for stage_name in self.pipeline_stages.keys():
                 print(f"- {stage_name}")
-                
+            
+            # Debug info
+            print(f"\nPipeline configuration:")
+            print(f"- Using combined features: {use_combined}")
+            print(f"- Feature dimension will be: {164 if use_combined else 84}")
+            
             return True
             
         except Exception as e:
             print(f"Error initializing pipeline: {e}")
-            self.pipeline_data['errors'] = [{
-                'stage': 'initialization',
-                'error': str(e),
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }]
+            if hasattr(self, 'pipeline_data'):
+                self.pipeline_data['errors'] = [{
+                    'stage': 'initialization',
+                    'error': str(e),
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }]
             traceback.print_exc()
             return False
     
@@ -784,7 +809,7 @@ class LotteryPredictor:
                 self.pipeline_data['analysis_features'] = analysis_features
                 
                 # Check if we should use combined features or just base features
-                use_combined = self.pipeline_data.get('use_combined_features', True)
+                use_combined = getattr(self, 'use_combined_features', True)
                 
                 if use_combined:
                  

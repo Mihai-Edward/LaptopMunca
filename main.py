@@ -626,17 +626,28 @@ def run_automated_cycle():
             debug_print("Prediction generation failed", "ERROR")
             return False
         
-        # 4. Evaluate Predictions
+        # 4. Run Evaluator explicitly to update files
         debug_print("\nExecuting Prediction Evaluation...")
-        evaluation_success = evaluate_predictions()
-        if not evaluation_success:
-            debug_print("Prediction evaluation failed", "ERROR")
-            return False
+        try:
+            evaluator = PredictionEvaluator()
+            # This explicit call ensures files are updated
+            evaluator.evaluate_past_predictions()
+            
+            # Verify that files exist and were updated
+            evaluation_file = os.path.join(PATHS['PROCESSED_DIR'], 'evaluation_results.xlsx')
+            trends_file = os.path.join(PATHS['PROCESSED_DIR'], 'performance_trends.png')
+            
+            if not os.path.exists(evaluation_file) or not os.path.exists(trends_file):
+                debug_print("Warning: Evaluation files not found, retrying evaluation...", "WARNING")
+                evaluator.evaluate_past_predictions()
+        except Exception as e:
+            debug_print(f"Warning: Evaluation update error: {e}", "WARNING")
+            # Continue with cycle even if evaluation has issues
         
-        # Convert the string to datetime before formatting
         next_cycle_str = get_next_draw_time(datetime.now() + timedelta(minutes=5))
         next_cycle_dt = datetime.strptime(next_cycle_str, '%H:%M  %d-%m-%Y')
         debug_print(f"\nNext cycle scheduled for: {next_cycle_dt.strftime('%H:%M:%S')}")
+        
         return True
         
     except Exception as e:
