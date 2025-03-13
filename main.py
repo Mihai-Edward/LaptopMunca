@@ -33,6 +33,10 @@ CONFIG = {
         'wait_time': 50,            # Seconds after draw to start collection
         'retry_delay': 30,          # Seconds to wait after error before retry
         'max_retries': 3            # Maximum number of retries per cycle
+    },
+    'formats': {
+        'draw_time': '%H:%M  %d-%m-%Y',  # Add this - standard format for draw times
+        'timestamp': '%Y-%m-%d %H:%M:%S', # Add this - standard format for timestamps
     }
 }
 class DrawDataFormatter:
@@ -349,39 +353,29 @@ def get_next_draw_time(current_time):
     if next_hour < current_time.hour:
         next_time += timedelta(days=1)
     
-    return next_time
+    return next_time.strftime('%H:%M  %d-%m-%Y')
 
 def save_prediction_to_excel(predictions, probabilities, next_draw_time=None):
     """
     Save prediction to consolidated Excel file for easier evaluation.
-    
-    Args:
-        predictions: List of predicted numbers
-        probabilities: List of corresponding probabilities
-        next_draw_time: The formatted time of the next draw (optional)
-    
-    Returns:
-        bool: Success status
     """
     try:
         debug_print("\nSaving prediction to consolidated Excel file...")
-        import pandas as pd
-        from datetime import datetime
-        
-        # Set up paths and ensure directories exist
-        excel_file = os.path.join(PATHS['PROCESSED_DIR'], 'all_predictions.xlsx')
+
+        # Use the standard path from PATHS dictionary instead of constructing it
+        excel_file = PATHS['ALL_PREDICTIONS_FILE']  # <-- CHANGED THIS LINE
         
         # Create timestamps
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        current_time = datetime.now()
         if next_draw_time is None:
-            next_draw_time = get_next_draw_time(datetime.now()).strftime('%H:%M  %d-%m-%Y')
+            next_draw_time = get_next_draw_time(current_time)
         
         # Format data for new record
         new_data = {
-            'timestamp': timestamp,
+            'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
             'next_draw_time': next_draw_time,
-            'prediction_date': datetime.now().strftime('%Y-%m-%d'),
-            'prediction_time': datetime.now().strftime('%H:%M:%S')
+            'prediction_date': current_time.strftime('%Y-%m-%d'),
+            'prediction_time': current_time.strftime('%H:%M:%S')
         }
         
         # Add predicted numbers to record
@@ -475,7 +469,7 @@ def evaluate_predictions():
                                 next_draw_time = row['next_draw_time']
                                 
                                 # Find corresponding draw in historical data
-                                matching_draws = historical_df[historical_df['date'] == next_draw_time]
+                                matching_draws = historical_df[historical_df['date'].str.strip() == next_draw_time.strip()]
                                 if len(matching_draws) == 0:
                                     debug_print(f"No matching draw found for {next_draw_time}, skipping", "INFO")
                                     continue

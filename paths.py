@@ -2,7 +2,9 @@ import os
 import sys
 import platform
 from pathlib import Path
-from datetime import datetime  # Added this import which was missing
+from datetime import datetime
+
+from pandas import ExcelFile  # Added this import which was missing
 
 # Calculate BASE_DIR dynamically
 # This takes the directory of the current file (paths.py) and goes up one level to the project root
@@ -16,6 +18,8 @@ DRIVER_FILENAME = "msedgedriver.exe" if IS_WINDOWS else "msedgedriver"
 PATHS = {
     'HISTORICAL_DATA': os.path.join(BASE_DIR, "src", "historical_draws.csv"),
     'PREDICTIONS_DIR': os.path.join(BASE_DIR, "data", "processed", "predictions"),
+    # Fixed path - removed extra 'processed' directory
+    'ALL_PREDICTIONS_FILE': os.path.join(BASE_DIR, "data", "processed", "all_predictions.xlsx"),
     'PREDICTIONS_METADATA_DIR': os.path.join(BASE_DIR, "data", "processed", "metadata"),
     'ANALYSIS': os.path.join(BASE_DIR, "data", "processed", "analysis_results.xlsx"),
     'MODELS_DIR': os.path.join(BASE_DIR, "models"),
@@ -49,17 +53,16 @@ def ensure_directories():
             os.makedirs(directory, exist_ok=True)
             print(f"Ensured directory exists: {directory}")
         
-        # Create path directories for all PATHS entries
-        for name, path in PATHS.items():
-            directory = path if name.endswith('_DIR') else os.path.dirname(path)
+        # Create parent directories for file paths
+        file_paths = [path for name, path in PATHS.items() if not name.endswith('_DIR')]
+        for file_path in file_paths:
+            directory = os.path.dirname(file_path)
             os.makedirs(directory, exist_ok=True)
-            print(f"Ensured path exists for {name}: {directory}")
+            print(f"Ensured parent directory exists for: {file_path}")
         
         return True
     except Exception as e:
         print(f"Error creating directories: {e}")
-        print(f"Current working directory: {os.getcwd()}")
-        print(f"BASE_DIR: {BASE_DIR}")
         return False
 
 def validate_paths():
@@ -153,5 +156,8 @@ if __name__ == "__main__":
         test_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         print(f"\nTest prediction path: {get_predictions_path(test_timestamp)}")
         print(f"Test metadata path: {get_metadata_path(test_timestamp)}")
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(PATHS['ALL_PREDICTIONS_FILE']), exist_ok=True)
     else:
         print("\nSome paths have issues. Please check the warnings above")

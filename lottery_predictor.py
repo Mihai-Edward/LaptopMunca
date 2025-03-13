@@ -1439,24 +1439,18 @@ class LotteryPredictor:
     def save_predictions_to_csv(self, prediction, probabilities):
         """Save predictions and metadata to files"""
         try:
-            # Create timestamp for filenames
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
-            # Use PATHS for directories directly from the config
-            predictions_dir = PATHS['PREDICTIONS_DIR']
-            metadata_dir = PATHS['PREDICTIONS_METADATA_DIR']
-            processed_dir = PATHS['PROCESSED_DIR']  # Add this line
-            
+            # Use correct paths from PATHS config
+            excel_file = PATHS['ALL_PREDICTIONS_FILE']
+            predictions_file = os.path.join(PATHS['PREDICTIONS_DIR'], f'prediction_{timestamp}.csv')
+            metadata_file = os.path.join(PATHS['PREDICTIONS_METADATA_DIR'], f'prediction_{timestamp}_metadata.json')
+
             # Ensure directories exist
-            os.makedirs(predictions_dir, exist_ok=True)
-            os.makedirs(metadata_dir, exist_ok=True)
-            os.makedirs(processed_dir, exist_ok=True)  # Add this line
-            
-            # Define filenames with proper paths
-            predictions_file = os.path.join(predictions_dir, f'prediction_{timestamp}.csv')
-            metadata_file = os.path.join(metadata_dir, f'prediction_{timestamp}_metadata.json')
-            excel_file = os.path.join(processed_dir, 'all_predictions.xlsx')  # Add this line
-            
+            os.makedirs(os.path.dirname(excel_file), exist_ok=True)
+            os.makedirs(os.path.dirname(predictions_file), exist_ok=True)
+            os.makedirs(os.path.dirname(metadata_file), exist_ok=True)
+
             # Convert numpy int64 to regular integers if needed
             if hasattr(prediction[0], 'item'):
                 prediction = [num.item() for num in prediction]
@@ -1594,20 +1588,24 @@ class LotteryPredictor:
             return False
 
     def save_prediction(self, prediction, probabilities):
-        """Save predictions in consolidated format"""
+        """Save predictions in consolidated format with proper timestamp handling"""
         try:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            excel_file = os.path.join(PATHS['PROCESSED_DIR'], 'all_predictions.xlsx')
-            metadata_file = os.path.join(PATHS['PREDICTIONS_METADATA_DIR'], 
-                                       f'prediction_{timestamp}_metadata.json')
+            # Get current timestamp in the required format
+            current_time = datetime.now()
+            timestamp = current_time.strftime('%H:%M  %d-%m-%Y')
 
-            # Prepare prediction data
+            # Use ALL_PREDICTIONS_FILE directly from PATHS
+            excel_file = PATHS['ALL_PREDICTIONS_FILE']
+            
+            # Ensure the directory exists before trying to save
+            os.makedirs(os.path.dirname(excel_file), exist_ok=True)
+
+            # Prepare prediction data with correct timestamp format
             prediction_data = {
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'next_draw_time': self.pipeline_data.get('next_draw_time', 
-                                                       datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
-                'prediction_date': datetime.now().strftime('%Y-%m-%d'),
-                'prediction_time': datetime.now().strftime('%H:%M:%S')
+                'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                'next_draw_time': timestamp,  # Using the correctly formatted timestamp
+                'prediction_date': current_time.strftime('%Y-%m-%d'),
+                'prediction_time': current_time.strftime('%H:%M:%S')
             }
 
             # Add predicted numbers and probabilities
@@ -1615,45 +1613,69 @@ class LotteryPredictor:
                 prediction_data[f'number{i}'] = int(num)
                 prediction_data[f'probability{i}'] = float(prob)
 
+            # Create DataFrame for new prediction
             new_row = pd.DataFrame([prediction_data])
             
-            # Check for existing file and duplicates
+            # Save to consolidated Excel
             try:
                 if os.path.exists(excel_file):
+                    # Load existing predictions
                     existing_df = pd.read_excel(excel_file)
                     
-                    # Check if prediction for this draw time already exists
-                    existing_predictions = existing_df[existing_df['next_draw_time'] == prediction_data['next_draw_time']]
-                    if not existing_predictions.empty:
-                        print(f"Warning: Prediction for {prediction_data['next_draw_time']} already exists!")
-                        return False
-                    
-                    result_df = pd.concat([existing_df, new_row], ignore_index=True)
+                    # Check if we already have a prediction for this draw time
+                    if 'next_draw_time' in existing_df.columns:
+                        date_matches = existing_df['next_draw_time'] == timestamp
+                        if any(date_matches):
+                            # Update existing prediction
+                            for col, value in prediction_data.items():
+                                if col in existing_df.columns:
+                                    existing_df.loc[date_matches, col] = value
+                            result_df = existing_df
+                        else:
+                            # Append new prediction
+                            result_df = pd.concat([existing_df, new_row], ignore_index=True)
+                    else:
+                        # No matching column, just append
+                        result_df = pd.concat([existing_df, new_row], ignore_index=True)
                 else:
+                    # Create new file with this prediction
                     result_df = new_row
-                    
+
+                # Ensure directory exists
+                os.makedirs(os.path.dirname(excel_file), exist_ok=True)
+                
+                # Save to Excel
                 result_df.to_excel(excel_file, index=False)
                 print(f"Prediction saved to: {excel_file}")
-            except Exception as e:
-                print(f"Error saving to Excel: {e}")
+
+                # Save metadata for analysis
+                metadata_file = os.path.join(PATHS['PREDICTIONS_METADATA_DIR'], 
+                                             f'prediction_{current_time.strftime("%Y%m%d_%H%M%S")}_metadata.json')
+                metadata = {
+                    'timestamp': prediction_data['timestamp'],
+                    'next_draw_time': prediction_data['next_draw_time'],
+                    'prediction_info': {
+                        'total_numbers': len(prediction),
+                        'number_range': self.numbers_range,
+                        'numbers_to_draw': self.numbers_to_draw
+                    },
+                    'model_info': self.training_status
+                }
+                
+                # Ensure metadata directory exists
+                os.makedirs(os.path.dirname(metadata_file), exist_ok=True)
+                
+                # Save metadata
+                with open(metadata_file, 'w') as f:
+                    json.dump(metadata, f, indent=4)
+
+                return True
+
+            except Exception as excel_error:
+                print(f"Error saving to Excel: {excel_error}")
+                traceback.print_exc()
                 return False
 
-            # Save metadata for analysis
-            metadata = {
-                'timestamp': prediction_data['timestamp'],
-                'next_draw_time': prediction_data['next_draw_time'],
-                'prediction_info': {
-                    'total_numbers': len(prediction),
-                    'number_range': self.numbers_range,
-                    'numbers_to_draw': self.numbers_to_draw
-                },
-                'model_info': self.training_status
-            }
-            
-            with open(metadata_file, 'w') as f:
-                json.dump(metadata, f, indent=4)
-
-            return True
         except Exception as e:
             print(f"Error in save_prediction: {e}")
             traceback.print_exc()

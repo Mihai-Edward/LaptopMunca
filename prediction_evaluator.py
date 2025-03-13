@@ -19,12 +19,15 @@ from config.paths import PATHS,ensure_directories
 class PredictionEvaluator:
     def __init__(self):
         """Initialize evaluator with consolidated file support"""
-        self.excel_file = os.path.join(PATHS['PROCESSED_DIR'], 'all_predictions.xlsx')
+        self.excel_file = PATHS['ALL_PREDICTIONS_FILE']
         self.historical_file = PATHS['HISTORICAL_DATA']  # Add this line
         self.predictions_dir = PATHS['PREDICTIONS_DIR']  # Add this line
         self.metadata_dir = PATHS['PREDICTIONS_METADATA_DIR']  # Add this line
         self.processed_dir = PATHS['PROCESSED_DIR'] 
-        self.evaluation_metrics = {}
+        self.evaluation_metrics = {
+            'accuracy_history': [],  # Initialize as empty list
+            # ... other metrics ...
+        }
 
     def evaluate_predictions(self):
         """Evaluate predictions from consolidated Excel file"""
@@ -113,6 +116,9 @@ class PredictionEvaluator:
     def save_comparison(self, predicted_numbers, actual_numbers, draw_date=None, metadata=None):
         """Save comparison between predicted and actual numbers"""
         try:
+            # Initialize metadata if None
+            metadata = metadata or {}  # This ensures metadata is always a dict
+            
             # Calculate matches
             matches = set(predicted_numbers).intersection(set(actual_numbers))
             num_correct = len(matches)
@@ -122,7 +128,7 @@ class PredictionEvaluator:
             # Create result dictionary
             result = {
                 'date': draw_date if draw_date else datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'prediction_file': metadata.get('prediction_file', 'Unknown'),
+                'prediction_file': metadata.get('prediction_file', 'Unknown'),  # Now safe to use .get()
                 'num_correct': num_correct,
                 'accuracy': accuracy,
                 'precision': precision,
@@ -288,7 +294,7 @@ class PredictionEvaluator:
             current_streak = 0
             
             for above_avg in results_df['above_avg']:
-                if above_avg:
+                if (above_avg):
                     current_streak += 1
                 else:
                     streaks.append(current_streak)
