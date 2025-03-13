@@ -91,7 +91,22 @@ class PredictionEvaluator:
             print(f"Error in evaluation: {e}")
             traceback.print_exc()
             return False
-
+    def _standardize_timestamp(self, timestamp_str):
+        """Standardize timestamp to HH:MM  DD-MM-YYYY format"""
+        try:
+            # If timestamp is already in correct format
+            if isinstance(timestamp_str, str) and len(timestamp_str.split('  ')) == 2:
+                time_part, date_part = timestamp_str.split('  ')
+                if len(time_part.split(':')) == 2:
+                    return timestamp_str
+                    
+            # Try parsing the timestamp
+            dt = pd.to_datetime(timestamp_str)
+            # Convert to required format
+            return dt.strftime('%H:%M  %d-%m-%Y')
+        except Exception as e:
+            print(f"Error standardizing timestamp {timestamp_str}: {e}")
+            return timestamp_str
     def compare_prediction_with_actual(self, predicted_numbers, actual_numbers):
         """Compare predicted numbers with actual draw numbers"""
         try:
@@ -255,7 +270,19 @@ class PredictionEvaluator:
             print(f"Error in save_comparison: {e}")
             traceback.print_exc()
             return None
+
+    def analyze_patterns(self, results_df):
+        """Analyze patterns in prediction results"""
         try:
+            # Initialize pattern analysis structures
+            patterns = {
+                'frequent_correct': Counter(),
+                'frequent_missed': Counter(),
+                'pair_patterns': Counter(),
+                'time_based_accuracy': {},
+                'streak_analysis': {'current_streak': 0, 'best_streak': 0}
+            }
+            
             for index, row in results_df.iterrows():
                 try:
                     correct_nums = eval(str(row['Correct_Numbers']))
@@ -271,7 +298,7 @@ class PredictionEvaluator:
                     for i in range(len(correct_nums)):
                         for j in range(i + 1, len(correct_nums)):
                             patterns['pair_patterns'].update([(correct_nums[i], correct_nums[j])])
-                    
+                   
                     # Time-based analysis
                     try:
                         date = pd.to_datetime(row['Date'])
@@ -562,14 +589,12 @@ class PredictionEvaluator:
     def evaluate_past_predictions(self):
         """Evaluate past predictions with enhanced analysis"""
         try:
-            # Instead of looking for CSV files in predictions_dir, 
-            # we should look directly at the Excel file
             print("\n=== Evaluating Predictions ===")
             
             if not os.path.exists(self.excel_file):
                 print(f"\nNo predictions file found at: {self.excel_file}")
                 return
-                
+            
             try:
                 # Load predictions from Excel
                 predictions_df = pd.read_excel(self.excel_file)
@@ -578,7 +603,7 @@ class PredictionEvaluator:
                 if len(predictions_df) == 0:
                     print("No predictions found in Excel file.")
                     return
-                    
+                
                 # Load historical data
                 if not os.path.exists(self.historical_file):
                     print(f"\nHistorical draw data file not found: {self.historical_file}")
@@ -587,12 +612,22 @@ class PredictionEvaluator:
                 historical_df = pd.read_csv(self.historical_file)
                 print(f"Loaded {len(historical_df)} historical draws")
                 
+                # Clean timestamps
+                historical_df['date'] = historical_df['date'].str.strip()
+                predictions_df['next_draw_time'] = predictions_df['next_draw_time'].str.strip()
+                
+                # Print sample timestamps for debugging
+                print(f"\nSample timestamps:")
+                print(f"Historical: {historical_df['date'].iloc[0]}")
+                print(f"Prediction: {predictions_df['next_draw_time'].iloc[0]}")
+                
                 evaluation_results = []
                 
                 for idx, pred_row in predictions_df.iterrows():
                     try:
-                        # Get the draw time
-                        next_draw_time = pred_row['next_draw_time']
+                        # Get and standardize draw time
+                        next_draw_time = self._standardize_timestamp(pred_row['next_draw_time'])
+                        print(f"\nProcessing prediction for: {next_draw_time}")
                         
                         # Extract predicted numbers
                         predicted_numbers = []
@@ -602,15 +637,22 @@ class PredictionEvaluator:
                                 predicted_numbers.append(int(pred_row[col_name]))
                         
                         if len(predicted_numbers) != 20:
-                            print(f"Warning: Invalid prediction for {next_draw_time} - wrong number count")
+                            print(f"Warning: Invalid prediction - wrong number count")
                             continue
                         
-                        # Find matching actual draw
-                        matching_draws = historical_df[historical_df['date'].str.contains(str(next_draw_time))]
+                        # Try exact match first
+                        matching_draws = historical_df[historical_df['date'] == next_draw_time]
+                        
                         if len(matching_draws) == 0:
-                            print(f"No matching draw found for {next_draw_time}")
+                            # Try removing extra spaces and compare
+                            hist_clean = historical_df['date'].str.replace(r'\s+', ' ', regex=True)
+                            pred_clean = next_draw_time.replace(r'\s+', ' ', regex=True)
+                            matching_draws = historical_df[hist_clean == pred_clean]
+                        
+                        if len(matching_draws) == 0:
+                            print(f"No matching draw found")
                             continue
-                            
+                        
                         # Get actual numbers
                         actual_numbers = []
                         for i in range(1, 21):
@@ -628,10 +670,10 @@ class PredictionEvaluator:
                         
                         if result:
                             evaluation_results.append(result)
-                            print(f"Evaluated prediction for {next_draw_time}: {result['num_correct']} correct")
-                        
+                            print(f"Evaluated: {result['num_correct']} correct")
+                    
                     except Exception as row_error:
-                        print(f"Error processing prediction row {idx}: {row_error}")
+                        print(f"Error processing row {idx}: {row_error}")
                         continue
                 
                 # Get and display performance stats
@@ -642,7 +684,7 @@ class PredictionEvaluator:
                     print(f"\nSuccessfully evaluated {len(evaluation_results)} predictions")
                 else:
                     print("\nNo valid predictions found to evaluate.")
-                    
+                
             except Exception as e:
                 print(f"Error processing predictions: {e}")
                 traceback.print_exc()
