@@ -19,16 +19,22 @@ from config.paths import PATHS,ensure_directories
 class PredictionEvaluator:
     def __init__(self):
         """Initialize evaluator with consolidated file support"""
-        self.excel_file = PATHS['ALL_PREDICTIONS_FILE']
-        self.historical_file = PATHS['HISTORICAL_DATA']  # Add this line
-        self.predictions_dir = PATHS['PREDICTIONS_DIR']  # Add this line
-        self.metadata_dir = PATHS['PREDICTIONS_METADATA_DIR']  # Add this line
-        self.processed_dir = PATHS['PROCESSED_DIR'] 
+        self.excel_file = PATHS['ALL_PREDICTIONS_FILE']  # Changed from PREDICTIONS_DIR to ALL_PREDICTIONS_FILE
+        self.historical_file = PATHS['HISTORICAL_DATA']
+        self.predictions_dir = PATHS['PREDICTIONS_DIR']
+        self.metadata_dir = PATHS['PREDICTIONS_METADATA_DIR']
+        self.processed_dir = PATHS['PROCESSED_DIR']
+        
+        # Initialize all metric histories
         self.evaluation_metrics = {
-            'accuracy_history': [],  # Initialize as empty list
-            # ... other metrics ...
+            'accuracy_history': [],
+            'precision_history': [],  # Add this
+            'recall_history': [],     # Add this
+            'total_evaluated': 0,
+            'total_correct': 0,
+            'best_prediction': 0,
+            'avg_accuracy': 0.0
         }
-
     def evaluate_predictions(self):
         """Evaluate predictions from consolidated Excel file"""
         try:
@@ -114,43 +120,80 @@ class PredictionEvaluator:
             return None
 
     def save_comparison(self, predicted_numbers, actual_numbers, draw_date=None, metadata=None):
-        """Save comparison between predicted and actual numbers"""
+        """Save comparison between predicted and actual numbers with enhanced metrics"""
         try:
             # Initialize metadata if None
-            metadata = metadata or {}  # This ensures metadata is always a dict
+            metadata = metadata or {}
+            
+            # Set up timestamp handling
+            current_time = datetime.now()
+            if draw_date is None:
+                # Format timestamp in required format: "HH:MM  %d-%m-%Y"
+                draw_date = current_time.strftime('%H:%M  %d-%m-%Y')
             
             # Calculate matches
             matches = set(predicted_numbers).intersection(set(actual_numbers))
             num_correct = len(matches)
+            
+            # Calculate metrics
             accuracy = (num_correct / len(actual_numbers)) * 100 if actual_numbers else 0
             precision = (num_correct / len(predicted_numbers)) * 100 if predicted_numbers else 0
+            recall = (num_correct / len(actual_numbers)) * 100 if actual_numbers else 0
+            f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
             
-            # Create result dictionary
-            result = {
-                'date': draw_date if draw_date else datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'prediction_file': metadata.get('prediction_file', 'Unknown'),  # Now safe to use .get()
-                'num_correct': num_correct,
-                'accuracy': accuracy,
-                'precision': precision,
-                'matches': sorted(list(matches)),
-                'predicted': sorted(predicted_numbers),
-                'actual': sorted(actual_numbers),
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-            
-            # Save to Excel file
-            results_file = os.path.join(PATHS.get('PROCESSED_DIR', ''), 'evaluation_results.xlsx')
-            
-            # Initialize evaluation metrics if needed
+            # Initialize evaluation metrics if not exists
             if not hasattr(self, 'evaluation_metrics'):
                 self.evaluation_metrics = {
                     'accuracy_history': [],
-                    'precision_history': []
+                    'precision_history': [],
+                    'recall_history': [],
+                    'f1_history': [],
+                    'total_evaluated': 0,
+                    'total_correct': 0,
+                    'best_prediction': 0,
+                    'avg_accuracy': 0.0,
+                    'matched_numbers': Counter()
                 }
-                
+            
+            # Create result dictionary
+            result = {
+                'date': draw_date,
+                'prediction_file': metadata.get('prediction_file', 'Unknown'),
+                'num_correct': num_correct,
+                'accuracy': accuracy,
+                'precision': precision,
+                'recall': recall,
+                'f1_score': f1_score,
+                'matches': sorted(list(matches)),
+                'predicted': sorted(predicted_numbers),
+                'actual': sorted(actual_numbers),
+                'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
             # Update evaluation metrics
-            self.evaluation_metrics['accuracy_history'].append(result['accuracy'])
-            self.evaluation_metrics['precision_history'].append(result['precision'])
+            self.evaluation_metrics['accuracy_history'].append(accuracy)
+            self.evaluation_metrics['precision_history'].append(precision)
+            self.evaluation_metrics['recall_history'].append(recall)
+            self.evaluation_metrics['f1_history'].append(f1_score)
+            self.evaluation_metrics['total_evaluated'] += 1
+            self.evaluation_metrics['total_correct'] += num_correct
+            self.evaluation_metrics['best_prediction'] = max(
+                self.evaluation_metrics['best_prediction'], 
+                num_correct
+            )
+            
+            # Update matched numbers counter
+            self.evaluation_metrics['matched_numbers'].update(matches)
+            
+            # Calculate average accuracy
+            if self.evaluation_metrics['total_evaluated'] > 0:
+                self.evaluation_metrics['avg_accuracy'] = (
+                    self.evaluation_metrics['total_correct'] / 
+                    (self.evaluation_metrics['total_evaluated'] * 20)
+                ) * 100
+            
+            # Save to Excel file
+            results_file = os.path.join(self.processed_dir, 'evaluation_results.xlsx')
             
             try:
                 # Check if file exists
@@ -158,56 +201,60 @@ class PredictionEvaluator:
                     # Read existing results
                     existing_df = pd.read_excel(results_file)
                     
-                    # Check if we already have an entry for this draw date
-                    date_match = existing_df['date'] == result['date']
+                    # Check if we already have this draw date
+                    date_match = existing_df['date'] == draw_date
                     if any(date_match):
-                        print(f"PROCESSED_DIR path: {PATHS['PROCESSED_DIR']}")
-                        print(f"Directory exists: {os.path.isdir(PATHS['PROCESSED_DIR'])}")
-                        print(f"Excel file exists: {os.path.isfile(self.excel_file)}")
-                        # Update the existing entry instead of adding a new one
-                        print(f"Updating existing evaluation for draw date: {draw_date}")
+                        # Update existing entry
                         for key, value in result.items():
-                            existing_df.loc[date_match, key] = value
+                            if key in existing_df.columns:
+                                existing_df.loc[date_match, key] = str(value) if isinstance(value, (list, set)) else value
                         results_df = existing_df
                     else:
-                        # This is a new draw date, append it
-                        results_df = pd.concat([existing_df, pd.DataFrame([result])], ignore_index=True)
+                        # Convert lists to strings for Excel storage
+                        result_copy = result.copy()
+                        for key in ['matches', 'predicted', 'actual']:
+                            result_copy[key] = str(result_copy[key])
+                        
+                        # Append new result
+                        new_df = pd.DataFrame([result_copy])
+                        results_df = pd.concat([existing_df, new_df], ignore_index=True)
                 else:
-                    # No existing file, create new
-                    results_df = pd.DataFrame([result])
-                    
+                    # Create new file
+                    # Convert lists to strings for Excel storage
+                    result_copy = result.copy()
+                    for key in ['matches', 'predicted', 'actual']:
+                        result_copy[key] = str(result_copy[key])
+                    results_df = pd.DataFrame([result_copy])
+                
+                # Ensure directory exists
+                os.makedirs(os.path.dirname(results_file), exist_ok=True)
+                
                 # Save to Excel
                 results_df.to_excel(results_file, index=False)
                 print(f"Results saved to {results_file}")
                 
-                print(f"Evaluated prediction for {draw_date}: {num_correct} correct")
-            except Exception as e:
-                print(f"Error saving to Excel: {e}")
-                # Try creating a new Excel file with clean data
-                try:
-                    results_df = pd.DataFrame([result])
-                    results_df.to_excel(results_file, index=False)
-                    print(f"Created new results file: {results_file}")
-                except Exception as new_e:
-                    print(f"Error creating Excel file: {new_e}")
-            
-            return result
+                # Print evaluation summary
+                print(f"\nEvaluation Summary for {draw_date}:")
+                print(f"Numbers matched: {num_correct} of 20")
+                print(f"Accuracy: {accuracy:.2f}%")
+                print(f"Precision: {precision:.2f}%")
+                print(f"Recall: {recall:.2f}%")
+                print(f"F1 Score: {f1_score:.2f}")
+                if matches:
+                    print(f"Matched numbers: {sorted(matches)}")
+                
+                return result
+                
+            except Exception as excel_error:
+                print(f"Error saving to Excel: {excel_error}")
+                traceback.print_exc()
+                # Still return the result even if Excel save fails
+                return result
                 
         except Exception as e:
-            print(f"Error saving comparison: {e}")
+            print(f"Error in save_comparison: {e}")
             traceback.print_exc()
             return None
-
-    def analyze_prediction_patterns(self, results_df):
-        """Analyze prediction patterns with enhanced pattern detection"""
-        patterns = {
-            'frequent_correct': Counter(),
-            'frequent_missed': Counter(),
-            'time_based_accuracy': {},
-            'streak_analysis': {'current_streak': 0, 'best_streak': 0},
-            'pair_patterns': Counter()
-        }
-
         try:
             for index, row in results_df.iterrows():
                 try:
@@ -777,10 +824,7 @@ def main():
         
         evaluator = PredictionEvaluator()
         
-        # Create sample data file if it doesn't exist
-        if not os.path.exists(evaluator.historical_file):
-            evaluator.create_sample_historical_data()
-        
+        # Just call evaluate_past_predictions directly
         evaluator.evaluate_past_predictions()
         
         print(f"\nEvaluation completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -788,6 +832,3 @@ def main():
     except Exception as e:
         print(f"\nCritical error in evaluation: {e}")
         traceback.print_exc()
-
-if __name__ == "__main__":
-    main()
