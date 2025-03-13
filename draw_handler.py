@@ -114,19 +114,61 @@ class DrawHandler:
             self.pipeline_status['stage'] = 'data_preparation'
             processed_data = self._prepare_pipeline_data(historical_data)
             
-            # 1.5. Analysis Stage (Perform analysis after data preparation)
+            # 1.5. Analysis Stage with proper feature dimension
             self.pipeline_status['stage'] = 'data_analysis'
-            analyzer = DataAnalysis(historical_data)
+            
+            # Format data for DataAnalysis properly
+            formatted_draws = []
+            for _, row in historical_data.iterrows():
+                try:
+                    numbers = [int(float(row[f'number{i}'])) for i in range(1, 21)]
+                    if len(numbers) == 20 and all(1 <= n <= 80 for n in numbers):
+                        formatted_draws.append((row['date'], numbers))
+                except Exception as e:
+                    print(f"DEBUG: Error formatting draw: {e}")
+                    
+            # Create analyzer with properly formatted data
+            analyzer = DataAnalysis(formatted_draws)
             analysis_results = analyzer.get_analysis_results()
             
-            # Ensure predictor has pipeline_data initialized for compatibility
+            # Initialize predictor pipeline data
             if not hasattr(self.predictor, 'pipeline_data'):
                 self.predictor.pipeline_data = {}
-                
-            # Pass analysis results to predictor
-            self.predictor.pipeline_data['analysis_context'] = analysis_results
             
-            # 2. Prediction Stage
+            # Add analysis features to match training dimension
+            if hasattr(processed_data, 'shape'):
+                current_features = processed_data.shape[1] if len(processed_data.shape) > 1 else processed_data.size
+                print(f"DEBUG: Current feature count: {current_features}")
+                
+                # Generate additional analysis features
+                if analysis_results and 'hot_cold' in analysis_results:
+                    hot_numbers, _ = analysis_results['hot_cold']
+                    frequency = analyzer.count_frequency()
+                    
+                    # Create additional features to match 184 dimensions
+                    additional_features = np.zeros((processed_data.shape[0], 20))  # Match the first dimension
+                    
+                    for i, (num, _) in enumerate(hot_numbers[:20]):
+                        additional_features[:, i] = frequency.get(num, 0)
+                    
+                    # Normalize additional features
+                    max_freq = max(frequency.values()) if frequency else 1
+                    additional_features = additional_features / max_freq
+                    
+                    # Combine with processed data
+                    if isinstance(processed_data, np.ndarray):
+                        processed_data = np.hstack([processed_data, additional_features])
+                    else:
+                        processed_data = np.hstack([processed_data.values, additional_features])
+                        
+                    print(f"DEBUG: Updated feature count: {processed_data.shape[1]}")
+            
+            self.predictor.pipeline_data.update({
+                'analysis_context': analysis_results,
+                'use_combined_features': True
+            })
+            
+            # Prediction Stage
             self.pipeline_status['stage'] = 'prediction'
             model_path = self._get_latest_model()
             if model_path:
@@ -138,12 +180,10 @@ class DrawHandler:
                 if all(os.path.exists(file) for file in model_files):
                     print(f"✓ Model found: {os.path.basename(model_path)}")
                     
-                    # Get predictions and handle returns properly
                     result = self._run_prediction(processed_data)
                     if result and len(result) == 3:
                         numbers, probs, analysis = result
                         if numbers is not None:
-                            # Save to consolidated format
                             if hasattr(self.predictor, 'save_prediction'):
                                 next_draw_time = get_next_draw_time(datetime.now()).strftime('%H:%M  %d-%m-%Y')
                                 success = self.predictor.save_prediction(
@@ -153,9 +193,24 @@ class DrawHandler:
                                 )
                                 if not success:
                                     print("WARNING: Failed to save to consolidated format")
+                                    
+                                # Update pipeline status
+                                self.pipeline_status.update({
+                                    'success': True,
+                                    'last_successful_run': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                    'performance_metrics': {
+                                        'accuracy': None,  # Will be updated by evaluator
+                                        'reliability': len(numbers) == 20,  # Basic validation
+                                        'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                    }
+                                })
                     
                             self.pipeline_status['success'] = True
                             return numbers, probs, analysis
+                        
+                    else:
+                        print("WARNING: Invalid prediction result format")
+                        self.pipeline_status['error'] = "Invalid prediction result format"
                     
                 else:
                     print("Model files incomplete. Attempting retraining...")
@@ -167,6 +222,36 @@ class DrawHandler:
                     return self._run_prediction(processed_data)
             
             self.pipeline_status['error'] = "Failed to generate predictions"
+            
+            # Attempt to generate backup prediction if primary fails
+            try:
+                print("[{}] [WARNING] Primary prediction failed, using backup".format(
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                
+                print("[{}] [INFO] Creating backup prediction from analysis data...".format(
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                
+                if analysis_results and 'hot_cold' in analysis_results:
+                    hot_numbers, _ = analysis_results['hot_cold']
+                    backup_numbers = [num for num, _ in hot_numbers[:20]]
+                    if len(backup_numbers) == 20:
+                        print("[{}] [INFO] Created backup prediction with 20 numbers".format(
+                            datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                        backup_probs = [1.0/20] * 20  # Equal probabilities for backup
+                        
+                        # Save backup prediction
+                        next_draw_time = get_next_draw_time(datetime.now()).strftime('%H:%M  %d-%m-%Y')
+                        if hasattr(self.predictor, 'save_prediction'):
+                            self.predictor.save_prediction(
+                                prediction=backup_numbers,
+                                probabilities=backup_probs,
+                                next_draw_time=next_draw_time
+                            )
+                        return backup_numbers, backup_probs, analysis_results
+            
+            except Exception as backup_error:
+                print(f"Backup prediction generation failed: {str(backup_error)}")
+            
             return None, None, None
                 
         except Exception as e:
@@ -476,28 +561,41 @@ class DrawHandler:
                 # Get prediction
                 prediction_result = self.predictor.predict(data)
                 
-                if prediction_result is None or len(prediction_result) != 3:
-                    print("ERROR: Invalid prediction result format")
-                    return None, None, None
-                
-                predicted_numbers, probabilities, context = prediction_result
-                
-                if predicted_numbers is not None and probabilities is not None:
-                    print(f"DEBUG: Saving prediction for draw at {next_draw_time}")
-                    
-                    # Save to consolidated format using predictor's new method with next_draw_time
-                    success = self.predictor.save_prediction(
-                        prediction=predicted_numbers,
-                        probabilities=probabilities,
-                        next_draw_time=next_draw_time  # Pass the next draw time
-                    )
-                    
-                    if success:
-                        print(f"Successfully saved prediction for draw at {next_draw_time}")
-                    else:
-                        print("WARNING: Failed to save prediction to consolidated format")
+                try:
+                    if isinstance(prediction_result, tuple) and len(prediction_result) == 3:
+                        predicted_numbers, probabilities, context = prediction_result
                         
-                return predicted_numbers, probabilities, analysis_results
+                        # Validate we have exactly 20 numbers and valid probabilities
+                        if (predicted_numbers is not None and 
+                            probabilities is not None and 
+                            len(predicted_numbers) == 20 and 
+                            all(1 <= num <= 80 for num in predicted_numbers)):
+                            
+                            print(f"DEBUG: Saving prediction for draw at {next_draw_time}")
+                            
+                            # Save to consolidated format using predictor's new method with next_draw_time
+                            success = self.predictor.save_prediction(
+                                prediction=predicted_numbers,
+                                probabilities=probabilities,
+                                next_draw_time=next_draw_time  # Pass the next draw time
+                            )
+                            
+                            if success:
+                                print(f"Successfully saved prediction for draw at {next_draw_time}")
+                            else:
+                                print("WARNING: Failed to save prediction to consolidated format")
+                                
+                            return predicted_numbers, probabilities, analysis_results
+                        else:
+                            print("ERROR: Invalid prediction numbers (must be exactly 20 numbers between 1 and 80)")
+                            return None, None, None
+                    else:
+                        print("ERROR: Invalid prediction result format")
+                        return None, None, None
+                        
+                except Exception as e:
+                    print(f"ERROR: Failed to process prediction result: {e}")
+                    return None, None, None
                 
             else:
                 print("ERROR: No historical data available")
