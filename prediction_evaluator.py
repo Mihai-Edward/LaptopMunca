@@ -9,19 +9,21 @@ from datetime import datetime
 from collections import Counter
 import matplotlib.pyplot as plt
 import seaborn as sns
-from config.paths import PATHS
+# Import configuration
 # Add the project root to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
 
-# Import configuration
-from config.paths import PATHS, ensure_directories
-
+from config.paths import PATHS,ensure_directories
 class PredictionEvaluator:
     def __init__(self):
         """Initialize evaluator with consolidated file support"""
         self.excel_file = os.path.join(PATHS['PROCESSED_DIR'], 'all_predictions.xlsx')
+        self.historical_file = PATHS['HISTORICAL_DATA']  # Add this line
+        self.predictions_dir = PATHS['PREDICTIONS_DIR']  # Add this line
+        self.metadata_dir = PATHS['PREDICTIONS_METADATA_DIR']  # Add this line
+        self.processed_dir = PATHS['PROCESSED_DIR'] 
         self.evaluation_metrics = {}
 
     def evaluate_predictions(self):
@@ -153,6 +155,9 @@ class PredictionEvaluator:
                     # Check if we already have an entry for this draw date
                     date_match = existing_df['date'] == result['date']
                     if any(date_match):
+                        print(f"PROCESSED_DIR path: {PATHS['PROCESSED_DIR']}")
+                        print(f"Directory exists: {os.path.isdir(PATHS['PROCESSED_DIR'])}")
+                        print(f"Excel file exists: {os.path.isfile(self.excel_file)}")
                         # Update the existing entry instead of adding a new one
                         print(f"Updating existing evaluation for draw date: {draw_date}")
                         for key, value in result.items():
@@ -504,96 +509,91 @@ class PredictionEvaluator:
     def evaluate_past_predictions(self):
         """Evaluate past predictions with enhanced analysis"""
         try:
-            # Get all prediction files
-            prediction_files = sorted(glob.glob(os.path.join(self.predictions_dir, 'prediction_*.csv')))
-            if not prediction_files:
-                print("\nNo prediction files found.")
+            # Instead of looking for CSV files in predictions_dir, 
+            # we should look directly at the Excel file
+            print("\n=== Evaluating Predictions ===")
+            
+            if not os.path.exists(self.excel_file):
+                print(f"\nNo predictions file found at: {self.excel_file}")
                 return
-
-            # Load historical data
-            if not os.path.exists(self.historical_file):
-                print(f"\nHistorical draw data file not found: {self.historical_file}")
-                print("Please make sure the file exists at this location.")
-                return
-
-            print(f"\nLoading historical draws from: {self.historical_file}")
+                
             try:
+                # Load predictions from Excel
+                predictions_df = pd.read_excel(self.excel_file)
+                print(f"Loaded {len(predictions_df)} predictions from Excel")
+                
+                if len(predictions_df) == 0:
+                    print("No predictions found in Excel file.")
+                    return
+                    
+                # Load historical data
+                if not os.path.exists(self.historical_file):
+                    print(f"\nHistorical draw data file not found: {self.historical_file}")
+                    return
+
                 historical_df = pd.read_csv(self.historical_file)
-                print(f"Successfully loaded historical data with {len(historical_df)} draws")
+                print(f"Loaded {len(historical_df)} historical draws")
+                
+                evaluation_results = []
+                
+                for idx, pred_row in predictions_df.iterrows():
+                    try:
+                        # Get the draw time
+                        next_draw_time = pred_row['next_draw_time']
+                        
+                        # Extract predicted numbers
+                        predicted_numbers = []
+                        for i in range(1, 21):
+                            col_name = f'number{i}'
+                            if col_name in pred_row and not pd.isna(pred_row[col_name]):
+                                predicted_numbers.append(int(pred_row[col_name]))
+                        
+                        if len(predicted_numbers) != 20:
+                            print(f"Warning: Invalid prediction for {next_draw_time} - wrong number count")
+                            continue
+                        
+                        # Find matching actual draw
+                        matching_draws = historical_df[historical_df['date'].str.contains(str(next_draw_time))]
+                        if len(matching_draws) == 0:
+                            print(f"No matching draw found for {next_draw_time}")
+                            continue
+                            
+                        # Get actual numbers
+                        actual_numbers = []
+                        for i in range(1, 21):
+                            col_name = f'number{i}'
+                            val = matching_draws.iloc[0][col_name]
+                            if not pd.isna(val):
+                                actual_numbers.append(int(val))
+                        
+                        # Compare and save results
+                        result = self.save_comparison(
+                            predicted_numbers,
+                            actual_numbers,
+                            draw_date=next_draw_time
+                        )
+                        
+                        if result:
+                            evaluation_results.append(result)
+                            print(f"Evaluated prediction for {next_draw_time}: {result['num_correct']} correct")
+                        
+                    except Exception as row_error:
+                        print(f"Error processing prediction row {idx}: {row_error}")
+                        continue
+                
+                # Get and display performance stats
+                if evaluation_results:
+                    stats = self.get_performance_stats()
+                    self.display_summary_results(stats)
+                    self.plot_performance_trends()
+                    print(f"\nSuccessfully evaluated {len(evaluation_results)} predictions")
+                else:
+                    print("\nNo valid predictions found to evaluate.")
+                    
             except Exception as e:
-                print(f"Error loading historical data: {e}")
-                return
-
-            evaluation_results = []
-            current_time = datetime.now()
-
-            print(f"\nProcessing {len(prediction_files)} prediction files...")
-            for pred_file in prediction_files:
-                try:
-                    # Load prediction file
-                    pred_df = pd.read_csv(pred_file)
-                    
-                    # Load corresponding metadata
-                    metadata_file = os.path.join(
-                        self.metadata_dir,
-                        os.path.basename(pred_file).replace('.csv', '_metadata.json')
-                    )
-                    metadata = {}
-                    if os.path.exists(metadata_file):
-                        with open(metadata_file, 'r') as f:
-                            metadata = json.load(f)
-
-                    # Check metadata for next_draw_time
-                    next_draw_time = None
-                    if 'next_draw_time' in metadata:
-                        next_draw_time = metadata['next_draw_time']
-                        print(f"Looking for draw at time: {next_draw_time}")
-                    else:
-                        print(f"Metadata does not contain next_draw_time for {pred_file}")
-                        continue
-                    
-                    # Find matching historical draw directly using the string
-                    matching_rows = historical_df[historical_df['date'] == next_draw_time]
-                    if matching_rows.empty:
-                        print(f"No matching historical draw for time '{next_draw_time}'")
-                        continue
-
-                    print(f"Found matching draw for time: {next_draw_time}")
-                    
-                    # Get predicted and actual numbers
-                    predicted_numbers = pred_df['number'].tolist()
-                    number_cols = [f'number{i}' for i in range(1, 21)]
-                    actual_numbers = matching_rows.iloc[0][number_cols].tolist()
-                    
-                    # Convert to integers and handle missing values
-                    actual_numbers = [int(x) for x in actual_numbers if pd.notna(x) and str(x).strip()]
-                    
-                    if len(actual_numbers) < 20:
-                        print(f"Warning: Draw at {next_draw_time} has only {len(actual_numbers)} numbers")
-
-                    # Compare and save results
-                    result = self.save_comparison(
-                        predicted_numbers,
-                        actual_numbers,
-                        draw_date=next_draw_time,
-                        metadata=metadata
-                    )
-                    
-                    if result:
-                        evaluation_results.append(result)
-                except Exception as e:
-                    print(f"Error processing prediction file {pred_file}: {e}")
-                    traceback.print_exc()
-                    continue
-
-            # Get and display performance stats even if there's only one result
-            if evaluation_results:
-                stats = self.get_performance_stats()
-                self.display_summary_results(stats)
-                self.plot_performance_trends()
-            else:
-                print("\nNo valid predictions found to evaluate.")
-
+                print(f"Error processing predictions: {e}")
+                traceback.print_exc()
+                
         except Exception as e:
             print(f"\nError in evaluation: {e}")
             traceback.print_exc()

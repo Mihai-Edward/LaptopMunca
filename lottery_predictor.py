@@ -1617,13 +1617,21 @@ class LotteryPredictor:
 
             new_row = pd.DataFrame([prediction_data])
             
-            # Save to consolidated Excel
+            # Check for existing file and duplicates
             try:
                 if os.path.exists(excel_file):
                     existing_df = pd.read_excel(excel_file)
+                    
+                    # Check if prediction for this draw time already exists
+                    existing_predictions = existing_df[existing_df['next_draw_time'] == prediction_data['next_draw_time']]
+                    if not existing_predictions.empty:
+                        print(f"Warning: Prediction for {prediction_data['next_draw_time']} already exists!")
+                        return False
+                    
                     result_df = pd.concat([existing_df, new_row], ignore_index=True)
                 else:
                     result_df = new_row
+                    
                 result_df.to_excel(excel_file, index=False)
                 print(f"Prediction saved to: {excel_file}")
             except Exception as e:

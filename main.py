@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
+import time  # Added for sleep functionality
 
 # Add project root to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))  # Gets src directory
@@ -27,9 +28,13 @@ CONFIG = {
     'analysis_draws': 24,            # Number of draws to use for analysis
     'prediction_timeout': 60,        # Timeout for prediction operations in seconds
     'backup_prediction_enabled': True,  # Whether to use backup prediction when primary fails
-    'debug_level': "INFO"            # Default debug level
+    'debug_level': "INFO",           # Default debug level
+    'automated_mode': {
+        'wait_time': 50,            # Seconds after draw to start collection
+        'retry_delay': 30,          # Seconds to wait after error before retry
+        'max_retries': 3            # Maximum number of retries per cycle
+    }
 }
-
 class DrawDataFormatter:
     """Helper class to ensure consistent draw data formatting"""
     
@@ -327,14 +332,25 @@ def generate_prediction():
 
 def get_next_draw_time(current_time):
     """Calculate the next draw time (5 minute intervals)"""
-    minute = (current_time.minute // 5 * 5 + 5) % 60
-    hour = current_time.hour + (current_time.minute // 5 * 5 + 5) // 60
+    # Calculate minutes since the start of the day
+    minutes_since_midnight = current_time.hour * 60 + current_time.minute
     
-    next_time = current_time.replace(hour=hour % 24, minute=minute, second=0, microsecond=0)
-    if hour >= 24:
+    # Find the next 5-minute interval
+    next_interval = ((minutes_since_midnight // 5) + 1) * 5
+    
+    # Calculate the new hour and minute
+    next_hour = (next_interval // 60) % 24
+    next_minute = next_interval % 60
+    
+    # Create the next draw time
+    next_time = current_time.replace(hour=next_hour, minute=next_minute, second=0, microsecond=0)
+    
+    # If we've crossed to the next day
+    if next_hour < current_time.hour:
         next_time += timedelta(days=1)
     
     return next_time
+
 def save_prediction_to_excel(predictions, probabilities, next_draw_time=None):
     """
     Save prediction to consolidated Excel file for easier evaluation.
@@ -542,9 +558,82 @@ def evaluate_predictions():
         debug_print(f"Prediction evaluation failed: {str(e)}", "ERROR")
         traceback.print_exc()
         return False
+def get_current_cycle_position():
+    """Determine where we are in the 5-minute cycle"""
+    now = datetime.now()
+    minutes = now.minute
+    seconds = now.second
+    current_cycle_minute = minutes % 5
+    total_seconds = current_cycle_minute * 60 + seconds
+    return total_seconds
 
+def wait_for_next_action():
+    """Wait until the next action time (50 seconds after draw)"""
+    try:
+        current_time = datetime.now()
+        next_draw = get_next_draw_time(current_time)
+        action_time = next_draw + timedelta(seconds=CONFIG['automated_mode']['wait_time'])
+        
+        # If we're past the action time, wait for next draw
+        if current_time > action_time:
+            next_draw = next_draw + timedelta(minutes=5)
+            action_time = next_draw + timedelta(seconds=CONFIG['automated_mode']['wait_time'])
+        
+        wait_seconds = (action_time - current_time).total_seconds()
+        if wait_seconds > 0:
+            debug_print(f"Next draw at {next_draw.strftime('%H:%M:%S')}")
+            debug_print(f"Waiting {wait_seconds:.1f} seconds until {action_time.strftime('%H:%M:%S')}")
+            time.sleep(wait_seconds)
+            
+        return True
+    except Exception as e:
+        debug_print(f"Error in wait_for_next_action: {e}", "ERROR")
+        return False
+
+def run_automated_cycle():
+    """Execute one complete automated cycle"""
+    try:
+        current_time = datetime.now()
+        debug_print(f"\n=== Starting Automated Cycle at {current_time.strftime('%H:%M:%S')} ===")
+        
+        # 1. Collect Data
+        debug_print("\nExecuting Data Collection...")
+        collection_success = collect_data()
+        if not collection_success:
+            debug_print("Data collection failed", "ERROR")
+            return False
+        
+        # 2. Run Analysis
+        debug_print("\nExecuting Data Analysis...")
+        analysis_success = run_analysis()
+        if not analysis_success:
+            debug_print("Analysis failed", "ERROR")
+            return False
+        
+        # 3. Generate Prediction
+        debug_print("\nExecuting Prediction Generation...")
+        prediction_success = generate_prediction()
+        if not prediction_success:
+            debug_print("Prediction generation failed", "ERROR")
+            return False
+        
+        # 4. Evaluate Predictions
+        debug_print("\nExecuting Prediction Evaluation...")
+        evaluation_success = evaluate_predictions()
+        if not evaluation_success:
+            debug_print("Prediction evaluation failed", "ERROR")
+            return False
+        
+        next_cycle = get_next_draw_time(datetime.now() + timedelta(minutes=5))
+        debug_print(f"\nNext cycle scheduled for: {next_cycle.strftime('%H:%M:%S')}")
+        return True
+        
+    except Exception as e:
+        debug_print(f"Error in automated cycle: {e}", "ERROR")
+        traceback.print_exc()
+        return False
 def main():
-    """Main program loop"""
+    """Main program loop with automated mode option"""
     try:
         # Initial environment validation
         if not validate_environment():
@@ -560,9 +649,10 @@ def main():
             print("2. Run Data Analysis")
             print("3. Generate Prediction")
             print("4. Evaluate Predictions")
-            print("5. Exit")
+            print("5. Start Automated Mode")  # New option
+            print("6. Exit")
             
-            choice = input("\nEnter your choice (1-5): ").strip()
+            choice = input("\nEnter your choice (1-6): ").strip()
             
             if choice == "1":
                 debug_print("\nExecuting Data Collection...")
@@ -593,6 +683,38 @@ def main():
                     debug_print("Prediction evaluation failed", "ERROR")
                     
             elif choice == "5":
+                debug_print("\nStarting Automated Mode...")
+                try:
+                    retry_count = 0
+                    while True:
+                        try:
+                            # Wait until 50 seconds after draw
+                            if not wait_for_next_action():
+                                raise Exception("Failed to wait for next action time")
+                            
+                            # Run the automated cycle
+                            if run_automated_cycle():
+                                retry_count = 0  # Reset counter on success
+                            else:
+                                retry_count += 1
+                                if retry_count >= CONFIG['automated_mode']['max_retries']:
+                                    debug_print("Maximum retries reached, restarting automated mode", "WARNING")
+                                    retry_count = 0
+                                    time.sleep(CONFIG['automated_mode']['retry_delay'])
+                                    
+                        except Exception as cycle_error:
+                            debug_print(f"Error in cycle: {cycle_error}", "ERROR")
+                            retry_count += 1
+                            if retry_count >= CONFIG['automated_mode']['max_retries']:
+                                debug_print("Maximum retries reached, restarting automated mode", "WARNING")
+                                retry_count = 0
+                            time.sleep(CONFIG['automated_mode']['retry_delay'])
+                            
+                except KeyboardInterrupt:
+                    debug_print("\nAutomated mode stopped by user (Ctrl+C)", "INFO")
+                    continue
+                    
+            elif choice == "6":
                 debug_print("\nExiting program...")
                 break
                 
