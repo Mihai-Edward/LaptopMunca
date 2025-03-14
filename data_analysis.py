@@ -10,10 +10,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.paths import PATHS, ensure_directories
 
 class DataAnalysis:
-    def __init__(self, draws):
+    def __init__(self, draws, debug=False):
         """Initialize DataAnalysis with proper draw validation"""
         self.draws = []
-        print(f"\nDEBUG: Initializing DataAnalysis with {len(draws)} draws")
+        self.debug = debug
+        
+        if self.debug:
+            print(f"\nDEBUG: Initializing DataAnalysis with {len(draws)} draws")
+            print(f"DEBUG: First draw format: {draws[0] if draws else 'None'}")  # Add this line
         
         for draw_date, numbers in draws:
             try:
@@ -36,17 +40,17 @@ class DataAnalysis:
                     
             except Exception as e:
                 print(f"DEBUG: Error processing draw {draw_date}: {e}")
-                
-        print(f"DEBUG: Successfully processed {len(self.draws)} valid draws")
         
         if not self.draws:
             raise ValueError("No valid draws were processed!")
+        
+        # if self.debug:
+        #     print(f"DEBUG: Successfully processed {len(self.draws)} valid draws")
 
     def count_frequency(self):
         """Count frequency of all numbers across all draws"""
         all_numbers = [number for draw in self.draws for number in draw[1]]
         frequency = Counter(all_numbers)
-        print(f"DEBUG: Counted frequencies for {len(frequency)} unique numbers")
         return frequency
 
     def get_top_numbers(self, top_n=20):
@@ -114,9 +118,6 @@ class DataAnalysis:
         
         # Get cold numbers (least frequent)
         cold_numbers = sorted_numbers[-top_n:]
-        
-        print(f"DEBUG: Hot numbers count: {len(hot_numbers)}")
-        print(f"DEBUG: Cold numbers count: {len(cold_numbers)}")
         
         return hot_numbers, cold_numbers
 

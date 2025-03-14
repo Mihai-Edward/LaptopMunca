@@ -607,18 +607,18 @@ class PredictionEvaluator:
                     return
                 
                 # Load historical data
-                historical_df = pd.read_csv(self.historical_file)
+                historical_df = pd.read_csv(self.historical_file, dtype={'date': str})
                 print(f"Loaded {len(historical_df)} historical draws")
                 
-                # Clean up any extra whitespace in timestamps
-                historical_df['date'] = historical_df['date'].str.strip()
-                predictions_df['next_draw_time'] = predictions_df['next_draw_time'].str.strip()
+                # Standardize timestamps before comparison
+                historical_df['standardized_date'] = historical_df['date'].apply(self._standardize_timestamp)
+                predictions_df['standardized_time'] = predictions_df['next_draw_time'].apply(self._standardize_timestamp)
                 
                 evaluation_results = []
                 
                 for idx, pred_row in predictions_df.iterrows():
                     try:
-                        draw_time = pred_row['next_draw_time']
+                        draw_time = pred_row['standardized_time']
                         
                         # Extract predicted numbers
                         predicted_numbers = []
@@ -631,8 +631,8 @@ class PredictionEvaluator:
                             print(f"Warning: Invalid prediction for {draw_time} - wrong number count")
                             continue
                         
-                        # Use exact match instead of str.contains()
-                        matching_draws = historical_df[historical_df['date'] == draw_time]
+                        # Use standardized date for exact match
+                        matching_draws = historical_df[historical_df['standardized_date'] == draw_time]
                         
                         if len(matching_draws) == 0:
                             print(f"No matching draw found for {draw_time}")

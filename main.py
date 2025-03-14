@@ -316,11 +316,12 @@ def generate_prediction():
         debug_print("Ensuring analysis is up to date...")
         run_analysis()
         
-        # Train models if needed
-        debug_print("\nChecking/Training models...")
-        if not handler.train_ml_models():
-            debug_print("Model training failed - trying to continue with existing models", "WARNING")
-        
+        # Force model retraining to ensure feature consistency
+        debug_print("\nForce retraining models to ensure feature consistency...")
+        if not handler.train_ml_models(force_retrain=True):
+            debug_print("Model training failed", "ERROR")
+            return False
+            
         # Get the next draw time
         current_time = datetime.now()
         next_draw_time = get_next_draw_time(current_time)
@@ -598,7 +599,76 @@ def wait_for_next_action():
     except Exception as e:
         debug_print(f"Error in wait_for_next_action: {e}", "ERROR")
         return False
-
+def save_top4_confidence():
+    """Save current top 20 confident numbers from prediction to history"""
+    try:
+        debug_print("Generating Top 20 Confident Numbers History...")
+        
+        # Create a DrawHandler to get predictions
+        handler = DrawHandler()
+        
+        # Get the latest prediction with probabilities
+        predictions, probabilities, _ = handler.handle_prediction_pipeline()
+        
+        if predictions is None or probabilities is None:
+            debug_print("Could not get prediction confidence values", "WARNING")
+            return False
+        
+        # Create dictionary of numbers with their probabilities
+        number_probs = {}
+        
+        # For full probability vector (80 values)
+        if len(probabilities) == 80:
+            for i, prob in enumerate(probabilities, 1):
+                number_probs[i] = prob
+        # For probabilities matching predictions
+        else:
+            for num, prob in zip(predictions, probabilities):
+                number_probs[num] = prob
+        
+        # Sort by probability (descending) and get top 20
+        top_numbers = sorted(number_probs.items(), key=lambda x: x[1], reverse=True)[:20]
+        top_20 = [num for num, _ in top_numbers]
+        top_20_probs = [prob for _, prob in top_numbers]
+        
+        # Create record with timestamps
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        next_draw = get_next_draw_time(datetime.now())
+        
+        # Prepare data row
+        new_data = {
+            'timestamp': current_time,
+            'next_draw': next_draw,
+        }
+        
+        # Add all 20 numbers and confidences to the dictionary
+        for i in range(20):
+            new_data[f'number{i+1}'] = top_20[i]
+            new_data[f'confidence{i+1}'] = top_20_probs[i]
+        
+        # Create DataFrame for new row
+        new_row = pd.DataFrame([new_data])
+        
+        # Define output file path - keep original name but with appropriate description
+        top_file_path = os.path.join(PATHS['PROCESSED_DIR'], 'top20_confidence.xlsx')
+        
+        # Append to existing or create new file
+        if os.path.exists(top_file_path):
+            existing_df = pd.read_excel(top_file_path)
+            result_df = pd.concat([existing_df, new_row], ignore_index=True)
+        else:
+            result_df = new_row
+        
+        # Ensure directory exists and save
+        os.makedirs(os.path.dirname(top_file_path), exist_ok=True)
+        result_df.to_excel(top_file_path, index=False)
+        
+        debug_print(f"Top 20 confident numbers updated")
+        return True
+        
+    except Exception as e:
+        debug_print(f"Error updating top confidence history: {e}", "WARNING")
+        return False
 def run_automated_cycle():
     """Execute one complete automated cycle"""
     try:
@@ -624,7 +694,14 @@ def run_automated_cycle():
         prediction_success = generate_prediction()
         if not prediction_success:
             debug_print("Prediction generation failed", "ERROR")
-            return False
+            # Don't return False here - continue to evaluation
+        else:
+            # Only try to save confidence if prediction succeeded
+            try:
+                save_top4_confidence()
+            except Exception as e:
+                debug_print(f"Error saving top 4 confidence: {e}", "WARNING")
+                # Non-fatal error, continue with cycle
         
         # 4. Run Evaluator explicitly to update files
         debug_print("\nExecuting Prediction Evaluation...")
@@ -654,6 +731,7 @@ def run_automated_cycle():
         debug_print(f"Error in automated cycle: {e}", "ERROR")
         traceback.print_exc()
         return False
+
 def main():
     """Main program loop with automated mode option"""
     try:

@@ -1066,12 +1066,15 @@ class LotteryPredictor:
             # Create final probability array
             final_probs = [prob_map[num] for num in final_numbers]
             
-            # Normalize final probabilities
+            # Normalize final probabilities with safety check
             sum_probs = sum(final_probs)
             if sum_probs > 0:
-                final_probs = [p/sum_probs for p in final_probs]
+                final_probs = [p / sum_probs for p in final_probs]
+                print(f"DEBUG: Final probabilities normalized, sum = {sum(final_probs):.4f}")
             else:
-                final_probs = [1.0/len(final_numbers) for _ in final_numbers]
+                # If for some reason the sum is 0, assign equal probability to each number
+                final_probs = [1.0 / len(final_numbers) for _ in final_numbers]
+                print("DEBUG: Final probabilities were 0; assigned equal probabilities to each predicted number")
             
             # Store results in pipeline data
             self.pipeline_data.update({
@@ -1083,6 +1086,23 @@ class LotteryPredictor:
                     'analysis_weight': analysis_weight,
                     'combined_confidence': float(np.mean(final_probs)),
                     'prediction_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+            })
+            
+            # Get next_draw_time with safety check
+            next_draw_time_value = self.pipeline_data.get('next_draw_time')
+            if isinstance(next_draw_time_value, datetime):
+                formatted_time = next_draw_time_value.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                formatted_time = next_draw_time_value  # Assume it's already a string
+
+            # Then update pipeline_data safely with the formatted next draw time
+            self.pipeline_data.update({
+                'latest_prediction': {
+                    'numbers': final_numbers,
+                    'probabilities': final_probs,  # Use final_probs instead of prob_map
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),     # Ensure timestamp is defined as needed
+                    'next_draw_time': formatted_time
                 }
             })
             
@@ -1726,9 +1746,9 @@ class LotteryPredictor:
                         # IMPORTANT: Exact match for next_draw_time
                         date_matches = existing_df['next_draw_time'].str.strip() == next_draw_time.strip()
                         if any(date_matches):
-                            print(f"Warning: Prediction already exists for {next_draw_time}")
-                            # Skip saving duplicate prediction
-                            return False
+                            print(f"Info: Prediction already exists for {next_draw_time} - skipping duplicate save")
+                            # Return True instead of False to indicate this isn't an error
+                            return True
                         else:
                             # Append new prediction only if it doesn't exist
                             result_df = pd.concat([existing_df, new_row], ignore_index=True)
@@ -1757,10 +1777,23 @@ class LotteryPredictor:
                     'model_info': self.training_status
                 }
                 
+                # Utility function to convert objects into JSON-serializable native types
+                def convert_to_json_serializable(obj):
+                    if isinstance(obj, datetime):
+                        return obj.strftime('%Y-%m-%d %H:%M:%S')
+                    elif isinstance(obj, dict):
+                        return {k: convert_to_json_serializable(v) for k, v in obj.items()}
+                    elif isinstance(obj, list):
+                        return [convert_to_json_serializable(v) for v in obj]
+                    return obj
+                
+                # Convert metadata to a JSON-serializable format
+                metadata = convert_to_json_serializable(metadata)
+                
                 # Ensure metadata directory exists
                 os.makedirs(os.path.dirname(metadata_file), exist_ok=True)
                 
-                # Save metadata
+                # Save metadata to JSON
                 with open(metadata_file, 'w') as f:
                     json.dump(metadata, f, indent=4)
 
