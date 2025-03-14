@@ -116,7 +116,35 @@ class DrawHandler:
             
             # 1.5. Analysis Stage (Perform analysis after data preparation)
             self.pipeline_status['stage'] = 'data_analysis'
-            analyzer = DataAnalysis(historical_data)
+
+            # Format data for DataAnalysis
+            formatted_draws = []
+            for _, row in historical_data.iterrows():
+                try:
+                    numbers = []
+                    for i in range(1, 21):
+                        col = f'number{i}'
+                        if col in row and pd.notnull(row[col]):
+                            num = int(float(row[col]))
+                            if 1 <= num <= 80:
+                                numbers.append(num)
+                    
+                    # Only process if we have all 20 numbers
+                    if len(numbers) == 20:
+                        # Format date string in required format
+                        if isinstance(row['date'], pd.Timestamp):
+                            date_str = row['date'].strftime('%H:%M  %d-%m-%Y')
+                        else:
+                            date_str = str(row['date']).strip()
+                        
+                        # Create tuple with exactly 2 elements
+                        draw_tuple = (date_str, sorted(numbers))
+                        formatted_draws.append(draw_tuple)
+                except Exception as e:
+                    print(f"DEBUG: Error formatting draw: {e}")
+                    continue
+
+            analyzer = DataAnalysis(formatted_draws)
             analysis_results = analyzer.get_analysis_results()
             
             # Ensure predictor has pipeline_data initialized for compatibility
@@ -145,7 +173,7 @@ class DrawHandler:
                         if numbers is not None:
                             # Save to consolidated format
                             if hasattr(self.predictor, 'save_prediction'):
-                                next_draw_time = get_next_draw_time(datetime.now()).strftime('%H:%M  %d-%m-%Y')
+                                next_draw_time = get_next_draw_time(datetime.now())
                                 success = self.predictor.save_prediction(
                                     prediction=numbers,
                                     probabilities=probs,
@@ -273,29 +301,25 @@ class DrawHandler:
                         frequency = analyzer.count_frequency()
                         hot_numbers, cold_numbers = analyzer.hot_and_cold_numbers()
                     
-                        # Prepare feature expansion (add 20 analysis features to each sample)
-                        print("Adding analysis features to training data...")
-                    
-                        # Get top 20 hot numbers for feature expansion
-                        top_hot = [num for num, _ in hot_numbers[:20]]
-                    
-                        # Create hot number features (20 dimensions)
-                        hot_features = np.zeros((features.shape[0], 20))
-                    
-                        # Set values based on frequency (simple method)
-                        for i, num in enumerate(top_hot):
-                            if 1 <= num <= 80:
-                                freq = frequency.get(num, 0)
-                                # Normalize by max frequency
-                                max_freq = max(frequency.values()) if frequency else 1
-                                hot_features[:, i] = freq / max_freq
-                    
-                        # Combine with original features
-                        enhanced_features = np.hstack([features, hot_features])
-                        print(f"Enhanced training data shape: {enhanced_features.shape}")
-                    
-                        # Use enhanced features
-                        features = enhanced_features
+                        # --- Commented out hot number features expansion ---
+                        # print("Adding analysis features to training data...")
+                        # # Get top 20 hot numbers for feature expansion
+                        # top_hot = [num for num, _ in hot_numbers[:20]]
+                        # # Create hot number features (20 dimensions)
+                        # hot_features = np.zeros((features.shape[0], 20))
+                        # # Set values based on frequency (simple method)
+                        # for i, num in enumerate(top_hot):
+                        #     if 1 <= num <= 80:
+                        #         freq = frequency.get(num, 0)
+                        #         # Normalize by max frequency
+                        #         max_freq = max(frequency.values()) if frequency else 1
+                        #         hot_features[:, i] = freq / max_freq
+                        # # Combine with original features
+                        # enhanced_features = np.hstack([features, hot_features])
+                        # print(f"Enhanced training data shape: {enhanced_features.shape}")
+                        # # Use enhanced features
+                        # features = enhanced_features
+                        # --- End of commented-out section ---
                 except Exception as e:
                     print(f"Warning: Could not enhance training features: {e}")
                     print("Falling back to base features")
@@ -527,7 +551,8 @@ class DrawHandler:
                     # Get prediction
                     try:
                         print("DEBUG: Calling predictor.predict()...")
-                        prediction_result = self.predictor.predict(formatted_draws)
+                        # FIXED: Pass the original DataFrame, not the formatted draws list
+                        prediction_result = self.predictor.predict(data)  # Changed from formatted_draws to data
                         
                         if prediction_result is None:
                             print("ERROR: Predictor returned None")
@@ -591,7 +616,7 @@ class DrawHandler:
                     'numbers': predictions,
                     'probabilities': prob_map,
                     'timestamp': timestamp,
-                    'next_draw_time': next_draw_time.strftime('%Y-%m-%d %H:%M:%S')
+                    'next_draw_time': next_draw_time
                 }
             })
 
