@@ -251,14 +251,14 @@ class PredictionEvaluator:
                 print(f"Results saved to {results_file}")
                 
                 # Print evaluation summary
-                print(f"\nEvaluation Summary for {draw_date}:")
-                print(f"Numbers matched: {num_correct} of 20")
-                print(f"Accuracy: {accuracy:.2f}%")
-                print(f"Precision: {precision:.2f}%")
-                print(f"Recall: {recall:.2f}%")
-                print(f"F1 Score: {f1_score:.2f}")
-                if matches:
-                    print(f"Matched numbers: {sorted(matches)}")
+               # print(f"\nEvaluation Summary for {draw_date}:")
+                #print(f"Numbers matched: {num_correct} of 20")
+                #print(f"Accuracy: {accuracy:.2f}%")
+                #print(f"Precision: {precision:.2f}%")
+                #print(f"Recall: {recall:.2f}%")
+                #print(f"F1 Score: {f1_score:.2f}")
+                #if matches:
+                   # print(f"Matched numbers: {sorted(matches)}")
                 
                 return result
                 
@@ -655,7 +655,7 @@ class PredictionEvaluator:
                         
                         if result:
                             evaluation_results.append(result)
-                            print(f"Evaluated prediction for {draw_time}: {result['num_correct']} correct")
+                            #print(f"Evaluated prediction for {draw_time}: {result['num_correct']} correct")
                         
                     except Exception as row_error:
                         print(f"Error processing prediction row {idx}: {row_error}")
@@ -684,33 +684,33 @@ class PredictionEvaluator:
             print("\nNo performance statistics available.")
             return
             
-        print("\n=== Overall Performance ===")
-        print(f"Total predictions evaluated: {stats['total_predictions']}")
-        print(f"Average correct numbers: {stats['avg_correct']:.1f}")
-        print(f"Best prediction: {stats['best_prediction']} correct numbers")
-        print(f"Worst prediction: {stats['worst_prediction']} correct numbers")
-        print(f"Average accuracy: {stats['avg_accuracy']:.1f}%")
-        print(f"Consistency score: {stats['consistency_score']:.2f}")
-        print(f"Best streak: {stats['best_streak']} predictions")
+        #print("\n=== Overall Performance ===")
+        #print(f"Total predictions evaluated: {stats['total_predictions']}")
+        #print(f"Average correct numbers: {stats['avg_correct']:.1f}")
+        #print(f"Best prediction: {stats['best_prediction']} correct numbers")
+        #print(f"Worst prediction: {stats['worst_prediction']} correct numbers")
+        #print(f"Average accuracy: {stats['avg_accuracy']:.1f}%")
+        #print(f"Consistency score: {stats['consistency_score']:.2f}")
+        #print(f"Best streak: {stats['best_streak']} predictions")
         
-        print("\n=== Trend Analysis ===")
-        print(f"Recent trend: {stats['trend']}")
-        print(f"Improvement rate: {stats['improvement_rate']:.1f}%")
+        #print("\n=== Trend Analysis ===")
+        #print(f"Recent trend: {stats['trend']}")
+        #print(f"Improvement rate: {stats['improvement_rate']:.1f}%")
         
-        print("\n=== Pattern Analysis ===")
-        print("Most frequently correct numbers:")
-        for num, count in list(stats['most_correct'].items())[:5]:
-            print(f"  Number {num}: {count} times")
+        #print("\n=== Pattern Analysis ===")
+        #print("Most frequently correct numbers:")
+       # for num, count in list(stats['most_correct'].items())[:5]:
+            #print(f"  Number {num}: {count} times")
         
-        print("\nMost frequently missed numbers:")
-        for num, count in list(stats['most_missed'].items())[:5]:
-            print(f"  Number {num}: {count} times")
+        #print("\nMost frequently missed numbers:")
+        #for num, count in list(stats['most_missed'].items())[:5]:
+           # print(f"  Number {num}: {count} times")
         
-        print("\nMost successful number pairs:")
-        for pair, count in list(stats['successful_pairs'].items())[:3]:
-            print(f"  {pair}: {count} times")
+        #print("\nMost successful number pairs:")
+       # for pair, count in list(stats['successful_pairs'].items())[:3]:
+            #print(f"  {pair}: {count} times")
         
-        print(f"\nBest performing time: {stats['best_performing_time']} (Average correct: {stats['best_time_avg']:.1f})")
+        #print(f"\nBest performing time: {stats['best_performing_time']} (Average correct: {stats['best_time_avg']:.1f})")
 
     def evaluate_single_prediction(self, prediction_file):
         """Evaluate a single prediction file"""
@@ -776,13 +776,13 @@ class PredictionEvaluator:
             )
 
             if result:
-                print("\n=== Single Prediction Evaluation ===")
-                print(f"Date: {pred_date}")
-                print(f"Predicted numbers: {sorted(predicted_numbers)}")
-                print(f"Actual numbers: {sorted(actual_numbers)}")
-                print(f"Correct numbers: {sorted(result['correct_numbers'])}")
-                print(f"Accuracy: {result['accuracy']*100:.1f}%")
-                print(f"Number of correct predictions: {result['num_correct']}")
+                #print("\n=== Single Prediction Evaluation ===")
+                #print(f"Date: {pred_date}")
+                #print(f"Predicted numbers: {sorted(predicted_numbers)}")
+                #print(f"Actual numbers: {sorted(actual_numbers)}")
+                #print(f"Correct numbers: {sorted(result['correct_numbers'])}")
+                #print(f"Accuracy: {result['accuracy']*100:.1f}%")
+                #print(f"Number of correct predictions: {result['num_correct']}")
                 
                 if metadata:
                     print("\nModel Information:")

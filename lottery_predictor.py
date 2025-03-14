@@ -338,7 +338,7 @@ class LotteryPredictor:
                     prepared_data.loc[idx, f'number{i+1}'] = num
             
             # Get most recent 5 draws
-            prepared_data = prepared_data.tail(5).reset_index(drop=True)
+            prepared_data = prepared_data.tail(12).reset_index(drop=True)
             
             # Add time-based features
             if 'date' in prepared_data.columns:
@@ -462,7 +462,7 @@ class LotteryPredictor:
         """Prepare data for training with enhanced validation and preprocessing"""
         try:
             print("\nPreparing training data...")
-            if historical_data is None or len(historical_data) < 6:
+            if historical_data is None or len(historical_data) < 13:
                 raise ValueError("Insufficient historical data (minimum 6 draws required)")
 
             # Sort chronologically and reset index
@@ -470,7 +470,7 @@ class LotteryPredictor:
             
             features = []
             labels = []
-            window_size = 5  # Use last 5 draws to predict next
+            window_size = 12  # Use last 5 draws to predict next
             number_cols = [f'number{i}' for i in range(1, 21)]
 
             print(f"Processing {len(historical_data) - window_size} potential training samples...")
@@ -1216,7 +1216,7 @@ class LotteryPredictor:
                 historical_data = self.load_data()
             
             if recent_draws is None:
-                recent_draws = historical_data.tail(5)
+                recent_draws = historical_data.tail(12)
             
             # Check if model needs training
             if not self.training_status['model_loaded']:
@@ -1404,7 +1404,7 @@ class LotteryPredictor:
                 print("Attempting to proceed with available model state...")
             
             # Validate input data
-            if recent_draws is None or len(recent_draws) < 5:
+            if recent_draws is None or len(recent_draws) < 12:
                 raise ValueError("Need at least 5 recent draws for prediction")
                 
             if not isinstance(recent_draws, pd.DataFrame):

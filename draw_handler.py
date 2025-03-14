@@ -836,6 +836,11 @@ class DrawHandler:
     def apply_learning_from_evaluations(self):
         """Apply continuous learning with enhanced analysis and model adjustments"""
         try:
+            print("\nLearning cycle metrics:")
+            print(f"- Cycles completed: {self.learning_status['cycles_completed']}")
+            print(f"- Initial accuracy: {self.learning_status['initial_accuracy']:.2f}%")
+            print(f"- Current accuracy: {self.learning_status['current_accuracy']:.2f}%")
+            print(f"- Improvement rate: {self.learning_status['improvement_rate']:.2f}%")
             print("\nApplying continuous learning from evaluation results...")
             start_time = datetime.now()
             
@@ -966,7 +971,12 @@ class DrawHandler:
     def _adjust_model_parameters(self, problematic_numbers, successful_numbers, trend, accuracy, adjustments):
         """Make specific adjustments to model parameters with enhanced tracking and validation"""
         try:
+            print(f"Current accuracy: {accuracy:.2f}%")
+            print("\n=== Model Parameter Adjustment ===")
             print("\nAdjusting model parameters...")
+            print(f"Performance trend: {trend}")
+            print(f"Problematic numbers: {problematic_numbers[:5]}...")
+            print(f"Successful numbers: {successful_numbers[:5]}...")
             # Define timestamp at the start
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             

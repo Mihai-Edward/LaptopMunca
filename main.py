@@ -531,10 +531,10 @@ def evaluate_predictions():
                         # Calculate and display stats
                         if total_evaluated > 0:
                             avg_accuracy = (total_correct / (total_evaluated * 20)) * 100
-                            debug_print("\n=== Evaluation Results (Excel) ===")
-                            debug_print(f"Total evaluated: {total_evaluated}")
-                            debug_print(f"Average accuracy: {avg_accuracy:.2f}%")
-                            debug_print(f"Best prediction: {best_prediction} correct")
+                            #debug_print("\n=== Evaluation Results (Excel) ===")
+                           # debug_print(f"Total evaluated: {total_evaluated}")
+                           # debug_print(f"Average accuracy: {avg_accuracy:.2f}%")
+                            #debug_print(f"Best prediction: {best_prediction} correct")
                             
                             # Store results for later use
                             evaluator.set_evaluation_stats({
@@ -602,72 +602,62 @@ def wait_for_next_action():
 def save_top4_confidence():
     """Save current top 20 confident numbers from prediction to history"""
     try:
-        debug_print("Generating Top 20 Confident Numbers History...")
+        debug_print("Getting top 20 numbers by confidence...")
         
-        # Create a DrawHandler to get predictions
-        handler = DrawHandler()
-        
-        # Get the latest prediction with probabilities
-        predictions, probabilities, _ = handler.handle_prediction_pipeline()
-        
-        if predictions is None or probabilities is None:
-            debug_print("Could not get prediction confidence values", "WARNING")
+        # Just read the latest prediction from the existing Excel file
+        excel_file = PATHS['ALL_PREDICTIONS_FILE']
+        if not os.path.exists(excel_file):
+            debug_print("No predictions file found", "WARNING")
             return False
+            
+        # Read latest prediction row
+        latest_prediction = pd.read_excel(excel_file).iloc[-1]
         
-        # Create dictionary of numbers with their probabilities
-        number_probs = {}
+        # Get numbers and probabilities
+        numbers = []
+        probabilities = []
+        for i in range(1, 21):
+            numbers.append(int(latest_prediction[f'number{i}']))
+            probabilities.append(float(latest_prediction[f'probability{i}']))
         
-        # For full probability vector (80 values)
-        if len(probabilities) == 80:
-            for i, prob in enumerate(probabilities, 1):
-                number_probs[i] = prob
-        # For probabilities matching predictions
-        else:
-            for num, prob in zip(predictions, probabilities):
-                number_probs[num] = prob
+        # Create number-probability pairs and sort by probability
+        pairs = list(zip(numbers, probabilities))
+        sorted_pairs = sorted(pairs, key=lambda x: x[1], reverse=True)  # Sort by probability
         
-        # Sort by probability (descending) and get top 20
-        top_numbers = sorted(number_probs.items(), key=lambda x: x[1], reverse=True)[:20]
-        top_20 = [num for num, _ in top_numbers]
-        top_20_probs = [prob for _, prob in top_numbers]
+        # Extract sorted numbers
+        sorted_numbers = [num for num, _ in sorted_pairs]
         
-        # Create record with timestamps
+        # Create new data row with timestamps
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        next_draw = get_next_draw_time(datetime.now())
+        next_draw = latest_prediction['next_draw_time'] 
         
-        # Prepare data row
         new_data = {
             'timestamp': current_time,
-            'next_draw': next_draw,
+            'next_draw': next_draw
         }
         
-        # Add all 20 numbers and confidences to the dictionary
-        for i in range(20):
-            new_data[f'number{i+1}'] = top_20[i]
-            new_data[f'confidence{i+1}'] = top_20_probs[i]
+        # Add sorted numbers
+        for i, num in enumerate(sorted_numbers, 1):
+            new_data[f'number{i}'] = num
         
-        # Create DataFrame for new row
+        # Save to Excel
+        top_file_path = os.path.join(PATHS['PROCESSED_DIR'], 'top20_numbers.xlsx')
         new_row = pd.DataFrame([new_data])
         
-        # Define output file path - keep original name but with appropriate description
-        top_file_path = os.path.join(PATHS['PROCESSED_DIR'], 'top20_confidence.xlsx')
-        
-        # Append to existing or create new file
         if os.path.exists(top_file_path):
             existing_df = pd.read_excel(top_file_path)
             result_df = pd.concat([existing_df, new_row], ignore_index=True)
         else:
             result_df = new_row
         
-        # Ensure directory exists and save
         os.makedirs(os.path.dirname(top_file_path), exist_ok=True)
         result_df.to_excel(top_file_path, index=False)
         
-        debug_print(f"Top 20 confident numbers updated")
+        debug_print("Top 20 numbers by confidence saved successfully")
         return True
         
     except Exception as e:
-        debug_print(f"Error updating top confidence history: {e}", "WARNING")
+        debug_print(f"Error saving top numbers: {e}", "WARNING")
         return False
 def run_automated_cycle():
     """Execute one complete automated cycle"""
@@ -703,13 +693,35 @@ def run_automated_cycle():
                 debug_print(f"Error saving top 4 confidence: {e}", "WARNING")
                 # Non-fatal error, continue with cycle
         
-        # 4. Run Evaluator explicitly to update files
-        debug_print("\nExecuting Prediction Evaluation...")
+        # 4. Run Evaluator and Apply Learning
+        debug_print("\nExecuting Prediction Evaluation and Learning...")
         try:
+            # First evaluate
             evaluator = PredictionEvaluator()
-            # This explicit call ensures files are updated
             evaluator.evaluate_past_predictions()
+            stats = evaluator.get_performance_stats()
             
+            if stats:
+                debug_print(f"\nCurrent Performance Stats:")
+                debug_print(f"Average Accuracy: {stats.get('avg_accuracy', 0):.2f}%")
+                debug_print(f"Performance Trend: {stats.get('trend', 'Unknown')}")
+                
+                # Apply learning from evaluations
+                debug_print("\nApplying Learning Adjustments...")
+                handler = DrawHandler()
+                if handler.apply_learning_from_evaluations():
+                    debug_print("Learning system successfully applied adjustments")
+                    # Show the new weights that will be used
+                    learning_metrics = handler.get_learning_metrics()
+                    debug_print(f"\nUpdated Learning Metrics:")
+                    debug_print(f"Cycles Completed: {learning_metrics['cycles_completed']}")
+                    debug_print(f"Current Accuracy: {learning_metrics['current_accuracy']:.2f}%")
+                    debug_print(f"Improvement Rate: {learning_metrics['improvement_rate']:.2f}%")
+                else:
+                    debug_print("No adjustments needed from learning system", "INFO")
+            else:
+                debug_print("No performance stats available for learning", "WARNING")
+                
             # Verify that files exist and were updated
             evaluation_file = os.path.join(PATHS['PROCESSED_DIR'], 'evaluation_results.xlsx')
             trends_file = os.path.join(PATHS['PROCESSED_DIR'], 'performance_trends.png')
@@ -717,9 +729,10 @@ def run_automated_cycle():
             if not os.path.exists(evaluation_file) or not os.path.exists(trends_file):
                 debug_print("Warning: Evaluation files not found, retrying evaluation...", "WARNING")
                 evaluator.evaluate_past_predictions()
+                
         except Exception as e:
-            debug_print(f"Warning: Evaluation update error: {e}", "WARNING")
-            # Continue with cycle even if evaluation has issues
+            debug_print(f"Warning: Evaluation/Learning update error: {e}", "WARNING")
+            traceback.print_exc()
         
         next_cycle_str = get_next_draw_time(datetime.now() + timedelta(minutes=5))
         next_cycle_dt = datetime.strptime(next_cycle_str, '%H:%M  %d-%m-%Y')
