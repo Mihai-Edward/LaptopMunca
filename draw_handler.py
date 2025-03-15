@@ -1002,6 +1002,7 @@ class DrawHandler:
 
     def _adjust_model_parameters(self, problematic_numbers, successful_numbers, trend, accuracy, adjustments):
         """Make specific adjustments to model parameters with enhanced tracking and validation"""
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         try:
             print(f"Current accuracy: {accuracy:.2f}%")
             print("\n=== Model Parameter Adjustment ===")
@@ -1023,11 +1024,15 @@ class DrawHandler:
                 }
             }
             
-            # Ensure predictor and its pipeline_data are initialized
+            # Check if predictor and pipeline_data exist
+            if not hasattr(self, 'predictor') or self.predictor is None:
+                self.predictor = LotteryPredictor()
+                
+            # Ensure pipeline_data exists
             if not hasattr(self.predictor, 'pipeline_data'):
                 self.predictor.pipeline_data = {}
                 
-            # Track original parameters for comparison
+            # Now safely track original parameters
             original_params = {
                 'number_boosts': self.predictor.pipeline_data.get('number_boosts', None),
                 'prediction_weights': self.predictor.pipeline_data.get('prediction_weights', None),
@@ -1133,6 +1138,26 @@ class DrawHandler:
                         'metrics_before': adjustment_tracking['metrics_before']
                     }
                     
+                    # Compare with original parameters to log what changed
+                    final_params = {
+                        'number_boosts': self.predictor.pipeline_data.get('number_boosts', None),
+                        'prediction_weights': self.predictor.pipeline_data.get('prediction_weights', None),
+                        'feature_mode': self.predictor.pipeline_data.get('use_combined_features', False)
+                    }
+                    
+                    # Log what changed
+                    for param_name, original_value in original_params.items():
+                        final_value = final_params.get(param_name)
+                        if original_value != final_value:
+                            print(f"Changed parameter {param_name}:")
+                            print(f"  Before: {original_value}")
+                            print(f"  After:  {final_value}")
+                            
+                            # Add to adjustments history
+                            adjustments['adjustments_made'].append(
+                                f"Changed {param_name} from {original_value} to {final_value}"
+                            )
+                    
                     return True
             else:
                 print("No adjustments needed at this time")
@@ -1203,10 +1228,23 @@ class DrawHandler:
                 f'learning_metadata_{current_time.strftime("%Y%m%d_%H%M%S")}.json'
             )
             
+            # Add this converter function
+            def convert_to_serializable(obj):
+                if isinstance(obj, np.integer):
+                    return int(obj)
+                elif isinstance(obj, np.floating):
+                    return float(obj)
+                elif isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                elif isinstance(obj, datetime):
+                    return obj.strftime('%Y-%m-%d %H:%M:%S')
+                return obj
+            
             try:
                 os.makedirs(os.path.dirname(detailed_metadata_file), exist_ok=True)
+                # Then use it when saving JSON
                 with open(detailed_metadata_file, 'w') as f:
-                    json.dump(base_metadata, f, indent=4)
+                    json.dump(base_metadata, f, indent=4, default=convert_to_serializable)
             except Exception as e:
                 print(f"Warning: Could not save detailed metadata: {e}")
             
@@ -1443,6 +1481,44 @@ class DrawHandler:
                 
             return True
         except ValueError:
+            return False
+
+    def save_models(self, path_prefix=None):
+        """Save models with proper timestamp handling"""
+        try:
+            if path_prefix is None:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                path_prefix = os.path.join(self.models_dir, f'lottery_predictor_{timestamp}')
+            else:
+                # Extract timestamp from path or generate new one if needed
+                if 'adjusted_' in path_prefix:
+                    timestamp = path_prefix.split('adjusted_')[-1]
+                else:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # Ensure predictor exists
+            if not hasattr(self, 'predictor') or self.predictor is None:
+                print("Error: Predictor not initialized")
+                return False
+                
+            # Call the predictor's save_models method
+            save_success = self.predictor.save_models(path_prefix=path_prefix)
+            
+            if save_success:
+                # Update timestamp file
+                timestamp_file = os.path.join(self.models_dir, 'model_timestamp.txt')
+                with open(timestamp_file, 'w') as f:
+                    f.write(timestamp)
+                    
+                print(f"Models saved successfully to: {path_prefix}")
+                return True
+            else:
+                print("Error: Predictor failed to save models")
+                return False
+                
+        except Exception as e:
+            print(f"Error saving models: {e}")
+            traceback.print_exc()
             return False
 
 def load_data(file_path=None):
