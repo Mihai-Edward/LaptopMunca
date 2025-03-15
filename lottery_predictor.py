@@ -884,7 +884,7 @@ class LotteryPredictor:
             # Validate feature dimensions
             expected_dims = self.training_status.get('feature_dimension')
             if expected_dims and features.shape[1] != expected_dims:
-                raise ValueError(f"Feature dimension mismatch: expected {expected_dims}, got {features.shape[1]}")
+                features = self.standardize_features(features, target_dim=expected_dims)
             
             print(f"Processing features shape: {features.shape}")
             
