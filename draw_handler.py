@@ -164,8 +164,17 @@ class DrawHandler:
                     f"{model_path}_scaler.pkl"
                 ]
                 if all(os.path.exists(file) for file in model_files):
-                    print(f"✓ Model found: {os.path.basename(model_path)}")
+                    # NEW: Synchronize feature mode before loading
+                    self._load_and_synchronize_feature_mode()
                     
+                    print(f"✓ Model found: {os.path.basename(model_path)}")
+                    load_success = self.predictor.load_models(model_path)
+                    
+                    if not load_success:
+                        print("Model loading failed. Attempting retraining...")
+                        if self.train_ml_models():
+                            return self._run_prediction(processed_data)
+                        
                     # Get predictions and handle returns properly
                     result = self._run_prediction(processed_data)
                     if result and len(result) == 3:
@@ -1002,6 +1011,7 @@ class DrawHandler:
 
     def _adjust_model_parameters(self, problematic_numbers, successful_numbers, trend, accuracy, adjustments):
         """Make specific adjustments to model parameters with enhanced tracking and validation"""
+        # Define timestamp ONCE at the start
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         try:
             print(f"Current accuracy: {accuracy:.2f}%")
@@ -1010,8 +1020,6 @@ class DrawHandler:
             print(f"Performance trend: {trend}")
             print(f"Problematic numbers: {problematic_numbers[:5]}...")
             print(f"Successful numbers: {successful_numbers[:5]}...")
-            # Define timestamp at the start
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
             # Initialize adjustment tracking
             adjustment_tracking = {
@@ -1031,7 +1039,7 @@ class DrawHandler:
             # Ensure pipeline_data exists
             if not hasattr(self.predictor, 'pipeline_data'):
                 self.predictor.pipeline_data = {}
-                
+            
             # Now safely track original parameters
             original_params = {
                 'number_boosts': self.predictor.pipeline_data.get('number_boosts', None),
@@ -1520,6 +1528,63 @@ class DrawHandler:
             print(f"Error saving models: {e}")
             traceback.print_exc()
             return False
+
+    def _load_and_synchronize_feature_mode(self):
+        """Load feature mode from saved model and synchronize with predictor"""
+        try:
+            feature_mode_file = os.path.join(self.models_dir, 'feature_mode.txt')
+            
+            if os.path.exists(feature_mode_file):
+                with open(feature_mode_file, 'r') as f:
+                    content = f.read().strip().split('\n')
+                    saved_mode = 'combined' in content[0]
+                    
+                    # Synchronize settings with predictor
+                    self.predictor.use_combined_features = saved_mode
+                    self.predictor.pipeline_data['use_combined_features'] = saved_mode
+                    print(f"Synchronized feature mode from saved model: {'combined' if saved_mode else 'base'}")
+                    return True
+            else:
+                # Create the file with current settings if it doesn't exist
+                with open(feature_mode_file, 'w') as f:
+                    current_mode = 'combined' if self.predictor.use_combined_features else 'base'
+                    f.write(f"{current_mode}\n")
+                    f.write(f"feature_dim:{164 if current_mode == 'combined' else 84}")
+                print(f"Created feature mode file with current mode: {current_mode}")
+                return False
+                
+        except Exception as e:
+            print(f"Warning: Feature mode synchronization issue: {e}")
+            return False
+
+    def should_retrain_model(self):
+        """Check if model should be retrained based on time passed"""
+        try:
+            # Get last training timestamp from file
+            timestamp_file = os.path.join(self.models_dir, 'model_timestamp.txt')
+            if os.path.exists(timestamp_file):
+                with open(timestamp_file, 'r') as f:
+                    timestamp_str = f.read().strip()
+                    try:
+                        last_train = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
+                        hours_since_training = (datetime.now() - last_train).total_seconds() / 3600
+                        
+                        # Only retrain once per day (24 hours)
+                        should_retrain = hours_since_training > 24
+                        
+                        if should_retrain:
+                            print(f"Model is {hours_since_training:.1f} hours old. Scheduled retraining needed.")
+                        else:
+                            print(f"Model is {hours_since_training:.1f} hours old. No retraining needed yet.")
+                            
+                        return should_retrain
+                    except ValueError:
+                        print(f"Invalid timestamp format: {timestamp_str}")
+                        return True
+            return True  # If no timestamp file, should retrain
+        except Exception as e:
+            print(f"Error checking retraining schedule: {e}")
+            return True  # Retrain on error for safety
 
 def load_data(file_path=None):
     """Load and preprocess data from CSV"""

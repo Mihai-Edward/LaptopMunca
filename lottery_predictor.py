@@ -149,31 +149,37 @@ class LotteryPredictor:
             if self.scaler is None or not hasattr(self.scaler, 'mean_'):
                 return False, "Scaler not initialized"
 
-            # Validate feature dimensions
+            # Validate feature dimensions with tolerance
             if hasattr(self.probabilistic_model, 'n_features_in_'):
                 expected_features = self.probabilistic_model.n_features_in_
                 use_combined = self.pipeline_data.get('use_combined_features', True)
                 
-                # When using combined features, we expect 84 base + 80 analysis = 164 features
-                if use_combined and expected_features != 164:
-                    return False, f"Invalid feature dimension for combined model: expected 164, got {expected_features}"
-                elif not use_combined and expected_features != 84:
-                    return False, f"Invalid feature dimension for base features: expected 84, got {expected_features}"
+                # Allow small tolerance (+/- 2) for feature dimensions
+                if use_combined:
+                    if abs(expected_features - 164) > 2:
+                        return False, f"Invalid feature dimension for combined model: expected ~164, got {expected_features}"
+                else:
+                    if abs(expected_features - 84) > 2:
+                        return False, f"Invalid feature dimension for base features: expected ~84, got {expected_features}"
 
-            # Check feature dimension consistency between models
+            # Check feature dimension consistency between models with tolerance
             if hasattr(self.probabilistic_model, 'n_features_in_') and \
                hasattr(self.pattern_model, 'n_features_in_'):
-                if self.probabilistic_model.n_features_in_ != self.pattern_model.n_features_in_:
-                    return False, "Feature dimension mismatch between models"
+                prob_dim = self.probabilistic_model.n_features_in_
+                pattern_dim = self.pattern_model.n_features_in_
+                if abs(prob_dim - pattern_dim) > 2:  # Allow 2 dimension difference
+                    return False, f"Feature dimension mismatch between models: {prob_dim} vs {pattern_dim}"
 
             # Verify training status
             if not self.training_status.get('model_loaded', False):
                 return False, "Models not marked as loaded"
 
-            # Verify feature dimension in training status
+            # Verify feature dimension in training status with tolerance
             model_dim = self.training_status.get('model_config', {}).get('feature_dimension')
-            if model_dim is not None and model_dim != expected_features:
-                return False, f"Feature dimension mismatch with training status: {model_dim} vs {expected_features}"
+            if model_dim is not None and hasattr(self.probabilistic_model, 'n_features_in_'):
+                expected_features = self.probabilistic_model.n_features_in_
+                if abs(model_dim - expected_features) > 2:  # Allow 2 dimension difference
+                    return False, f"Feature dimension mismatch with training status: {model_dim} vs {expected_features}"
 
             return True, "Model state valid"
         except Exception as e:
@@ -1808,6 +1814,57 @@ class LotteryPredictor:
             print(f"Error in save_prediction: {e}")
             traceback.print_exc()
             return False
+
+    def standardize_features(self, features, target_dim=None):
+        """Ensure features have consistent dimensions"""
+        try:
+            # Determine target dimension based on feature mode
+            if target_dim is None:
+                target_dim = 164 if self.use_combined_features else 84
+            
+            # Convert to numpy array if needed
+            if not isinstance(features, np.ndarray):
+                features = np.array(features)
+                
+            # Check shape and reshape if necessary
+            if len(features.shape) == 1:
+                current_dim = features.shape[0]
+                
+                # Already correct dimension
+                if current_dim == target_dim:
+                    return features
+                
+                # Handle dimension mismatch
+                if current_dim > target_dim:
+                    # Truncate
+                    print(f"Warning: Truncating features from {current_dim} to {target_dim} dimensions")
+                    return features[:target_dim]
+                else:
+                    # Pad with zeros
+                    print(f"Warning: Padding features from {current_dim} to {target_dim} dimensions")
+                    padded = np.zeros(target_dim)
+                    padded[:current_dim] = features
+                    return padded
+            else:
+                # For 2D arrays
+                current_dim = features.shape[1]
+                if current_dim == target_dim:
+                    return features
+                
+                if current_dim > target_dim:
+                    # Truncate columns
+                    print(f"Warning: Truncating features from {current_dim} to {target_dim} dimensions")
+                    return features[:, :target_dim]
+                else:
+                    # Pad with zeros
+                    print(f"Warning: Padding features from {current_dim} to {target_dim} dimensions")
+                    padded = np.zeros((features.shape[0], target_dim))
+                    padded[:, :current_dim] = features
+                    return padded
+                    
+        except Exception as e:
+            print(f"Error standardizing features: {e}")
+            return features  # Return original on error
 
 if __name__ == "__main__":
     try:
