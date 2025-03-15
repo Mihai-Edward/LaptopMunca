@@ -164,36 +164,44 @@ class DrawHandler:
                     f"{model_path}_scaler.pkl"
                 ]
                 if all(os.path.exists(file) for file in model_files):
-                    # NEW: Synchronize feature mode before loading
+                    # First synchronize feature mode before loading
                     self._load_and_synchronize_feature_mode()
                     
                     print(f"✓ Model found: {os.path.basename(model_path)}")
-                    load_success = self.predictor.load_models(model_path)
                     
-                    if not load_success:
-                        print("Model loading failed. Attempting retraining...")
+                    # Check if we should retrain based on timing
+                    if self.should_retrain_model():
+                        print("Model is due for scheduled retraining")
                         if self.train_ml_models():
                             return self._run_prediction(processed_data)
+                    else:
+                        # Proceed with loading the existing model
+                        load_success = self.predictor.load_models(model_path)
                         
-                    # Get predictions and handle returns properly
-                    result = self._run_prediction(processed_data)
-                    if result and len(result) == 3:
-                        numbers, probs, analysis = result
-                        if numbers is not None:
-                            # Save to consolidated format
-                            if hasattr(self.predictor, 'save_prediction'):
-                                next_draw_time = get_next_draw_time(datetime.now())
-                                success = self.predictor.save_prediction(
-                                    prediction=numbers,
-                                    probabilities=probs,
-                                    next_draw_time=next_draw_time
-                                )
-                                if not success:
-                                    print("WARNING: Failed to save to consolidated format")
-                    
-                            self.pipeline_status['success'] = True
-                            return numbers, probs, analysis
-                    
+                        if not load_success:
+                            print("Model loading failed. Attempting retraining...")
+                            if self.train_ml_models():
+                                return self._run_prediction(processed_data)
+                        
+                        # Get predictions and handle returns properly
+                        result = self._run_prediction(processed_data)
+                        if result and len(result) == 3:
+                            numbers, probs, analysis = result
+                            if numbers is not None:
+                                # Save to consolidated format
+                                if hasattr(self.predictor, 'save_prediction'):
+                                    next_draw_time = get_next_draw_time(datetime.now())
+                                    success = self.predictor.save_prediction(
+                                        prediction=numbers,
+                                        probabilities=probs,
+                                        next_draw_time=next_draw_time
+                                    )
+                                    if not success:
+                                        print("WARNING: Failed to save to consolidated format")
+                        
+                                self.pipeline_status['success'] = True
+                                return numbers, probs, analysis
+                
                 else:
                     print("Model files incomplete. Attempting retraining...")
                     if self.train_ml_models():
