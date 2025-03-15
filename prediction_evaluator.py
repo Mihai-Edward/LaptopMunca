@@ -248,7 +248,7 @@ class PredictionEvaluator:
                 
                 # Save to Excel
                 results_df.to_excel(results_file, index=False)
-                print(f"Results saved to {results_file}")
+                #print(f"Results saved to {results_file}")
                 
                 # Print evaluation summary
                # print(f"\nEvaluation Summary for {draw_date}:")
@@ -582,7 +582,7 @@ class PredictionEvaluator:
             # Save plot
             plot_file = os.path.join(PATHS.get('PROCESSED_DIR', ''), 'performance_trends.png')
             plt.savefig(plot_file)
-            print(f"Performance trends plot saved to {plot_file}")
+           #print(f"Performance trends plot saved to {plot_file}")
             
         except Exception as e:
             print(f"Error plotting performance trends: {e}")
@@ -600,7 +600,7 @@ class PredictionEvaluator:
             try:
                 # Load predictions from Excel
                 predictions_df = pd.read_excel(self.excel_file)
-                print(f"Loaded {len(predictions_df)} predictions from Excel")
+                #print(f"Loaded {len(predictions_df)} predictions from Excel")
                 
                 if len(predictions_df) == 0:
                     print("No predictions found in Excel file.")
@@ -666,7 +666,7 @@ class PredictionEvaluator:
                     stats = self.get_performance_stats()
                     self.display_summary_results(stats)
                     self.plot_performance_trends()
-                    print(f"\nSuccessfully evaluated {len(evaluation_results)} predictions")
+                    #print(f"\nSuccessfully evaluated {len(evaluation_results)} predictions")
                 else:
                     print("\nNo valid predictions found to evaluate.")
                     

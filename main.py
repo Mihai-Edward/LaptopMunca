@@ -316,6 +316,20 @@ def generate_prediction():
         debug_print("Ensuring analysis is up to date...")
         run_analysis()
         
+        # ===== ADD THESE NEW LINES HERE (BEFORE RETRAINING) =====
+        debug_print("\nEvaluating past predictions...")
+        evaluator = PredictionEvaluator()
+        evaluator.evaluate_past_predictions()
+        stats = evaluator.get_performance_stats()
+        
+        if stats:
+            debug_print(f"Found evaluation stats (accuracy: {stats.get('avg_accuracy', 0):.2f}%)")
+            debug_print("Applying learning from evaluations...")
+            handler.apply_learning_from_evaluations()
+        else:
+            debug_print("No evaluation statistics found, proceeding without learning adjustments", "INFO")
+        # ===== END NEW LINES =====
+        
         # Force model retraining to ensure feature consistency
         debug_print("\nForce retraining models to ensure feature consistency...")
         if not handler.train_ml_models(force_retrain=True):

@@ -836,11 +836,43 @@ class DrawHandler:
     def apply_learning_from_evaluations(self):
         """Apply continuous learning with enhanced analysis and model adjustments"""
         try:
+            # Get current and display cycles completed
+            cycles_completed = self.learning_status.get('cycles_completed', 0)
             print("\nLearning cycle metrics:")
-            print(f"- Cycles completed: {self.learning_status['cycles_completed']}")
-            print(f"- Initial accuracy: {self.learning_status['initial_accuracy']:.2f}%")
-            print(f"- Current accuracy: {self.learning_status['current_accuracy']:.2f}%")
-            print(f"- Improvement rate: {self.learning_status['improvement_rate']:.2f}%")
+            print(f"- Cycles completed: {cycles_completed}")
+            
+            # Handle initial accuracy - add this check
+            if self.learning_status.get('initial_accuracy') is None:
+                # If no initial accuracy, set it from current accuracy
+                evaluator = PredictionEvaluator()
+                stats = evaluator.get_performance_stats()
+                if stats and 'avg_accuracy' in stats:
+                    self.learning_status['initial_accuracy'] = stats.get('avg_accuracy', 0)
+                    print(f"- Initial accuracy: {self.learning_status['initial_accuracy']:.2f}% (newly set)")
+                else:
+                    self.learning_status['initial_accuracy'] = 0
+                    print("- Initial accuracy: Not available yet")
+            else:
+                # Safe print of existing value
+                print(f"- Initial accuracy: {self.learning_status['initial_accuracy']:.2f}%")
+                
+            # Safe printing for current accuracy
+            current_acc = self.learning_status.get('current_accuracy', 0)
+            if current_acc is None:
+                current_acc = 0
+            print(f"- Current accuracy: {current_acc:.2f}%")
+            
+            # Ultra-defensive approach for improvement rate
+            try:
+                # First get the value with a default
+                imp_rate = self.learning_status.get('improvement_rate', 0)
+                # Force convert to float, handling None case
+                imp_rate = float(imp_rate if imp_rate is not None else 0)
+                print(f"- Improvement rate: {imp_rate:.2f}%")
+            except (TypeError, ValueError):
+                # Catch absolutely any formatting or conversion issues
+                print("- Improvement rate: 0.00%")
+            
             print("\nApplying continuous learning from evaluation results...")
             start_time = datetime.now()
             
