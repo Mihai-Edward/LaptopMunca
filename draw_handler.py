@@ -1020,7 +1020,7 @@ class DrawHandler:
     def _adjust_model_parameters(self, problematic_numbers, successful_numbers, trend, accuracy, adjustments):
         """Make specific adjustments to model parameters with enhanced tracking and validation"""
         # Define timestamp ONCE at the start
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        adjustment_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         try:
             print(f"Current accuracy: {accuracy:.2f}%")
             print("\n=== Model Parameter Adjustment ===")
@@ -1031,7 +1031,7 @@ class DrawHandler:
             
             # Initialize adjustment tracking
             adjustment_tracking = {
-                'start_time': timestamp,
+                'start_time':adjustment_timestamp,
                 'adjustments_applied': [],
                 'parameters_modified': set(),
                 'metrics_before': {
@@ -1126,7 +1126,7 @@ class DrawHandler:
                 # Create new model path with adjustment identifier
                 model_path = os.path.join(
                     self.models_dir,
-                    f'lottery_predictor_adjusted_{timestamp}'
+                    f'lottery_predictor_adjusted_{adjustment_timestamp}'
                 )
                 
                 # Save the adjusted model
@@ -1144,11 +1144,11 @@ class DrawHandler:
                     # Update timestamp file
                     timestamp_file = os.path.join(self.models_dir, 'model_timestamp.txt')
                     with open(timestamp_file, 'w') as f:
-                        f.write(timestamp)
+                        f.write(adjustment_timestamp)
                     
                     # Store adjustment metrics
                     self.predictor.pipeline_data['last_adjustment'] = {
-                        'timestamp': timestamp,
+                        'timestamp': adjustment_timestamp,
                         'changes': adjustments['adjustments_made'],
                         'parameters': list(adjustment_tracking['parameters_modified']),
                         'metrics_before': adjustment_tracking['metrics_before']
@@ -1588,7 +1588,13 @@ class DrawHandler:
                         return should_retrain
                     except ValueError:
                         print(f"Invalid timestamp format: {timestamp_str}")
-                        return True
+                        
+                        # Fix the timestamp file with current timestamp
+                        new_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        with open(timestamp_file, 'w') as write_file:
+                            write_file.write(new_timestamp)
+                        print(f"Fixed timestamp file with current time: {new_timestamp}")
+                        return False  # Don't retrain, just fixed the timestamp
             return True  # If no timestamp file, should retrain
         except Exception as e:
             print(f"Error checking retraining schedule: {e}")
