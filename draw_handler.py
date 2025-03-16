@@ -441,7 +441,7 @@ class DrawHandler:
             # Fallback to searching for model files
             model_files = glob.glob(os.path.join(self.models_dir, "*_prob_model.pkl"))
             if model_files:
-                latest = max(model_files, key(os.path.getctime))
+                latest = max(model_files, key=os.path.getctime)
                 return latest.replace('_prob_model.pkl', '')
                 
             return None
@@ -650,7 +650,7 @@ class DrawHandler:
                 
         except Exception as e:
             print(f"\nERROR in prediction run: {e}")
-            traceback.print.exc()
+            traceback.print_exc()
             return None, None, None
 
     def _handle_pipeline_results(self, predictions, probabilities, analysis_results):
@@ -1281,7 +1281,8 @@ class DrawHandler:
                 'model_state': {
                     'feature_mode': self.predictor.pipeline_data.get('use_combined_features', False),
                     'prediction_weights': self.predictor.pipeline_data.get('prediction_weights', {}),
-                    'enhanced_features': self.predictor.pipeline_data.get('use_enhanced_features', False)
+                    'enhanced_features': self.predictor.pipeline_data.get('use_enhanced_features', False),
+                    'number_boosts': self.predictor.pipeline_data.get('number_boosts', None)
                 }
             }
             
