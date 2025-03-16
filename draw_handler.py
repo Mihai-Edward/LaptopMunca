@@ -178,6 +178,19 @@ class DrawHandler:
                         # Proceed with loading the existing model
                         load_success = self.predictor.load_models(model_path)
                         
+                        if load_success:
+                            # Validate model by testing the scaler
+                            try:
+                                # Use the correct feature dimension from the model
+                                feature_dim = self.predictor.training_status.get('model_config', {}).get('feature_dimension', 164)
+                                test_features = np.random.random((1, feature_dim))
+                                # This will fail if scaler is not properly fitted
+                                scaled = self.predictor.scaler.transform(test_features)
+                                print("✓ Model validation successful - scaler is working properly")
+                            except Exception as e:
+                                print(f"⚠ Model validation failed, forcing retraining: {e}")
+                                load_success = False  # Force retraining
+                        
                         if not load_success:
                             print("Model loading failed. Attempting retraining...")
                             if self.train_ml_models():
@@ -309,8 +322,8 @@ class DrawHandler:
                 
                     if formatted_draws:
                         print("\nDEBUG: Sample of formatted data being passed to predictor:")
-                        print(f"First draw: {formatted_draws[0]}")
-                        print(f"Number of draws: {len(formatted_draws)}")
+                        #print(f"First draw: {formatted_draws[0]}")
+                        #print(f"Number of draws: {len(formatted_draws)}")
                         print(f"Data format: {type(formatted_draws[0])}")
                         analyzer = DataAnalysis(formatted_draws)
                     
@@ -401,7 +414,7 @@ class DrawHandler:
             print(f"DEBUG: File size: {os.path.getsize(self.csv_file)} bytes")
             
             # Try to read the first few lines of the file directly
-            print("\nDEBUG: First few lines of the file:")
+            #print("\nDEBUG: First few lines of the file:")
             with open(self.csv_file, 'r', encoding='utf-8') as f:
                 for i, line in enumerate(f):
                     if i < 5:  # Print first 5 lines
@@ -410,24 +423,24 @@ class DrawHandler:
             # Now try to load with pandas
             print("\nDEBUG: Loading with pandas...")
             df = pd.read_csv(self.csv_file, header=0)
-            print(f"DEBUG: DataFrame shape: {df.shape}")
-            print(f"DEBUG: DataFrame columns: {df.columns.tolist()}")
-            print("\nDEBUG: First row of data:")
+            #print(f"DEBUG: DataFrame shape: {df.shape}")
+            #print(f"DEBUG: DataFrame columns: {df.columns.tolist()}")
+            #print("\nDEBUG: First row of data:")
             print(df.iloc[0])
                 
             # Handle the specific date format with potential spaces
             try:
                 # First clean up any extra spaces in the date column
                 print("\nDEBUG: Attempting date conversion...")
-                print(f"DEBUG: Date column before cleaning: {df['date'].head()}")
+                #print(f"DEBUG: Date column before cleaning: {df['date'].head()}")
                 
                 df['date'] = df['date'].str.strip()
-                print(f"DEBUG: Date column after cleaning: {df['date'].head()}")
+                #print(f"DEBUG: Date column after cleaning: {df['date'].head()}")
                 
                 # Convert using the exact format from your file
                 df['date'] = pd.to_datetime(df['date'], format='%H:%M  %d-%m-%Y')
-                print("DEBUG: Date conversion successful with double space format")
-                print(f"DEBUG: Converted dates: {df['date'].head()}")
+                #print("DEBUG: Date conversion successful with double space format")
+                #print(f"DEBUG: Converted dates: {df['date'].head()}")
                 
             except Exception as e:
                 print(f"WARNING: Initial date conversion issue: {e}")

@@ -147,6 +147,7 @@ class LotteryPredictor:
 
             # Check scaler
             if self.scaler is None or not hasattr(self.scaler, 'mean_'):
+                print("Warning: Loaded scaler is not properly initialized")
                 return False, "Scaler not initialized"
 
             # Validate feature dimensions with tolerance
@@ -1129,6 +1130,12 @@ class LotteryPredictor:
             if path_prefix is None:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 path_prefix = os.path.join(self.models_dir, f'lottery_predictor_{timestamp}')
+            else:
+                # Extract timestamp from path or generate new one if needed
+                if 'adjusted_' in path_prefix:
+                    timestamp = path_prefix.split('adjusted_')[-1]
+                else:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
             # Ensure models directory exists
             os.makedirs(self.models_dir, exist_ok=True)
@@ -1190,6 +1197,32 @@ class LotteryPredictor:
             self.probabilistic_model = joblib.load(f'{path_prefix}_prob_model.pkl')
             self.pattern_model = joblib.load(f'{path_prefix}_pattern_model.pkl')
             self.scaler = joblib.load(f'{path_prefix}_scaler.pkl')
+            
+            # Add comprehensive validation checks
+            # 1. Check scaler is properly initialized
+            if self.scaler is None or not hasattr(self.scaler, 'mean_') or not hasattr(self.scaler, 'scale_'):
+                print("Warning: Loaded scaler is not properly initialized")
+                return False
+            
+            # 2. Check models are properly initialized
+            if not hasattr(self.probabilistic_model, 'classes_') or not hasattr(self.pattern_model, 'classes_'):
+                print("Warning: Loaded models are not properly initialized")
+                return False
+                
+            # 3. Validate feature dimensions match
+            if hasattr(self.probabilistic_model, 'n_features_in_') and hasattr(self.scaler, 'n_features_in_'):
+                if self.probabilistic_model.n_features_in_ != self.scaler.n_features_in_:
+                    print(f"Warning: Model/scaler feature dimensions don't match: " 
+                          f"Model: {self.probabilistic_model.n_features_in_}, Scaler: {self.scaler.n_features_in_}")
+                    return False
+                    
+            # 4. Compare feature dimensions between both models
+            if (hasattr(self.probabilistic_model, 'n_features_in_') and 
+                hasattr(self.pattern_model, 'n_features_in_')):
+                if self.probabilistic_model.n_features_in_ != self.pattern_model.n_features_in_:
+                    print(f"Warning: Models have inconsistent feature dimensions: " 
+                          f"Prob: {self.probabilistic_model.n_features_in_}, Pattern: {self.pattern_model.n_features_in_}")
+                    return False
             
             # Update status
             self.training_status.update({
@@ -1310,7 +1343,27 @@ class LotteryPredictor:
                 self.scaler = StandardScaler()
                 X_train_scaled = self.scaler.fit_transform(X_train)
                 X_test_scaled = self.scaler.transform(X_test)
+                
+                # Add validation check
+                if not hasattr(self.scaler, 'mean_'):
+                    print("Error: Scaler not properly initialized during training")
+                    return False
+                    
+                # Additional validation - verify scaler contains expected attributes
+                if not hasattr(self.scaler, 'scale_') or self.scaler.scale_ is None:
+                    print("Error: Scaler scale_ attribute not properly initialized")
+                    return False
+                    
+                # Verify that scaler dimensions match feature dimensions
+                if len(self.scaler.mean_) != features.shape[1]:
+                    print(f"Error: Scaler dimension mismatch - expected {features.shape[1]}, got {len(self.scaler.mean_)}")
+                    return False
+                    
                 print("\nFeature scaling complete")
+                print(f"- Scaler properly fitted with {len(self.scaler.mean_)} features")
+                print(f"- Mean range: [{np.min(self.scaler.mean_):.4f}, {np.max(self.scaler.mean_):.4f}]")
+                print(f"- Scale range: [{np.min(self.scaler.scale_):.4f}, {np.max(self.scaler.scale_):.4f}]")
+                
             except Exception as e:
                 print(f"Error in feature scaling: {e}")
                 raise
