@@ -451,8 +451,8 @@ class DrawHandler:
                     print("DEBUG: Date conversion successful with fallback format")
                     print(f"DEBUG: Converted dates: {df['date'].head()}")
                 except Exception as e2:
-                    print(f"WARNING: Fallback date conversion failed: {e2}")
-                    print("\nDEBUG: Sample of problematic dates:")
+                    #print(f"WARNING: Fallback date conversion failed: {e2}")
+                    #print("\nDEBUG: Sample of problematic dates:")
                     print(df['date'].head(10))
                     
             return df
@@ -538,9 +538,9 @@ class DrawHandler:
                             formatted_draws.append(draw_tuple)
                             
                             if idx < 2:  # Debug output for first 2 draws
-                                print(f"\nDEBUG: Draw {idx} formatted:")
-                                print(f"Date: {date_str}")
-                                print(f"Numbers: {sorted(numbers)}")
+                                #print(f"\nDEBUG: Draw {idx} formatted:")
+                                #print(f"Date: {date_str}")
+                                #print(f"Numbers: {sorted(numbers)}")
                                 print(f"Tuple format: {draw_tuple}")
                         
                     except Exception as e:
@@ -1141,6 +1141,24 @@ class DrawHandler:
                     self.models_dir,
                     f'lottery_predictor_adjusted_{adjustment_timestamp}'
                 )
+                
+                # Ensure scaler is still properly fitted before saving
+                if hasattr(self.predictor, 'scaler') and self.predictor.scaler is not None:
+                    if not hasattr(self.predictor.scaler, 'mean_') or self.predictor.scaler.mean_ is None:
+                        print("Warning: Unfitted scaler detected before saving. Using original scaler.")
+                        # Get latest model to copy working scaler
+                        latest_model = self._get_latest_model()
+                        if latest_model:
+                            try:
+                                # Load just the scaler from the latest model
+                                scaler_path = f"{latest_model}_scaler.pkl"
+                                if os.path.exists(scaler_path):
+                                    self.predictor.scaler = joblib.load(scaler_path)
+                                    print("Successfully restored working scaler")
+                            except Exception as e:
+                                print(f"Error restoring scaler: {e}")
+                                # Force retraining instead if restoration fails
+                                return False
                 
                 # Save the adjusted model
                 if self.predictor.save_models(path_prefix=model_path):
