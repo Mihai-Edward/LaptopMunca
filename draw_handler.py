@@ -157,7 +157,7 @@ class DrawHandler:
             # 2. Prediction Stage
             self.pipeline_status['stage'] = 'prediction'
             model_path = self._get_latest_model()
-            if model_path:
+            if (model_path):
                 model_files = [
                     f"{model_path}_prob_model.pkl",
                     f"{model_path}_pattern_model.pkl",
@@ -275,6 +275,50 @@ class DrawHandler:
         """Train or retrain ML models"""
         try:
             self.pipeline_status['stage'] = 'model_training'
+            
+            # NEW CODE: Reconnect parameters from previous learning cycles
+            try:
+                # Find latest learning metadata file
+                metadata_files = glob.glob(os.path.join(self.learning_dir, 'learning_metadata_*.json'))
+                if metadata_files:
+                    latest_metadata_file = max(metadata_files, key=os.path.getctime)
+                    with open(latest_metadata_file, 'r') as f:
+                        metadata = json.load(f)
+                    
+                    # Extract parameters from metadata
+                    model_state = metadata.get('model_state', {})
+                    adjustments = metadata.get('adjustments', [])
+                    
+                    # Reconnect parameters to pipeline_data
+                    param_count = 0
+                    
+                    # Restore prediction weights - use consistent parameter name
+                    if 'prediction_weights' in model_state and model_state['prediction_weights']:
+                        self.predictor.pipeline_data['prediction_weights'] = model_state['prediction_weights']
+                        param_count += 1
+                        print(f"Restored prediction_weights: {model_state['prediction_weights']}")
+                    
+                    # Restore number boosts - FIXED: Load from model_state, not pipeline_data
+                    if 'number_boosts' in model_state and model_state['number_boosts'] is not None:
+                        boost_array = model_state['number_boosts']
+                        if isinstance(boost_array, (list, np.ndarray)) and len(boost_array) == 80:
+                            self.predictor.pipeline_data['number_boosts'] = boost_array
+                            param_count += 1
+                            print("Restored number_boosts for problematic numbers")
+                    
+                    # Restore feature mode setting
+                    feature_mode = model_state.get('feature_mode')
+                    if feature_mode is not None:
+                        use_combined_features = feature_mode
+                        self.predictor.pipeline_data['use_combined_features'] = feature_mode
+                        param_count += 1
+                        print(f"Restored feature_mode: use_combined_features={feature_mode}")
+                    
+                    print(f"Successfully reconnected {param_count} parameters from previous learning cycle")
+                    
+            except Exception as e:
+                print(f"Note: Could not reconnect previous parameters: {e}")
+                # Non-fatal error, continue with default settings
             
             # Load historical data
             historical_data = self._load_historical_data()
@@ -397,7 +441,7 @@ class DrawHandler:
             # Fallback to searching for model files
             model_files = glob.glob(os.path.join(self.models_dir, "*_prob_model.pkl"))
             if model_files:
-                latest = max(model_files, key=os.path.getctime)
+                latest = max(model_files, key(os.path.getctime))
                 return latest.replace('_prob_model.pkl', '')
                 
             return None
@@ -606,7 +650,7 @@ class DrawHandler:
                 
         except Exception as e:
             print(f"\nERROR in prediction run: {e}")
-            traceback.print_exc()
+            traceback.print.exc()
             return None, None, None
 
     def _handle_pipeline_results(self, predictions, probabilities, analysis_results):
@@ -1212,7 +1256,7 @@ class DrawHandler:
                     
         except Exception as e:
             print(f"Error adjusting model parameters: {e}")
-            traceback.print_exc()
+            traceback.print.exc()
             return False
 
     def _save_learning_metadata(self, stats, adjustments, metadata=None):
@@ -1236,7 +1280,7 @@ class DrawHandler:
                 'adjustments': adjustments.get('adjustments_made', []),
                 'model_state': {
                     'feature_mode': self.predictor.pipeline_data.get('use_combined_features', False),
-                    'weights': self.predictor.pipeline_data.get('prediction_weights', {}),
+                    'prediction_weights': self.predictor.pipeline_data.get('prediction_weights', {}),
                     'enhanced_features': self.predictor.pipeline_data.get('use_enhanced_features', False)
                 }
             }
@@ -1320,7 +1364,7 @@ class DrawHandler:
             
         except Exception as e:
             print(f"Error saving learning metadata: {e}")
-            traceback.print_exc()
+            traceback.print.exc()
             return False
 
     def run_continuous_learning_cycle(self):
@@ -1497,7 +1541,7 @@ class DrawHandler:
             
         except Exception as e:
             print(f"Critical error in learning cycle: {e}")
-            traceback.print_exc()
+            traceback.print.exc()
             return False
 
     def get_learning_metrics(self):
@@ -1565,7 +1609,7 @@ class DrawHandler:
                 
         except Exception as e:
             print(f"Error saving models: {e}")
-            traceback.print_exc()
+            traceback.print.exc()
             return False
 
     def _load_and_synchronize_feature_mode(self):
@@ -1792,7 +1836,7 @@ def train_and_predict():
             
     except Exception as e:
         print(f"\nError in prediction process: {str(e)}")
-        traceback.print_exc()
+        traceback.print.exc()
         return None, None, None
 
 def perform_complete_analysis(draws):
