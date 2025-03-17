@@ -330,16 +330,11 @@ def generate_prediction():
             debug_print("No evaluation statistics found, proceeding without learning adjustments", "INFO")
         # ===== END NEW LINES =====
         
-        debug_print("\nChecking if model retraining is needed...")
-        if handler.should_retrain_model():
-            debug_print("Model retraining needed based on schedule or state...")
-            if not handler.train_ml_models():
-                debug_print("Model training failed", "ERROR")
-                return False
-        else:
-            debug_print("Using existing model - retraining not required")
-            # Just ensure feature mode consistency with existing model
-            handler._load_and_synchronize_feature_mode()
+        # Force model retraining to ensure feature consistency
+        debug_print("\nForce retraining models to ensure feature consistency...")
+        if not handler.train_ml_models(force_retrain=True):
+            debug_print("Model training failed", "ERROR")
+            return False
             
         # Get the next draw time
         current_time = datetime.now()

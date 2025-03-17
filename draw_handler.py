@@ -157,64 +157,34 @@ class DrawHandler:
             # 2. Prediction Stage
             self.pipeline_status['stage'] = 'prediction'
             model_path = self._get_latest_model()
-            if (model_path):
+            if model_path:
                 model_files = [
                     f"{model_path}_prob_model.pkl",
                     f"{model_path}_pattern_model.pkl",
                     f"{model_path}_scaler.pkl"
                 ]
                 if all(os.path.exists(file) for file in model_files):
-                    # First synchronize feature mode before loading
-                    self._load_and_synchronize_feature_mode()
-                    
                     print(f"✓ Model found: {os.path.basename(model_path)}")
                     
-                    # Check if we should retrain based on timing
-                    if self.should_retrain_model():
-                        print("Model is due for scheduled retraining")
-                        if self.train_ml_models():
-                            return self._run_prediction(processed_data)
-                    else:
-                        # Proceed with loading the existing model
-                        load_success = self.predictor.load_models(model_path)
-                        
-                        if load_success:
-                            # Validate model by testing the scaler
-                            try:
-                                # Use the correct feature dimension from the model
-                                feature_dim = self.predictor.training_status.get('model_config', {}).get('feature_dimension', 164)
-                                test_features = np.random.random((1, feature_dim))
-                                # This will fail if scaler is not properly fitted
-                                scaled = self.predictor.scaler.transform(test_features)
-                                print("✓ Model validation successful - scaler is working properly")
-                            except Exception as e:
-                                print(f"⚠ Model validation failed, forcing retraining: {e}")
-                                load_success = False  # Force retraining
-                        
-                        if not load_success:
-                            print("Model loading failed. Attempting retraining...")
-                            if self.train_ml_models():
-                                return self._run_prediction(processed_data)
-                        
-                        # Get predictions and handle returns properly
-                        result = self._run_prediction(processed_data)
-                        if result and len(result) == 3:
-                            numbers, probs, analysis = result
-                            if numbers is not None:
-                                # Save to consolidated format
-                                if hasattr(self.predictor, 'save_prediction'):
-                                    next_draw_time = get_next_draw_time(datetime.now())
-                                    success = self.predictor.save_prediction(
-                                        prediction=numbers,
-                                        probabilities=probs,
-                                        next_draw_time=next_draw_time
-                                    )
-                                    if not success:
-                                        print("WARNING: Failed to save to consolidated format")
-                        
-                                self.pipeline_status['success'] = True
-                                return numbers, probs, analysis
-                
+                    # Get predictions and handle returns properly
+                    result = self._run_prediction(processed_data)
+                    if result and len(result) == 3:
+                        numbers, probs, analysis = result
+                        if numbers is not None:
+                            # Save to consolidated format
+                            if hasattr(self.predictor, 'save_prediction'):
+                                next_draw_time = get_next_draw_time(datetime.now())
+                                success = self.predictor.save_prediction(
+                                    prediction=numbers,
+                                    probabilities=probs,
+                                    next_draw_time=next_draw_time
+                                )
+                                if not success:
+                                    print("WARNING: Failed to save to consolidated format")
+                    
+                            self.pipeline_status['success'] = True
+                            return numbers, probs, analysis
+                    
                 else:
                     print("Model files incomplete. Attempting retraining...")
                     if self.train_ml_models():
@@ -276,50 +246,6 @@ class DrawHandler:
         try:
             self.pipeline_status['stage'] = 'model_training'
             
-            # NEW CODE: Reconnect parameters from previous learning cycles
-            try:
-                # Find latest learning metadata file
-                metadata_files = glob.glob(os.path.join(self.learning_dir, 'learning_metadata_*.json'))
-                if metadata_files:
-                    latest_metadata_file = max(metadata_files, key=os.path.getctime)
-                    with open(latest_metadata_file, 'r') as f:
-                        metadata = json.load(f)
-                    
-                    # Extract parameters from metadata
-                    model_state = metadata.get('model_state', {})
-                    adjustments = metadata.get('adjustments', [])
-                    
-                    # Reconnect parameters to pipeline_data
-                    param_count = 0
-                    
-                    # Restore prediction weights - use consistent parameter name
-                    if 'prediction_weights' in model_state and model_state['prediction_weights']:
-                        self.predictor.pipeline_data['prediction_weights'] = model_state['prediction_weights']
-                        param_count += 1
-                        print(f"Restored prediction_weights: {model_state['prediction_weights']}")
-                    
-                    # Restore number boosts - FIXED: Load from model_state, not pipeline_data
-                    if 'number_boosts' in model_state and model_state['number_boosts'] is not None:
-                        boost_array = model_state['number_boosts']
-                        if isinstance(boost_array, (list, np.ndarray)) and len(boost_array) == 80:
-                            self.predictor.pipeline_data['number_boosts'] = boost_array
-                            param_count += 1
-                            print("Restored number_boosts for problematic numbers")
-                    
-                    # Restore feature mode setting
-                    feature_mode = model_state.get('feature_mode')
-                    if feature_mode is not None:
-                        use_combined_features = feature_mode
-                        self.predictor.pipeline_data['use_combined_features'] = feature_mode
-                        param_count += 1
-                        print(f"Restored feature_mode: use_combined_features={feature_mode}")
-                    
-                    print(f"Successfully reconnected {param_count} parameters from previous learning cycle")
-                    
-            except Exception as e:
-                print(f"Note: Could not reconnect previous parameters: {e}")
-                # Non-fatal error, continue with default settings
-            
             # Load historical data
             historical_data = self._load_historical_data()
             if historical_data is None or len(historical_data) < 6:
@@ -366,8 +292,8 @@ class DrawHandler:
                 
                     if formatted_draws:
                         print("\nDEBUG: Sample of formatted data being passed to predictor:")
-                        #print(f"First draw: {formatted_draws[0]}")
-                        #print(f"Number of draws: {len(formatted_draws)}")
+                        print(f"First draw: {formatted_draws[0]}")
+                        print(f"Number of draws: {len(formatted_draws)}")
                         print(f"Data format: {type(formatted_draws[0])}")
                         analyzer = DataAnalysis(formatted_draws)
                     
@@ -458,7 +384,7 @@ class DrawHandler:
             print(f"DEBUG: File size: {os.path.getsize(self.csv_file)} bytes")
             
             # Try to read the first few lines of the file directly
-            #print("\nDEBUG: First few lines of the file:")
+            print("\nDEBUG: First few lines of the file:")
             with open(self.csv_file, 'r', encoding='utf-8') as f:
                 for i, line in enumerate(f):
                     if i < 5:  # Print first 5 lines
@@ -467,24 +393,24 @@ class DrawHandler:
             # Now try to load with pandas
             print("\nDEBUG: Loading with pandas...")
             df = pd.read_csv(self.csv_file, header=0)
-            #print(f"DEBUG: DataFrame shape: {df.shape}")
-            #print(f"DEBUG: DataFrame columns: {df.columns.tolist()}")
-            #print("\nDEBUG: First row of data:")
+            print(f"DEBUG: DataFrame shape: {df.shape}")
+            print(f"DEBUG: DataFrame columns: {df.columns.tolist()}")
+            print("\nDEBUG: First row of data:")
             print(df.iloc[0])
                 
             # Handle the specific date format with potential spaces
             try:
                 # First clean up any extra spaces in the date column
                 print("\nDEBUG: Attempting date conversion...")
-                #print(f"DEBUG: Date column before cleaning: {df['date'].head()}")
+                print(f"DEBUG: Date column before cleaning: {df['date'].head()}")
                 
                 df['date'] = df['date'].str.strip()
-                #print(f"DEBUG: Date column after cleaning: {df['date'].head()}")
+                print(f"DEBUG: Date column after cleaning: {df['date'].head()}")
                 
                 # Convert using the exact format from your file
                 df['date'] = pd.to_datetime(df['date'], format='%H:%M  %d-%m-%Y')
-                #print("DEBUG: Date conversion successful with double space format")
-                #print(f"DEBUG: Converted dates: {df['date'].head()}")
+                print("DEBUG: Date conversion successful with double space format")
+                print(f"DEBUG: Converted dates: {df['date'].head()}")
                 
             except Exception as e:
                 print(f"WARNING: Initial date conversion issue: {e}")
@@ -495,8 +421,8 @@ class DrawHandler:
                     print("DEBUG: Date conversion successful with fallback format")
                     print(f"DEBUG: Converted dates: {df['date'].head()}")
                 except Exception as e2:
-                    #print(f"WARNING: Fallback date conversion failed: {e2}")
-                    #print("\nDEBUG: Sample of problematic dates:")
+                    print(f"WARNING: Fallback date conversion failed: {e2}")
+                    print("\nDEBUG: Sample of problematic dates:")
                     print(df['date'].head(10))
                     
             return df
@@ -582,9 +508,9 @@ class DrawHandler:
                             formatted_draws.append(draw_tuple)
                             
                             if idx < 2:  # Debug output for first 2 draws
-                                #print(f"\nDEBUG: Draw {idx} formatted:")
-                                #print(f"Date: {date_str}")
-                                #print(f"Numbers: {sorted(numbers)}")
+                                print(f"\nDEBUG: Draw {idx} formatted:")
+                                print(f"Date: {date_str}")
+                                print(f"Numbers: {sorted(numbers)}")
                                 print(f"Tuple format: {draw_tuple}")
                         
                     except Exception as e:
@@ -1076,8 +1002,7 @@ class DrawHandler:
 
     def _adjust_model_parameters(self, problematic_numbers, successful_numbers, trend, accuracy, adjustments):
         """Make specific adjustments to model parameters with enhanced tracking and validation"""
-        # Define timestamp ONCE at the start
-        adjustment_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         try:
             print(f"Current accuracy: {accuracy:.2f}%")
             print("\n=== Model Parameter Adjustment ===")
@@ -1085,10 +1010,12 @@ class DrawHandler:
             print(f"Performance trend: {trend}")
             print(f"Problematic numbers: {problematic_numbers[:5]}...")
             print(f"Successful numbers: {successful_numbers[:5]}...")
+            # Define timestamp at the start
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
             # Initialize adjustment tracking
             adjustment_tracking = {
-                'start_time':adjustment_timestamp,
+                'start_time': timestamp,
                 'adjustments_applied': [],
                 'parameters_modified': set(),
                 'metrics_before': {
@@ -1104,7 +1031,7 @@ class DrawHandler:
             # Ensure pipeline_data exists
             if not hasattr(self.predictor, 'pipeline_data'):
                 self.predictor.pipeline_data = {}
-            
+                
             # Now safely track original parameters
             original_params = {
                 'number_boosts': self.predictor.pipeline_data.get('number_boosts', None),
@@ -1183,26 +1110,8 @@ class DrawHandler:
                 # Create new model path with adjustment identifier
                 model_path = os.path.join(
                     self.models_dir,
-                    f'lottery_predictor_adjusted_{adjustment_timestamp}'
+                    f'lottery_predictor_adjusted_{timestamp}'
                 )
-                
-                # Ensure scaler is still properly fitted before saving
-                if hasattr(self.predictor, 'scaler') and self.predictor.scaler is not None:
-                    if not hasattr(self.predictor.scaler, 'mean_') or self.predictor.scaler.mean_ is None:
-                        print("Warning: Unfitted scaler detected before saving. Using original scaler.")
-                        # Get latest model to copy working scaler
-                        latest_model = self._get_latest_model()
-                        if latest_model:
-                            try:
-                                # Load just the scaler from the latest model
-                                scaler_path = f"{latest_model}_scaler.pkl"
-                                if os.path.exists(scaler_path):
-                                    self.predictor.scaler = joblib.load(scaler_path)
-                                    print("Successfully restored working scaler")
-                            except Exception as e:
-                                print(f"Error restoring scaler: {e}")
-                                # Force retraining instead if restoration fails
-                                return False
                 
                 # Save the adjusted model
                 if self.predictor.save_models(path_prefix=model_path):
@@ -1219,11 +1128,11 @@ class DrawHandler:
                     # Update timestamp file
                     timestamp_file = os.path.join(self.models_dir, 'model_timestamp.txt')
                     with open(timestamp_file, 'w') as f:
-                        f.write(adjustment_timestamp)
+                        f.write(timestamp)
                     
                     # Store adjustment metrics
                     self.predictor.pipeline_data['last_adjustment'] = {
-                        'timestamp': adjustment_timestamp,
+                        'timestamp': timestamp,
                         'changes': adjustments['adjustments_made'],
                         'parameters': list(adjustment_tracking['parameters_modified']),
                         'metrics_before': adjustment_tracking['metrics_before']
@@ -1256,7 +1165,7 @@ class DrawHandler:
                     
         except Exception as e:
             print(f"Error adjusting model parameters: {e}")
-            traceback.print.exc()
+            traceback.print_exc()
             return False
 
     def _save_learning_metadata(self, stats, adjustments, metadata=None):
@@ -1280,9 +1189,8 @@ class DrawHandler:
                 'adjustments': adjustments.get('adjustments_made', []),
                 'model_state': {
                     'feature_mode': self.predictor.pipeline_data.get('use_combined_features', False),
-                    'prediction_weights': self.predictor.pipeline_data.get('prediction_weights', {}),
-                    'enhanced_features': self.predictor.pipeline_data.get('use_enhanced_features', False),
-                    'number_boosts': self.predictor.pipeline_data.get('number_boosts', None)
+                    'weights': self.predictor.pipeline_data.get('prediction_weights', {}),
+                    'enhanced_features': self.predictor.pipeline_data.get('use_enhanced_features', False)
                 }
             }
             
@@ -1365,7 +1273,7 @@ class DrawHandler:
             
         except Exception as e:
             print(f"Error saving learning metadata: {e}")
-            traceback.print.exc()
+            traceback.print_exc()
             return False
 
     def run_continuous_learning_cycle(self):
@@ -1542,7 +1450,7 @@ class DrawHandler:
             
         except Exception as e:
             print(f"Critical error in learning cycle: {e}")
-            traceback.print.exc()
+            traceback.print_exc()
             return False
 
     def get_learning_metrics(self):
@@ -1610,71 +1518,8 @@ class DrawHandler:
                 
         except Exception as e:
             print(f"Error saving models: {e}")
-            traceback.print.exc()
+            traceback.print_exc()
             return False
-
-    def _load_and_synchronize_feature_mode(self):
-        """Load feature mode from saved model and synchronize with predictor"""
-        try:
-            feature_mode_file = os.path.join(self.models_dir, 'feature_mode.txt')
-            
-            if os.path.exists(feature_mode_file):
-                with open(feature_mode_file, 'r') as f:
-                    content = f.read().strip().split('\n')
-                    saved_mode = 'combined' in content[0]
-                    
-                    # Synchronize settings with predictor
-                    self.predictor.use_combined_features = saved_mode
-                    self.predictor.pipeline_data['use_combined_features'] = saved_mode
-                    print(f"Synchronized feature mode from saved model: {'combined' if saved_mode else 'base'}")
-                    return True
-            else:
-                # Create the file with current settings if it doesn't exist
-                with open(feature_mode_file, 'w') as f:
-                    current_mode = 'combined' if self.predictor.use_combined_features else 'base'
-                    f.write(f"{current_mode}\n")
-                    f.write(f"feature_dim:{164 if current_mode == 'combined' else 84}")
-                print(f"Created feature mode file with current mode: {current_mode}")
-                return False
-                
-        except Exception as e:
-            print(f"Warning: Feature mode synchronization issue: {e}")
-            return False
-
-    def should_retrain_model(self):
-        """Check if model should be retrained based on time passed"""
-        try:
-            # Get last training timestamp from file
-            timestamp_file = os.path.join(self.models_dir, 'model_timestamp.txt')
-            if os.path.exists(timestamp_file):
-                with open(timestamp_file, 'r') as f:
-                    timestamp_str = f.read().strip()
-                    try:
-                        last_train = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
-                        hours_since_training = (datetime.now() - last_train).total_seconds() / 3600
-                        
-                        # Only retrain once per day (24 hours)
-                        should_retrain = hours_since_training > 24
-                        
-                        if should_retrain:
-                            print(f"Model is {hours_since_training:.1f} hours old. Scheduled retraining needed.")
-                        else:
-                            print(f"Model is {hours_since_training:.1f} hours old. No retraining needed yet.")
-                            
-                        return should_retrain
-                    except ValueError:
-                        print(f"Invalid timestamp format: {timestamp_str}")
-                        
-                        # Fix the timestamp file with current timestamp
-                        new_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                        with open(timestamp_file, 'w') as write_file:
-                            write_file.write(new_timestamp)
-                        print(f"Fixed timestamp file with current time: {new_timestamp}")
-                        return False  # Don't retrain, just fixed the timestamp
-            return True  # If no timestamp file, should retrain
-        except Exception as e:
-            print(f"Error checking retraining schedule: {e}")
-            return True  # Retrain on error for safety
 
 def load_data(file_path=None):
     """Load and preprocess data from CSV"""
@@ -1837,7 +1682,7 @@ def train_and_predict():
             
     except Exception as e:
         print(f"\nError in prediction process: {str(e)}")
-        traceback.print.exc()
+        traceback.print_exc()
         return None, None, None
 
 def perform_complete_analysis(draws):
