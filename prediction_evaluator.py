@@ -636,7 +636,7 @@ class PredictionEvaluator:
                         matching_draws = historical_df[historical_df['standardized_date'] == draw_time]
                         
                         if len(matching_draws) == 0:
-                            print(f"No matching draw found for {draw_time}")
+                            #print(f"No matching draw found for {draw_time}")
                             continue
                         
                         # Get actual numbers
@@ -656,7 +656,7 @@ class PredictionEvaluator:
                         
                         if result:
                             evaluation_results.append(result)
-                            print(f"Evaluated prediction for {draw_time}: {result['num_correct']} correct")
+                            #print(f"Evaluated prediction for {draw_time}: {result['num_correct']} correct")
                         
                     except Exception as row_error:
                         print(f"Error processing prediction row {idx}: {row_error}")
@@ -667,7 +667,7 @@ class PredictionEvaluator:
                     stats = self.get_performance_stats()
                     self.display_summary_results(stats)
                     self.plot_performance_trends()
-                    print(f"\nSuccessfully evaluated {len(evaluation_results)} predictions")
+                    #print(f"\nSuccessfully evaluated {len(evaluation_results)} predictions")
                 else:
                     print("\nNo valid predictions found to evaluate.")
                     
