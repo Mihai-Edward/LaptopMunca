@@ -9,13 +9,13 @@ from datetime import datetime
 from collections import Counter
 import matplotlib.pyplot as plt
 import seaborn as sns
-# Import configuration
-# Add the project root to Python path
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
 
-from config.paths import PATHS,ensure_directories
+from config.paths import PATHS, ensure_directories
+
 class PredictionEvaluator:
     def __init__(self):
         """Initialize evaluator with consolidated file support"""
@@ -105,18 +105,44 @@ class PredictionEvaluator:
             traceback.print_exc()
             return False
     def _standardize_timestamp(self, timestamp_str):
-        """Standardize timestamp to HH:MM  DD-MM-YYYY format"""
+        """Standardize timestamp to HH:MM DD-MM-YYYY format"""
         try:
-            # If timestamp is already in correct format
-            if isinstance(timestamp_str, str) and len(timestamp_str.split('  ')) == 2:
-                time_part, date_part = timestamp_str.split('  ')
-                if len(time_part.split(':')) == 2:
-                    return timestamp_str
-                    
-            # Try parsing the timestamp
-            dt = pd.to_datetime(timestamp_str)
-            # Convert to required format
-            return dt.strftime('%H:%M  %d-%m-%Y')
+            if not isinstance(timestamp_str, str):
+                return None
+
+            # Clean up the string first
+            timestamp_str = ' '.join(timestamp_str.split())  # Remove extra spaces
+            
+            # Handle case where date is incomplete (e.g., "16:00 14-03")
+            if '-' in timestamp_str and len(timestamp_str.split('-')) == 2:
+                # Add current year
+                current_year = datetime.now().year
+                if len(timestamp_str.split()) == 2:  # Has time and partial date
+                    time_part, date_part = timestamp_str.split()
+                    timestamp_str = f"{time_part} {date_part}-{current_year}"
+
+            # Try to parse the date in various formats
+            try:
+                if ':' in timestamp_str:
+                    # Try standard format first
+                    dt = datetime.strptime(timestamp_str, '%H:%M %d-%m-%Y')
+                else:
+                    # Try other formats if needed
+                    dt = pd.to_datetime(timestamp_str)
+            except ValueError:
+                # Try alternative formats
+                try:
+                    # Try with double space
+                    if '  ' in timestamp_str:
+                        timestamp_str = ' '.join(timestamp_str.split())
+                    dt = datetime.strptime(timestamp_str, '%H:%M %d-%m-%Y')
+                except ValueError:
+                    print(f"Could not parse date: {timestamp_str}")
+                    return None
+
+            # Return in standard format (single space)
+            return dt.strftime('%H:%M %d-%m-%Y')
+
         except Exception as e:
             print(f"Error standardizing timestamp {timestamp_str}: {e}")
             return timestamp_str
@@ -600,114 +626,161 @@ class PredictionEvaluator:
             traceback.print_exc()
 
     def evaluate_past_predictions(self):
-        """Evaluate past predictions with enhanced analysis"""
+        """Evaluate past predictions with improved date matching and debugging"""
         try:
             print("\n=== Evaluating Predictions ===")
-            
             if not os.path.exists(self.excel_file):
                 print(f"\nNo predictions file found at: {self.excel_file}")
                 return
-                
-            try:
-                # Load predictions from Excel
-                predictions_df = pd.read_excel(self.excel_file)
-                #print(f"Loaded {len(predictions_df)} predictions from Excel")
-                
-                if len(predictions_df) == 0:
-                    print("No predictions found in Excel file.")
-                    return
-                
-                # Load historical data
-                historical_df = pd.read_csv(self.historical_file, dtype={'date': str})
-                print(f"Loaded {len(historical_df)} historical draws")
-                
-                # Standardize timestamps before comparison
-                historical_df['standardized_date'] = historical_df['date'].apply(self._standardize_timestamp)
-                predictions_df['standardized_time'] = predictions_df['next_draw_time'].apply(self._standardize_timestamp)
-                
-                evaluation_results = []
-                
-                for idx, pred_row in predictions_df.iterrows():
-                    try:
-                        draw_time = pred_row['standardized_time']
-                        
-                        # IMPORTANT NEW CODE: Check if this is a future prediction
-                        try:
-                            # Your system consistently uses the format 'HH:MM  DD-MM-YYYY' with double spaces
-                            if "  " in draw_time:
-                                time_part, date_part = draw_time.split("  ")
-                                hours, minutes = time_part.split(':')
-                                day, month, year = date_part.split('-')
-                                
-                                # Create datetime object
-                                draw_datetime = datetime(int(year), int(month), int(day), 
-                                                       int(hours), int(minutes))
-                                
-                                # Compare with current time to check if it's in the future
-                                if draw_datetime > datetime.now():
-                                    print(f"Skipping future draw: {draw_time}")
-                                    continue  # Skip this prediction and move to the next one
-                            # No need for alternative format handling - your system uses consistent format
-                        except Exception as dt_err:
-                            # If parsing fails, log it but don't change behavior
-                            print(f"Warning: Error parsing draw time {draw_time}: {dt_err}")
-                        
-                        # Extract predicted numbers
-                        predicted_numbers = []
-                        for i in range(1, 21):
-                            col_name = f'number{i}'
-                            if col_name in pred_row and not pd.isna(pred_row[col_name]):
-                                predicted_numbers.append(int(pred_row[col_name]))
-                        
-                        if len(predicted_numbers) != 20:
-                            print(f"Warning: Invalid prediction for {draw_time} - wrong number count")
-                            continue
-                        
-                        # Use standardized date for exact match
-                        matching_draws = historical_df[historical_df['standardized_date'] == draw_time]
-                        
-                        if len(matching_draws) == 0:
-                            print(f"No matching draw found for {draw_time}")
-                            continue
-                        
-                        # Get actual numbers
-                        actual_numbers = []
-                        for i in range(1, 21):
-                            col_name = f'number{i}'
-                            val = matching_draws.iloc[0][col_name]
-                            if not pd.isna(val):
-                                actual_numbers.append(int(val))
-                        
-                        # Compare and save results
-                        result = self.save_comparison(
-                            predicted_numbers,
-                            actual_numbers,
-                            draw_date=draw_time
-                        )
-                        
-                        if result:
-                            evaluation_results.append(result)
-                            #print(f"Evaluated prediction for {draw_time}: {result['num_correct']} correct")
-                        
-                    except Exception as row_error:
-                        print(f"Error processing prediction row {idx}: {row_error}")
-                        continue
-                
-                # Get and display performance stats
-                if evaluation_results:
-                    stats = self.get_performance_stats()
-                    self.display_summary_results(stats)
-                    self.plot_performance_trends()
-                    #print(f"\nSuccessfully evaluated {len(evaluation_results)} predictions")
-                else:
-                    print("\nNo valid predictions found to evaluate.")
+
+            # Load predictions and historical data
+            predictions_df = pd.read_excel(self.excel_file)
+            historical_df = pd.read_csv(self.historical_file, dtype={'date': str})
+
+            # Debug: Print sample dates from both sources
+            print("\nSample formats:")
+            print("Historical data format:", historical_df['date'].iloc[0] if not historical_df.empty else "No data")
+            print("Predictions format:", predictions_df['next_draw_time'].iloc[0] if not predictions_df.empty else "No data")
+
+            def standardize_date_format(date_str):
+                try:
+                    if not isinstance(date_str, str):
+                        return None
                     
-            except Exception as e:
-                print(f"Error processing predictions: {e}")
-                traceback.print_exc()
-                
+                    # Remove all extra spaces and standardize
+                    date_str = ' '.join(date_str.split())
+                    
+                    if ':' in date_str:  # Has time component
+                        time_part = date_str.split()[0]
+                        date_part = ' '.join(date_str.split()[1:])
+                        
+                        # Ensure date part has year
+                        if date_part.count('-') == 1:  # Missing year
+                            date_part = f"{date_part}-{datetime.now().year}"
+                        
+                        # Return standardized format with double space for consistency
+                        return f"{time_part}  {date_part}"  # Note double space
+                    return date_str
+                except Exception as e:
+                    print(f"Error standardizing date: {date_str}, Error: {e}")
+                    return date_str
+
+            # Apply standardization to both dataframes
+            historical_df['standardized_date'] = historical_df['date'].apply(standardize_date_format)
+            predictions_df['standardized_time'] = predictions_df['next_draw_time'].apply(standardize_date_format)
+
+            print("\nStandardized formats:")
+            print("Historical:", historical_df['standardized_date'].iloc[0] if not historical_df.empty else "No data")
+            print("Predictions:", predictions_df['standardized_time'].iloc[0] if not predictions_df.empty else "No data")
+
+            evaluation_results = []
+
+            for idx, pred_row in predictions_df.iterrows():
+                try:
+                    draw_time = pred_row['standardized_time']
+                    if not draw_time:
+                        continue
+
+                    print(f"\nProcessing prediction {idx+1}:")
+                    print(f"Looking for match: '{draw_time}'")
+
+                    # Extract predicted numbers
+                    predicted_numbers = []
+                    for i in range(1, 21):
+                        col_name = f'number{i}'
+                        if col_name in pred_row and not pd.isna(pred_row[col_name]):
+                            predicted_numbers.append(int(pred_row[col_name]))
+
+                    if len(predicted_numbers) != 20:
+                        print(f"Warning: Invalid prediction - expected 20 numbers, got {len(predicted_numbers)}")
+                        continue
+
+                    # Find matching draw with more flexible matching
+                    matching_draws = historical_df[
+                        historical_df['standardized_date'].str.strip().str.replace('  ', ' ') == 
+                        draw_time.strip().replace('  ', ' ')
+                    ]
+
+                    if matching_draws.empty:
+                        print(f"\nNo exact match found for: {draw_time}")
+                        print("Debugging information:")
+                        
+                        try:
+                            # Parse the dates for comparison
+                            draw_time_parts = draw_time.split('  ')
+                            if len(draw_time_parts) == 2:
+                                time_part, date_part = draw_time_parts
+                                print(f"Looking for time: '{time_part}', date: '{date_part}'")
+                                
+                                # Find similar dates
+                                similar_dates = historical_df[
+                                    historical_df['standardized_date'].str.contains(date_part)
+                                ]['standardized_date'].tolist()
+                                
+                                if similar_dates:
+                                    print("\nFound similar dates:")
+                                    for date in similar_dates[:5]:
+                                        print(f"- '{date}'")
+                                        
+                                # Try alternative formats
+                                alt_formats = [
+                                    draw_time.replace('  ', ' '),
+                                    f"{time_part} {date_part}",
+                                    f"{time_part}  {date_part}"
+                                ]
+                                print("\nTrying alternative formats:")
+                                for fmt in alt_formats:
+                                    print(f"- '{fmt}'")
+                                    alt_matches = historical_df[
+                                        historical_df['standardized_date'].str.strip() == fmt.strip()
+                                    ]
+                                    if not alt_matches.empty:
+                                        print(f"Found match with format: '{fmt}'")
+                                        matching_draws = alt_matches
+                                        break
+                                        
+                        except Exception as debug_err:
+                            print(f"Debug error: {debug_err}")
+                        
+                        if matching_draws.empty:
+                            continue
+
+                    # Get actual numbers from matching draw
+                    actual_numbers = []
+                    for i in range(1, 21):
+                        col_name = f'number{i}'
+                        val = matching_draws.iloc[0][col_name]
+                        if not pd.isna(val):
+                            actual_numbers.append(int(val))
+
+                    # Compare and save results
+                    result = self.save_comparison(
+                        predicted_numbers,
+                        actual_numbers,
+                        draw_date=draw_time
+                    )
+
+                    if result:
+                        evaluation_results.append(result)
+                        print(f"Success: Found {result['num_correct']} matching numbers")
+
+                except Exception as row_error:
+                    print(f"Error processing row {idx}: {row_error}")
+                    traceback.print_exc()
+                    continue
+
+            # Process final results
+            if evaluation_results:
+                stats = self.get_performance_stats()
+                if stats:
+                    self.set_evaluation_stats(stats)
+                    self.plot_performance_trends()
+                    print(f"\nSuccessfully evaluated {len(evaluation_results)} predictions")
+            else:
+                print("\nNo valid predictions could be evaluated")
+
         except Exception as e:
-            print(f"\nError in evaluation: {e}")
+            print(f"Error in evaluation: {e}")
             traceback.print_exc()
 
     def display_summary_results(self, stats):
@@ -883,8 +956,12 @@ def main():
         
         evaluator = PredictionEvaluator()
         
-        # Just call evaluate_past_predictions directly
-        evaluator.evaluate_past_predictions()
+        # Validate data files first
+        if evaluator.validate_historical_data():
+            print("\nHistorical data validation passed")
+            evaluator.evaluate_past_predictions()
+        else:
+            print("\nHistorical data validation failed")
         
         print(f"\nEvaluation completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
