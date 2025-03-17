@@ -24,6 +24,7 @@ class PredictionEvaluator:
         self.predictions_dir = PATHS['PREDICTIONS_DIR']
         self.metadata_dir = PATHS['PREDICTIONS_METADATA_DIR']
         self.processed_dir = PATHS['PROCESSED_DIR']
+        self.verbose = False  # Add this line
         
         # Initialize all metric histories
         self.evaluation_metrics = {
@@ -248,28 +249,28 @@ class PredictionEvaluator:
                 
                 # Save to Excel
                 results_df.to_excel(results_file, index=False)
-                print(f"Results saved to {results_file}")
-                
-                # Print evaluation summary
-                print(f"\nEvaluation Summary for {draw_date}:")
-                print(f"Numbers matched: {num_correct} of 20")
-                print(f"Accuracy: {accuracy:.2f}%")
-                print(f"Precision: {precision:.2f}%")
-                print(f"Recall: {recall:.2f}%")
-                print(f"F1 Score: {f1_score:.2f}")
-                if matches:
-                    print(f"Matched numbers: {sorted(matches)}")
+                #print(f"Results saved to {results_file}")
+                if self.verbose:  # Add this condition
+                    # Print evaluation summary
+                    print(f"\nEvaluation Summary for {draw_date}:")
+                    print(f"Numbers matched: {num_correct} of 20")
+                    print(f"Accuracy: {accuracy:.2f}%")
+                    print(f"Precision: {precision:.2f}%")
+                    print(f"Recall: {recall:.2f}%")
+                    print(f"F1 Score: {f1_score:.2f}")
+                    if matches:
+                        print(f"Matched numbers: {sorted(matches)}")
                 
                 return result
                 
             except Exception as excel_error:
-                print(f"Error saving to Excel: {excel_error}")
+              #  print(f"Error saving to Excel: {excel_error}")
                 traceback.print_exc()
                 # Still return the result even if Excel save fails
                 return result
                 
         except Exception as e:
-            print(f"Error in save_comparison: {e}")
+           # print(f"Error in save_comparison: {e}")
             traceback.print_exc()
             return None
 

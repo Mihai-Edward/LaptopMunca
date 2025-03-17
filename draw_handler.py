@@ -1106,7 +1106,7 @@ class DrawHandler:
             
             # 4. Save adjusted model if changes were made
             if needs_adjustment:
-                # Create new model path with adjustment identifier
+                # Create new model path with adjustment identifier - using the timestamp defined at the beginning
                 model_path = os.path.join(
                     self.models_dir,
                     f'lottery_predictor_adjusted_{timestamp}'

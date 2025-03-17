@@ -1,4 +1,5 @@
 import json
+import pickle
 import traceback
 import numpy as np
 import pandas as pd
@@ -1117,40 +1118,92 @@ class LotteryPredictor:
             traceback.print_exc()
             return None, None, None
 
-    def save_models(self, path_prefix=None):
-        """Save models with timestamp"""
+    def save_models(self, path_prefix=None, base_path=None, custom_suffix=None):
+        """Save models with enhanced timestamp and path handling"""
         try:
-            if path_prefix is None:
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                path_prefix = os.path.join(self.models_dir, f'lottery_predictor_{timestamp}')
+            # Get current timestamp
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # Handle path parameters to maintain compatibility with existing calls
+            if path_prefix is not None:
+                # If path_prefix is provided, use it directly
+                final_path = path_prefix
+            else:
+                # Otherwise use base_path and custom_suffix logic
+                if base_path is None:
+                    base_path = self.models_dir
+                
+                if custom_suffix is None:
+                    # Use timestamp as default suffix
+                    final_path = os.path.join(base_path, f'lottery_predictor_{timestamp}')
+                else:
+                    # Support custom suffix parameter
+                    final_path = os.path.join(base_path, f'lottery_predictor_{custom_suffix}')
             
             # Ensure models directory exists
-            os.makedirs(self.models_dir, exist_ok=True)
+            os.makedirs(os.path.dirname(final_path), exist_ok=True)
             
-            # Save models
+            # Save models with consistent naming
             model_files = {
                 '_prob_model.pkl': self.probabilistic_model,
                 '_pattern_model.pkl': self.pattern_model,
                 '_scaler.pkl': self.scaler
             }
             
-            # Save each model file
+            saved_files = []
             for suffix, model in model_files.items():
-                model_path = f'{path_prefix}{suffix}'
-                joblib.dump(model, model_path)
-                print(f"Saved model: {os.path.basename(model_path)}")
+                model_path = f'{final_path}{suffix}'
+                try:
+                    joblib.dump(model, model_path)
+                    saved_files.append(os.path.basename(model_path))
+                except Exception as e:
+                    print(f"Error saving {suffix}: {e}")
+                    # Clean up partially saved files
+                    for saved_file in saved_files:
+                        try:
+                            os.remove(os.path.join(os.path.dirname(final_path), saved_file))
+                        except:
+                            pass
+                    return None  # Match original return type on error
             
-            # Update timestamp file - now in the models directory
-            timestamp_file = os.path.join(self.models_dir, 'model_timestamp.txt')
-            with open(timestamp_file, 'w') as f:
-                f.write(timestamp)
+            # Save timestamp and metadata
+            try:
+                # Extract timestamp from the final path
+                path_timestamp = os.path.basename(final_path).replace('lottery_predictor_', '')
+                timestamp_file = os.path.join(self.models_dir, 'model_timestamp.txt')
+                with open(timestamp_file, 'w') as f:
+                    f.write(path_timestamp)
+                
+                # Save additional metadata
+                metadata_file = os.path.join(self.models_dir, f'model_metadata_{path_timestamp}.json')
+                metadata = {
+                    'timestamp': path_timestamp,
+                    'model_version': getattr(self, 'version', '1.0'),
+                    'feature_dimension': self.training_status.get('model_config', {}).get('feature_dimension'),
+                    'use_combined_features': getattr(self, 'use_combined_features', True),
+                    'saved_files': saved_files
+                }
+                
+                with open(metadata_file, 'w') as f:
+                    json.dump(metadata, f, indent=4)
             
-            print(f"Models saved successfully in {self.models_dir}")
-            return True
+            except Exception as e:
+                print(f"Warning: Error saving metadata: {e}")
+                # Continue if metadata saving fails
+            
+            # Store the timestamp for possible later use
+            self.last_save_timestamp = path_timestamp
+            
+            print(f"Models saved successfully in {os.path.dirname(final_path)}")
+            print(f"Saved files: {', '.join(saved_files)}")
+            
+            # Return timestamp to maintain backward compatibility
+            return path_timestamp
             
         except Exception as e:
             print(f"Error saving models: {e}")
-            return False
+            traceback.print_exc()
+            return None
 
     def load_models(self, path_prefix=None):
         """Enhanced model loading with validation"""
