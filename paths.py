@@ -26,7 +26,10 @@ PATHS = {
     'DRIVER': os.path.join(BASE_DIR, "drivers", DRIVER_FILENAME),
     'PROCESSED_DIR': os.path.join(BASE_DIR, "data", "processed"),
     'SRC_DIR': os.path.join(BASE_DIR, "src"),
-    'CONFIG_DIR': os.path.join(BASE_DIR, "config")
+    'CONFIG_DIR': os.path.join(BASE_DIR, "config"),
+    'LEARNING_DIR': os.path.join(BASE_DIR, "models", "learning_history"),
+    'LEARNING_HISTORY_FILE': os.path.join(BASE_DIR, "models", "learning_history", "learning_history.csv"),
+    'LEARNING_METRICS_FILE': os.path.join(BASE_DIR, "models", "learning_history", "learning_metrics.json"),
 }
 
 def get_project_root():
@@ -45,7 +48,8 @@ def ensure_directories():
             os.path.join(BASE_DIR, "models"),
             os.path.join(BASE_DIR, "drivers"),
             os.path.join(BASE_DIR, "src"),
-            os.path.join(BASE_DIR, "config")
+            os.path.join(BASE_DIR, "config"),
+            os.path.join(BASE_DIR, "models", "learning_history"),
         ]
         
         # Create core directories
@@ -143,19 +147,19 @@ def get_metadata_path(timestamp=None):
 
 if __name__ == "__main__":
     from datetime import datetime
-    print_system_info()
+    #print_system_info()
     ensure_directories()
     if validate_paths():
-        print("\nAll paths are valid and accessible")
-        print("\nProject directory structure:")
+        #print("\nAll paths are valid and accessible")
+        #print("\nProject directory structure:")
         for name, path in PATHS.items():
             print(f"- {name}: {path}")
-        print("\nProject is ready to run on this system")
+        #print("\nProject is ready to run on this system")
         
         # Test prediction and metadata paths
         test_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        print(f"\nTest prediction path: {get_predictions_path(test_timestamp)}")
-        print(f"Test metadata path: {get_metadata_path(test_timestamp)}")
+        #print(f"\nTest prediction path: {get_predictions_path(test_timestamp)}")
+        #print(f"Test metadata path: {get_metadata_path(test_timestamp)}")
         
         # Ensure directory exists
         os.makedirs(os.path.dirname(PATHS['ALL_PREDICTIONS_FILE']), exist_ok=True)
