@@ -54,6 +54,17 @@ class PredictionEvaluator:
             for _, pred_row in predictions_df.iterrows():
                 # Extract prediction time and numbers
                 pred_time = pred_row['next_draw_time']
+                
+                # Check if this is a future prediction
+                try:
+                    prediction_datetime = datetime.strptime(pred_time, '%H:%M  %d-%m-%Y')
+                    if prediction_datetime > datetime.now():
+                        print(f"Skipping future prediction for {pred_time} - cannot evaluate yet")
+                        continue
+                except ValueError as e:
+                    print(f"Error parsing prediction date '{pred_time}': {e}")
+                    continue
+                    
                 predicted_numbers = [
                     pred_row[f'number{i}'] 
                     for i in range(1, 21) 
@@ -619,6 +630,27 @@ class PredictionEvaluator:
                 for idx, pred_row in predictions_df.iterrows():
                     try:
                         draw_time = pred_row['standardized_time']
+                        
+                        # IMPORTANT NEW CODE: Check if this is a future prediction
+                        try:
+                            # Your system consistently uses the format 'HH:MM  DD-MM-YYYY' with double spaces
+                            if "  " in draw_time:
+                                time_part, date_part = draw_time.split("  ")
+                                hours, minutes = time_part.split(':')
+                                day, month, year = date_part.split('-')
+                                
+                                # Create datetime object
+                                draw_datetime = datetime(int(year), int(month), int(day), 
+                                                       int(hours), int(minutes))
+                                
+                                # Compare with current time to check if it's in the future
+                                if draw_datetime > datetime.now():
+                                    print(f"Skipping future draw: {draw_time}")
+                                    continue  # Skip this prediction and move to the next one
+                            # No need for alternative format handling - your system uses consistent format
+                        except Exception as dt_err:
+                            # If parsing fails, log it but don't change behavior
+                            print(f"Warning: Error parsing draw time {draw_time}: {dt_err}")
                         
                         # Extract predicted numbers
                         predicted_numbers = []

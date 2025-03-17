@@ -1010,8 +1010,7 @@ class DrawHandler:
             print(f"Performance trend: {trend}")
             print(f"Problematic numbers: {problematic_numbers[:5]}...")
             print(f"Successful numbers: {successful_numbers[:5]}...")
-            # Define timestamp at the start
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+          
             
             # Initialize adjustment tracking
             adjustment_tracking = {
