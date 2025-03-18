@@ -113,13 +113,19 @@ class LotteryPredictor:
             if missing_cols:
                 raise ValueError(f"Missing required columns: {missing_cols}")
                 
-            # Validate date format
+            # Validate date format - Now handles double spaces correctly
             try:
-                data['date'] = data['date'].str.strip()
-                data['date'] = data['date'].str.replace(r'\s+', ' ', regex=True)
-                data['date'] = pd.to_datetime(data['date'], format='%H:%M %d-%m-%Y')
-            except:
-                raise ValueError("Invalid date format in data")
+                # Clean date strings
+                data['date'] = data['date'].astype(str).str.strip()
+                # Keep the double space format from historical data
+                data['date'] = pd.to_datetime(data['date'], format='%H:%M  %d-%m-%Y')
+            except Exception as e:
+                print(f"Warning: Date parsing error with double space format: {e}")
+                try:
+                    # Fallback to single space format
+                    data['date'] = pd.to_datetime(data['date'], format='%H:%M %d-%m-%Y')
+                except:
+                    raise ValueError("Invalid date format in data")
                 
             # Validate numbers
             number_cols = [f'number{i}' for i in range(1, 21)]
@@ -398,17 +404,21 @@ class LotteryPredictor:
             # Load CSV with header
             df = pd.read_csv(file_path, header=0)
             
-            # Clean and convert dates
+            # Clean and convert dates - Now handles double spaces correctly
             try:
-                df['date'] = df['date'].str.strip()
-                df['date'] = df['date'].str.replace(r'\s+', ' ', regex=True)
-                df['date'] = pd.to_datetime(df['date'], format='%H:%M %d-%m-%Y')
+                # Clean date strings but preserve double spaces
+                df['date'] = df['date'].astype(str).str.strip()
+                # Try double space format first (matches historical data)
+                df['date'] = pd.to_datetime(df['date'], format='%H:%M  %d-%m-%Y')
+                print("DEBUG: Successfully parsed dates with double space format")
             except Exception as e:
+                print(f"Warning: Double space date parsing failed: {e}")
                 try:
                     # Fallback to single space format
                     df['date'] = pd.to_datetime(df['date'], format='%H:%M %d-%m-%Y')
+                    print("DEBUG: Successfully parsed dates with single space format")
                 except Exception as e2:
-                    print(f"Warning: Date conversion failed: {e2}")
+                    print(f"Error: All date parsing attempts failed: {e2}")
                     return None
             
             # Convert number columns to float

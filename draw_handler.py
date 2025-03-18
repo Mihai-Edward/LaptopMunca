@@ -108,53 +108,82 @@ class DrawHandler:
             self.pipeline_status['timestamp'] = datetime.now()
             
             if historical_data is None:
+                self.pipeline_status['stage'] = 'data_loading'
+                print("\nDEBUG: Loading historical data...")
                 historical_data = self._load_historical_data()
-            
+                if historical_data is None:
+                    raise ValueError("Failed to load historical data")
+
             # 1. Data Preparation Stage
             self.pipeline_status['stage'] = 'data_preparation'
             processed_data = self._prepare_pipeline_data(historical_data)
+            if processed_data is None:
+                raise ValueError("Failed to prepare data")
             
-            # 1.5. Analysis Stage (Perform analysis after data preparation)
+            # 2. Analysis Stage
             self.pipeline_status['stage'] = 'data_analysis'
-
-            # Format data for DataAnalysis
+            print("\nDEBUG: Starting data analysis stage...")
             formatted_draws = []
-            for _, row in historical_data.iterrows():
-                try:
-                    numbers = []
-                    for i in range(1, 21):
-                        col = f'number{i}'
-                        if col in row and pd.notnull(row[col]):
-                            num = int(float(row[col]))
-                            if 1 <= num <= 80:
-                                numbers.append(num)
-                    
-                    # Only process if we have all 20 numbers
-                    if len(numbers) == 20:
-                        # Format date string in required format
-                        if isinstance(row['date'], pd.Timestamp):
-                            date_str = row['date'].strftime('%H:%M  %d-%m-%Y')
-                        else:
-                            date_str = str(row['date']).strip()
+            
+            try:
+                # Format data for analysis with strict date format
+                for idx, row in historical_data.iterrows():
+                    try:
+                        numbers = []
+                        for i in range(1, 21):
+                            col = f'number{i}'
+                            if col in row and pd.notnull(row[col]):
+                                num = int(float(row[col]))
+                                if 1 <= num <= 80:
+                                    numbers.append(num)
                         
-                        # Create tuple with exactly 2 elements
-                        draw_tuple = (date_str, sorted(numbers))
-                        formatted_draws.append(draw_tuple)
-                except Exception as e:
-                    print(f"DEBUG: Error formatting draw: {e}")
-                    continue
+                        if len(numbers) == 20:
+                            # Ensure consistent date format
+                            if isinstance(row['date'], pd.Timestamp):
+                                date_str = row['date'].strftime('%H:%M %d-%m-%Y')  # Single space
+                            else:
+                                date_str = str(row['date']).strip().replace('  ', ' ')  # Normalize spaces
+                            
+                            draw_tuple = (date_str, sorted(numbers))
+                            formatted_draws.append(draw_tuple)
+                            
+                            if idx < 2:  # Debug first 2 draws
+                                print(f"DEBUG: Successfully formatted draw {idx}:")
+                                print(f"Date: {date_str}")
+                                print(f"Numbers: {sorted(numbers)}")
+                    except Exception as e:
+                        print(f"DEBUG: Error formatting draw {idx}: {e}")
+                        continue
 
-            analyzer = DataAnalysis(formatted_draws)
-            analysis_results = analyzer.get_analysis_results()
-            
-            # Ensure predictor has pipeline_data initialized for compatibility
-            if not hasattr(self.predictor, 'pipeline_data'):
-                self.predictor.pipeline_data = {}
+                if not formatted_draws:
+                    raise ValueError("No valid draws could be formatted for analysis")
+
+                analyzer = DataAnalysis(formatted_draws)
+                analysis_results = analyzer.get_analysis_results()
                 
-            # Pass analysis results to predictor
-            self.predictor.pipeline_data['analysis_context'] = analysis_results
-            
-            # 2. Prediction Stage
+                # Initialize predictor pipeline data with required structure
+                if not hasattr(self.predictor, 'pipeline_data'):
+                    self.predictor.pipeline_data = {
+                        'use_combined_features': True,
+                        'feature_dimension': 164,
+                        'model_config': {'initialized': False},
+                        'execution_context': {},
+                        'runtime_config': {
+                            'use_analysis': True,
+                            'analysis_weight': 0.6,
+                            'prob_weight': 0.25,
+                            'pattern_weight': 0.15
+                        }
+                    }
+                
+                # Update analysis context
+                self.predictor.pipeline_data['analysis_context'] = analysis_results
+
+            except Exception as e:
+                print(f"Warning: Analysis stage error: {e}")
+                analysis_results = {}
+
+            # 3. Model Validation and Prediction Stage
             self.pipeline_status['stage'] = 'prediction'
             model_path = self._get_latest_model()
             if model_path:
@@ -163,17 +192,27 @@ class DrawHandler:
                     f"{model_path}_pattern_model.pkl",
                     f"{model_path}_scaler.pkl"
                 ]
+                
                 if all(os.path.exists(file) for file in model_files):
                     print(f"✓ Model found: {os.path.basename(model_path)}")
                     
-                    # Get predictions and handle returns properly
+                    # Validate model state before prediction
+                    is_valid, message = self.predictor.validate_model_state()
+                    if not is_valid:
+                        print(f"Model validation failed: {message}")
+                        print("Attempting model retraining...")
+                        if not self.train_ml_models(force_retrain=True):
+                            raise ValueError("Model retraining failed")
+                        print("Model retrained successfully")
+                    
+                    # Get predictions
                     result = self._run_prediction(processed_data)
                     if result and len(result) == 3:
                         numbers, probs, analysis = result
                         if numbers is not None:
-                            # Save to consolidated format
+                            next_draw_time = get_next_draw_time(datetime.now())
+                            
                             if hasattr(self.predictor, 'save_prediction'):
-                                next_draw_time = get_next_draw_time(datetime.now())
                                 success = self.predictor.save_prediction(
                                     prediction=numbers,
                                     probabilities=probs,
@@ -181,19 +220,10 @@ class DrawHandler:
                                 )
                                 if not success:
                                     print("WARNING: Failed to save to consolidated format")
-                    
+                            
                             self.pipeline_status['success'] = True
-                            return numbers, probs, analysis
-                    
-                else:
-                    print("Model files incomplete. Attempting retraining...")
-                    if self.train_ml_models():
-                        return self._run_prediction(processed_data)
-            else:
-                print("No model found. Attempting training...")
-                if self.train_ml_models():
-                    return self._run_prediction(processed_data)
-            
+                            return numbers, probs, analysis_results
+
             self.pipeline_status['error'] = "Failed to generate predictions"
             return None, None, None
                 
@@ -841,49 +871,49 @@ class DrawHandler:
             print("\nLearning cycle metrics:")
             print(f"- Cycles completed: {cycles_completed}")
             
-            # Handle initial accuracy - add this check
+            # Initialize evaluator and get stats
+            evaluator = PredictionEvaluator()
+            stats = evaluator.get_performance_stats()
+
+            # Handle initial accuracy with safety checks
             if self.learning_status.get('initial_accuracy') is None:
-                # If no initial accuracy, set it from current accuracy
-                evaluator = PredictionEvaluator()
-                stats = evaluator.get_performance_stats()
-                if stats and 'avg_accuracy' in stats:
-                    self.learning_status['initial_accuracy'] = stats.get('avg_accuracy', 0)
+                if stats and stats.get('avg_accuracy', 0) > 0:
+                    self.learning_status['initial_accuracy'] = stats['avg_accuracy']
                     print(f"- Initial accuracy: {self.learning_status['initial_accuracy']:.2f}% (newly set)")
                 else:
-                    # Don't set to 0, keep as None to indicate not yet established
+                    self.learning_status['initial_accuracy'] = None
                     print("- Initial accuracy: Not available yet")
             else:
                 print(f"- Initial accuracy: {self.learning_status['initial_accuracy']:.2f}%")
 
-            # Safe printing for current accuracy with proper fallback
-            current_acc = self.learning_status.get('current_accuracy')
-            if current_acc is not None:
-                print(f"- Current accuracy: {current_acc:.2f}%")
-            else:
-                print("- Current accuracy: Not yet established")
+            # Get current performance metrics
+            current_accuracy = stats.get('avg_accuracy', 0) if stats else 0
+            if current_accuracy == 0:  # If no new evaluation data
+                current_accuracy = self.learning_status.get('current_accuracy', 0)
+                
+            print(f"- Current accuracy: {current_accuracy:.2f}%")
             
-            # Initialize evaluator and get stats
-            evaluator = PredictionEvaluator()
-            stats = evaluator.get_performance_stats()
-            
+            # Process performance stats
             if not stats or stats.get('total_predictions', 0) < 5:
                 print("Not enough evaluation data for learning (need at least 5 predictions)")
                 return False
 
-            # Extract and validate insights with safety checks
+            # Extract insights with safety
             insights = {
                 'problematic_numbers': list(stats.get('most_frequently_missed', {}).keys()),
                 'successful_numbers': list(stats.get('most_frequent_correct', {}).keys()),
                 'recent_trend': stats.get('recent_trend', 0),
-                'average_accuracy': stats.get('avg_accuracy', self.learning_status.get('current_accuracy', 0)),
+                'average_accuracy': current_accuracy,  # Use our safely handled accuracy
                 'consistency_score': stats.get('consistency_score', 0),
                 'prediction_confidence': stats.get('prediction_confidence', 0)
             }
 
-            # Critical: Prevent accuracy from being reset to 0
-            if insights['average_accuracy'] == 0 and self.learning_status.get('current_accuracy', 0) > 0:
-                insights['average_accuracy'] = self.learning_status['current_accuracy']
-                print("Maintained previous accuracy due to potentially invalid new value")
+            # Update learning status - keeping track of best accuracy
+            if current_accuracy > 0:  # Only update if we have valid new data
+                self.learning_status['current_accuracy'] = max(
+                    current_accuracy,
+                    self.learning_status.get('current_accuracy', 0)
+                )
 
             # Rest of your existing code...
             print("\nEvaluation insights:")

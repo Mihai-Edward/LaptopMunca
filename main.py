@@ -303,7 +303,7 @@ def save_prediction(predictions, probabilities, is_backup=False):
         return False
 
 def generate_prediction():
-    """Generate prediction using DrawHandler without modifying its methods"""
+    """Generate prediction using DrawHandler with smart retraining"""
     try:
         debug_print("\n=== Starting Prediction Generation ===")
         debug_print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -316,7 +316,7 @@ def generate_prediction():
         debug_print("Ensuring analysis is up to date...")
         run_analysis()
         
-        # ===== ADD THESE NEW LINES HERE (BEFORE RETRAINING) =====
+        # Evaluate predictions and apply learning
         debug_print("\nEvaluating past predictions...")
         evaluator = PredictionEvaluator()
         evaluator.evaluate_past_predictions()
@@ -328,14 +328,43 @@ def generate_prediction():
             handler.apply_learning_from_evaluations()
         else:
             debug_print("No evaluation statistics found, proceeding without learning adjustments", "INFO")
-        # ===== END NEW LINES =====
+
+        # Smart retraining logic
+        force_retrain = False
+        model_path = handler._get_latest_model()
         
-        # Force model retraining to ensure feature consistency
-        debug_print("\nForce retraining models to ensure feature consistency...")
-        if not handler.train_ml_models(force_retrain=True):
-            debug_print("Model training failed", "ERROR")
-            return False
-            
+        # Check if models exist
+        if not model_path:
+            debug_print("No existing models found, will force retrain", "INFO")
+            force_retrain = True
+        else:
+            # Validate model files
+            model_files = [
+                f"{model_path}_prob_model.pkl",
+                f"{model_path}_pattern_model.pkl",
+                f"{model_path}_scaler.pkl"
+            ]
+            if not all(os.path.exists(file) for file in model_files):
+                debug_print("Model files incomplete or corrupted, will force retrain", "INFO")
+                force_retrain = True
+            elif stats and stats.get('avg_accuracy', 0) < 10:
+                debug_print("Accuracy below threshold (10%), will force retrain", "INFO")
+                force_retrain = True
+            elif stats and stats.get('trend', 'stable') == 'declining':
+                trend_value = stats.get('trend_value', 0)
+                if trend_value < -0.2:  # Significant decline
+                    debug_print("Performance trend significantly declining, will force retrain", "INFO")
+                    force_retrain = True
+
+        if force_retrain:
+            debug_print("\nForce retraining models due to critical conditions...")
+            training_success = handler.train_ml_models(force_retrain=True)
+            if not training_success:
+                debug_print("Model training failed", "ERROR")
+                return False
+            else:
+                debug_print("Model training completed successfully")
+                
         # Get the next draw time
         current_time = datetime.now()
         next_draw_time = get_next_draw_time(current_time)
