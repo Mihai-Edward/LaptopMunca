@@ -1129,31 +1129,27 @@ class LotteryPredictor:
             return None, None, None
 
     def save_models(self, path_prefix=None, base_path=None, custom_suffix=None):
-        """Save models with enhanced timestamp and path handling"""
+        """Save models with robust validation and error handling"""
         try:
             # Get current timestamp
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
-            # Handle path parameters to maintain compatibility with existing calls
+            # Handle path parameters
             if path_prefix is not None:
-                # If path_prefix is provided, use it directly
                 final_path = path_prefix
             else:
-                # Otherwise use base_path and custom_suffix logic
                 if base_path is None:
                     base_path = self.models_dir
                 
                 if custom_suffix is None:
-                    # Use timestamp as default suffix
                     final_path = os.path.join(base_path, f'lottery_predictor_{timestamp}')
                 else:
-                    # Support custom suffix parameter
                     final_path = os.path.join(base_path, f'lottery_predictor_{custom_suffix}')
             
             # Ensure models directory exists
             os.makedirs(os.path.dirname(final_path), exist_ok=True)
             
-            # Save models with consistent naming
+            # Models to save with proper validation
             model_files = {
                 '_prob_model.pkl': self.probabilistic_model,
                 '_pattern_model.pkl': self.pattern_model,
@@ -1161,37 +1157,93 @@ class LotteryPredictor:
             }
             
             saved_files = []
-            for suffix, model in model_files.items():
-                model_path = f'{final_path}{suffix}'
-                try:
-                    joblib.dump(model, model_path)
-                    saved_files.append(os.path.basename(model_path))
-                except Exception as e:
-                    print(f"Error saving {suffix}: {e}")
-                    # Clean up partially saved files
-                    for saved_file in saved_files:
-                        try:
-                            os.remove(os.path.join(os.path.dirname(final_path), saved_file))
-                        except:
-                            pass
-                    return None  # Match original return type on error
+            temp_file_paths = []  # Track temporary files
             
-            # Save timestamp and metadata
+            # First save to temporary files
+            for suffix, model in model_files.items():
+                if model is None:
+                    print(f"Warning: {suffix} model is None, cannot save")
+                    continue
+                    
+                # Save to temporary file first
+                temp_path = f'{final_path}{suffix}.temp'
+                try:
+                    # Clean up any existing temp file
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                        
+                    # Save to temp file
+                    joblib.dump(model, temp_path)
+                    
+                    # Verify size is reasonable (at least 1KB)
+                    file_size = os.path.getsize(temp_path)
+                    if file_size < 1024:
+                        raise ValueError(f"Saved model file is suspiciously small: {file_size} bytes")
+                        
+                    temp_file_paths.append((temp_path, f'{final_path}{suffix}'))
+                except Exception as e:
+                    print(f"Error saving {suffix} to temp file: {e}")
+                    # Clean up temp files
+                    for temp_path, _ in temp_file_paths:
+                        if os.path.exists(temp_path):
+                            try:
+                                os.remove(temp_path)
+                            except:
+                                pass
+                    return None
+            
+            # If temp files saved successfully, move them to final locations
+            for temp_path, final_file_path in temp_file_paths:
+                try:
+                    # Remove existing file if it exists
+                    if os.path.exists(final_file_path):
+                        os.remove(final_file_path)
+                        
+                    # Rename temp file to final name
+                    os.rename(temp_path, final_file_path)
+                    saved_files.append(os.path.basename(final_file_path))
+                except Exception as e:
+                    print(f"Error moving temp file to final location: {e}")
+                    # Clean up temp files
+                    for remaining_temp, _ in temp_file_paths:
+                        if os.path.exists(remaining_temp):
+                            try:
+                                os.remove(remaining_temp)
+                            except:
+                                pass
+                    return None
+            
+            # Save timestamp file
             try:
                 # Extract timestamp from the final path
                 path_timestamp = os.path.basename(final_path).replace('lottery_predictor_', '')
                 timestamp_file = os.path.join(self.models_dir, 'model_timestamp.txt')
-                with open(timestamp_file, 'w') as f:
-                    f.write(path_timestamp)
                 
-                # Save additional metadata
+                # Save to temp file first
+                temp_timestamp_file = f"{timestamp_file}.temp"
+                
+                with open(temp_timestamp_file, 'w') as f:
+                    f.write(path_timestamp)
+                    
+                # Move to final location
+                if os.path.exists(timestamp_file):
+                    os.remove(timestamp_file)
+                os.rename(temp_timestamp_file, timestamp_file)
+                
+                # Save metadata with file sizes
+                file_sizes = {}
+                for suffix in saved_files:
+                    file_path = os.path.join(os.path.dirname(final_path), suffix)
+                    file_sizes[suffix] = os.path.getsize(file_path)
+                    
                 metadata_file = os.path.join(self.models_dir, f'model_metadata_{path_timestamp}.json')
                 metadata = {
                     'timestamp': path_timestamp,
                     'model_version': getattr(self, 'version', '1.0'),
                     'feature_dimension': self.training_status.get('model_config', {}).get('feature_dimension'),
                     'use_combined_features': getattr(self, 'use_combined_features', True),
-                    'saved_files': saved_files
+                    'saved_files': saved_files,
+                    'file_sizes': file_sizes
                 }
                 
                 with open(metadata_file, 'w') as f:
@@ -1199,17 +1251,23 @@ class LotteryPredictor:
             
             except Exception as e:
                 print(f"Warning: Error saving metadata: {e}")
-                # Continue if metadata saving fails
+                # Continue if metadata saving fails, as models are still saved
             
-            # Store the timestamp for possible later use
-            self.last_save_timestamp = path_timestamp
+            # Validate saved models by attempting to load one
+            try:
+                test_model = joblib.load(f'{final_path}_prob_model.pkl')
+                if test_model is None:
+                    print("Warning: Loaded model is None, saving may have failed")
+            except Exception as e:
+                print(f"Warning: Could not validate saved model: {e}")
             
             print(f"Models saved successfully in {os.path.dirname(final_path)}")
             print(f"Saved files: {', '.join(saved_files)}")
             
-            # Return timestamp to maintain backward compatibility
+            # Store the timestamp for possible later use
+            self.last_save_timestamp = path_timestamp
             return path_timestamp
-            
+                
         except Exception as e:
             print(f"Error saving models: {e}")
             traceback.print_exc()
