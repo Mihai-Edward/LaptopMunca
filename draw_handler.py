@@ -861,19 +861,26 @@ class DrawHandler:
             stats = evaluator.get_performance_stats()
             
             if stats:
-                # Convert dictionary items to list of tuples
+                # UPDATED: Handle dictionaries properly by converting them to (num, count) format
                 most_missed = [(int(num), count) for num, count in stats.get('most_frequently_missed', {}).items()]
-                most_correct = [(int(num), count) for num, count in stats.get('most_frequently_correct', {}).items()]
+                most_correct = [(int(num), count) for num, count in stats.get('most_correct', {}).items()]
+                
+                # If the dictionaries are empty, get the stats keys directly
+                if not most_missed and 'most_missed' in stats:
+                    most_missed = [(int(num), count) for num, count in stats.get('most_missed', {}).items()]
+                
+                if not most_correct and 'most_correct' in stats:
+                    most_correct = [(int(num), count) for num, count in stats.get('most_correct', {}).items()]
                 
                 # Sort by count in descending order
                 most_missed.sort(key=lambda x: x[1], reverse=True)
                 most_correct.sort(key=lambda x: x[1], reverse=True)
                 
-                # Extract numbers that meet thresholds
-                problematic_numbers = [num for num, count in most_missed if count > 10]  # Lower threshold
-                successful_numbers = [num for num, count in most_correct if count > 5]   # Lower threshold
+                # Extract numbers with VERY low thresholds (1 or 2)
+                problematic_numbers = [num for num, count in most_missed if count > 1]
+                successful_numbers = [num for num, count in most_correct if count > 1]
                 
-                # Ensure we always have some numbers to work with
+                # ALWAYS ensure we have some numbers to work with
                 if not problematic_numbers and most_missed:
                     print("Using top 5 most missed numbers regardless of threshold")
                     problematic_numbers = [num for num, _ in most_missed[:5]]
@@ -881,6 +888,10 @@ class DrawHandler:
                 if not successful_numbers and most_correct:
                     print("Using top 5 most correct numbers regardless of threshold")
                     successful_numbers = [num for num, _ in most_correct[:5]]
+                    
+                # Add more debug output
+                print(f"Final problematic numbers: {problematic_numbers[:10]}")
+                print(f"Final successful numbers: {successful_numbers[:10]}")
                 
                 insights = {
                     'problematic_numbers': problematic_numbers[:10],
@@ -1099,15 +1110,26 @@ class DrawHandler:
                     # Log what changed
                     for param_name, original_value in original_params.items():
                         final_value = final_params.get(param_name)
-                        if original_value != final_value:
-                            print(f"Changed parameter {param_name}:")
-                            print(f"  Before: {original_value}")
-                            print(f"  After:  {final_value}")
-                            
-                            # Add to adjustments history
-                            adjustments['adjustments_made'].append(
-                                f"Changed {param_name} from {original_value} to {final_value}"
-                            )
+                        
+                        # Check if both values are arrays
+                        if isinstance(original_value, np.ndarray) and isinstance(final_value, np.ndarray):
+                            # Use np.array_equal for array comparison
+                            if not np.array_equal(original_value, final_value):
+                                print(f"Changed parameter {param_name}:")
+                                print(f"  Before: {original_value}")
+                                print(f"  After:  {final_value}")
+                                adjustments['adjustments_made'].append(
+                                    f"Changed {param_name} from {original_value} to {final_value}"
+                                )
+                        else:
+                            # Fallback for non-array values
+                            if original_value != final_value:
+                                print(f"Changed parameter {param_name}:")
+                                print(f"  Before: {original_value}")
+                                print(f"  After:  {final_value}")
+                                adjustments['adjustments_made'].append(
+                                    f"Changed {param_name} from {original_value} to {final_value}"
+                                )
                     
                     return True
                 else:

@@ -774,7 +774,8 @@ def run_automated_cycle():
                     debug_print(f"\nUpdated Learning Metrics:")
                     debug_print(f"Cycles Completed: {learning_metrics['cycles_completed']}")
                     debug_print(f"Current Accuracy: {learning_metrics['current_accuracy']:.2f}%")
-                    debug_print(f"Improvement Rate: {learning_metrics['improvement_rate']:.2f}%")
+                    rate = learning_metrics.get('improvement_rate')
+                    debug_print(f"Improvement Rate: {rate:.2f}%" if rate is not None else "Improvement Rate: N/A")
                 else:
                     debug_print("No adjustments needed from learning system", "INFO")
             else:
