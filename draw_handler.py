@@ -967,7 +967,6 @@ class DrawHandler:
             print(f"Problematic numbers: {problematic_numbers[:5]}...")
             print(f"Successful numbers: {successful_numbers[:5]}...")
           
-            
             # Initialize adjustment tracking
             adjustment_tracking = {
                 'start_time': timestamp,
@@ -1080,7 +1079,7 @@ class DrawHandler:
                     # Save adjustment metadata
                     adjustment_file = os.path.join(self.models_dir, 'model_adjustments.txt')
                     with open(adjustment_file, 'a') as f:
-                        f.write(f"\n--- Adjustments made at {adjustments['timestamp']} ---\n")
+                        f.write(f"\n--- Adjustments made at {adjustments.get('timestamp', timestamp)} ---\n")
                         for adjustment in adjustments['adjustments_made']:
                             f.write(f"- {adjustment}\n")
                         f.write(f"Parameters modified: {', '.join(adjustment_tracking['parameters_modified'])}\n")
@@ -1107,11 +1106,10 @@ class DrawHandler:
                         'feature_mode': self.predictor.pipeline_data.get('use_combined_features', False)
                     }
                     
-                    # Log what changed
+                    # Log what changed using numpy array comparison
                     for param_name, original_value in original_params.items():
                         final_value = final_params.get(param_name)
                         
-                        # Check if both values are arrays
                         if isinstance(original_value, np.ndarray) and isinstance(final_value, np.ndarray):
                             # Use np.array_equal for array comparison
                             if not np.array_equal(original_value, final_value):
@@ -1122,7 +1120,7 @@ class DrawHandler:
                                     f"Changed {param_name} from {original_value} to {final_value}"
                                 )
                         else:
-                            # Fallback for non-array values
+                            # For non-array values, use regular comparison
                             if original_value != final_value:
                                 print(f"Changed parameter {param_name}:")
                                 print(f"  Before: {original_value}")
