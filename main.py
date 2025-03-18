@@ -303,7 +303,7 @@ def save_prediction(predictions, probabilities, is_backup=False):
         return False
 
 def generate_prediction():
-    """Generate prediction using DrawHandler with smart retraining"""
+    """Generate prediction using DrawHandler with enhanced model validation and smart retraining"""
     try:
         debug_print("\n=== Starting Prediction Generation ===")
         debug_print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -333,35 +333,42 @@ def generate_prediction():
         force_retrain = False
         model_path = handler._get_latest_model()
         
-        # Check if models exist
+        # Check if models exist and validate them
         if not model_path:
             debug_print("No existing models found, will force retrain", "INFO")
             force_retrain = True
         else:
-            # Validate model files
-            model_files = [
-                f"{model_path}_prob_model.pkl",
-                f"{model_path}_pattern_model.pkl",
-                f"{model_path}_scaler.pkl"
-            ]
-            if not all(os.path.exists(file) for file in model_files):
-                debug_print("Model files incomplete or corrupted, will force retrain", "INFO")
+            # Validate model using the enhanced validation method
+            debug_print(f"Validating existing model: {os.path.basename(model_path)}")
+            if not handler._validate_model(model_path):
+                debug_print("Model validation failed, will force retrain", "INFO")
                 force_retrain = True
-            elif stats and stats.get('avg_accuracy', 0) < 10:
-                debug_print("Accuracy below threshold (10%), will force retrain", "INFO")
-                force_retrain = True
-            elif stats and stats.get('trend', 'stable') == 'declining':
-                trend_value = stats.get('trend_value', 0)
-                if trend_value < -0.2:  # Significant decline
+            # Additional performance-based retraining conditions
+            elif stats:
+                # Check for poor accuracy
+                if stats.get('avg_accuracy', 0) < 10:
+                    debug_print("Accuracy below threshold (10%), will force retrain", "INFO")
+                    force_retrain = True
+                # Check for declining performance trend
+                elif stats.get('recent_trend', 0) < -0.2:  # Significant decline
                     debug_print("Performance trend significantly declining, will force retrain", "INFO")
                     force_retrain = True
+                # Check consistency score
+                elif stats.get('consistency_score', 0) < 0.4:  # Low consistency
+                    debug_print("Low consistency score, will force retrain", "INFO")
+                    force_retrain = True
+                else:
+                    debug_print("Model validation passed, using existing model", "INFO")
+            else:
+                debug_print("No stats available but model validation passed", "INFO")
 
         if force_retrain:
             debug_print("\nForce retraining models due to critical conditions...")
             training_success = handler.train_ml_models(force_retrain=True)
             if not training_success:
                 debug_print("Model training failed", "ERROR")
-                return False
+                debug_print("Will attempt to use existing model if available")
+                # Don't return immediately, try to use existing model
             else:
                 debug_print("Model training completed successfully")
                 
@@ -377,12 +384,20 @@ def generate_prediction():
         # Check if we have valid predictions
         if predictions is not None and len(predictions) > 0:
             debug_print(f"Prediction successful: {len(predictions)} numbers generated")
+            
+            # Save to consolidated Excel file for easier analysis
+            debug_print("Saving prediction to consolidated file...")
+            save_prediction_to_excel(predictions, probabilities, next_draw_time)
+            
             return save_prediction(predictions, probabilities)
         else:
             debug_print("Primary prediction failed, using backup", "WARNING")
             if CONFIG['backup_prediction_enabled']:
                 backup_numbers, backup_probs = create_backup_prediction()
                 if backup_numbers is not None:
+                    debug_print("Using backup prediction based on frequency analysis")
+                    # Also save backup to consolidated file
+                    save_prediction_to_excel(backup_numbers, backup_probs, next_draw_time)
                     return save_prediction(backup_numbers, backup_probs, is_backup=True)
             
             debug_print("Prediction generation failed", "ERROR")

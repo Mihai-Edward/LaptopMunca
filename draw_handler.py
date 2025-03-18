@@ -861,20 +861,18 @@ class DrawHandler:
             stats = evaluator.get_performance_stats()
             
             if stats:
-                # Extract problematic and successful numbers
-                most_missed = stats.get('most_frequently_missed', {})
-                most_correct = stats.get('most_frequently_correct', {})  # Fixed typo in method: most_frequent_correct -> most_frequently_correct
+                # Convert dictionary items to list of tuples
+                most_missed = [(int(num), count) for num, count in stats.get('most_frequently_missed', {}).items()]
+                most_correct = [(int(num), count) for num, count in stats.get('most_frequently_correct', {}).items()]
                 
-                problematic_numbers = [
-                    num for num, count in most_missed.items()
-                    if count > 100  # Numbers missed more than 100 times
-                ]
-                successful_numbers = [
-                    num for num, count in most_correct.items()
-                    if count > 40   # Numbers correct more than 40 times
-                ]
+                # Sort by count in descending order
+                most_missed.sort(key=lambda x: x[1], reverse=True)
+                most_correct.sort(key=lambda x: x[1], reverse=True)
                 
-                # Update insights
+                # Extract numbers that meet thresholds
+                problematic_numbers = [num for num, count in most_missed if count > 50]  # Lower threshold
+                successful_numbers = [num for num, count in most_correct if count > 20]  # Lower threshold
+                
                 insights = {
                     'problematic_numbers': problematic_numbers[:10],
                     'successful_numbers': successful_numbers[:10],
@@ -882,27 +880,42 @@ class DrawHandler:
                     'average_accuracy': stats.get('avg_accuracy', 0),
                     'consistency_score': stats.get('consistency_score', 0),
                     'prediction_confidence': max(stats.get('prediction_confidence', 0),
-                                              sum(most_correct.values()) / (sum(most_missed.values()) or 1))
+                                              sum(dict(most_correct).values()) / (sum(dict(most_missed).values()) or 1))
                 }
+                
+                print("\nEvaluation insights:")
+                print(f"- Problematic numbers: {insights['problematic_numbers']}")
+                print(f"- Successful numbers: {insights['successful_numbers']}")
+                print(f"- Recent trend: {insights['recent_trend']:.3f}")
+                print(f"- Average accuracy: {insights['average_accuracy']:.2f}%")
+                print(f"- Consistency score: {insights['consistency_score']:.2f}")
+                print(f"- Prediction confidence: {insights['prediction_confidence']:.2f}")
                 
                 # Update learning status
                 self.learning_status.update({
-                    'problematic_numbers': problematic_numbers,
-                    'successful_numbers': successful_numbers,
+                    'problematic_numbers': insights['problematic_numbers'],
+                    'successful_numbers': insights['successful_numbers'],
                     'current_accuracy': insights['average_accuracy'],
-                    'last_adjustments': []  # Will be filled by _adjust_model_parameters
+                    'last_evaluation': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 })
                 
                 # Adjust model parameters based on insights
                 if self._adjust_model_parameters(
-                    problematic_numbers=problematic_numbers,
-                    successful_numbers=successful_numbers,
+                    problematic_numbers=insights['problematic_numbers'],
+                    successful_numbers=insights['successful_numbers'],
                     trend=insights['recent_trend'],
                     accuracy=insights['average_accuracy'],
                     adjustments={'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                                'adjustments_made': []}
                 ):
                     print("Model parameters adjusted based on learning insights")
+                    
+                    # Save learning status after adjustments
+                    self._save_learning_status()
+                    
+                    # Track learning cycle completion
+                    self.learning_status['cycles_completed'] += 1
+                    print(f"Learning cycle #{self.learning_status['cycles_completed']} completed")
                 
                 return True
                 
@@ -1433,31 +1446,69 @@ class DrawHandler:
             return False
 
     def _validate_model(self, model_path):
-        """Enhanced model validation"""
+        """Enhanced model validation with improved timestamp extraction and file validation"""
         if not model_path:
             print("No model path provided")
             return False
             
-        # Check if model files exist
-        model_files = [
-            f"{model_path}_prob_model.pkl",
-            f"{model_path}_pattern_model.pkl",
-            f"{model_path}_scaler.pkl"
-        ]
-        if not all(os.path.exists(f) for f in model_files):
-            print("Not all model files exist")
-            return False
-            
-        # Check model age
         try:
-            model_timestamp = datetime.strptime(os.path.basename(model_path).split('_')[-1], '%Y%m%d_%H%M%S')
+            # Extract timestamp from model path
+            timestamp_str = None
+            path_basename = os.path.basename(model_path)
+            
+            # Handle different model naming patterns
+            if '_adjusted_' in path_basename:
+                timestamp_str = path_basename.split('_adjusted_')[-1]
+            elif 'lottery_predictor_' in path_basename:
+                timestamp_str = path_basename.split('lottery_predictor_')[-1]
+            else:
+                # Try to extract the timestamp at the end
+                parts = path_basename.split('_')
+                if len(parts) > 0:
+                    timestamp_str = parts[-1]
+                    
+            if not timestamp_str or len(timestamp_str) != 15:  # Standard format: YYYYMMDD_HHMMSS (15 chars)
+                print(f"Invalid timestamp format in model path: {path_basename}")
+                return False
+                
+            # Check if model files exist
+            model_files = [
+                f"{model_path}_prob_model.pkl",
+                f"{model_path}_pattern_model.pkl",
+                f"{model_path}_scaler.pkl"
+            ]
+            
+            missing_files = [f for f in model_files if not os.path.exists(f)]
+            if missing_files:
+                print(f"Missing model files: {', '.join([os.path.basename(f) for f in missing_files])}")
+                return False
+                
+            # Check model age
+            model_timestamp = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
             age_hours = (datetime.now() - model_timestamp).total_seconds() / 3600
+            
+            # Log model age information
+            print(f"Model timestamp: {model_timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"Model age: {age_hours:.1f} hours")
+            
+            # Determine if model needs retraining
             should_retrain = age_hours >= 24
             if should_retrain:
                 print(f"Model is {age_hours:.1f} hours old (>24 hours), needs retraining")
+            else:
+                print(f"Model is fresh ({age_hours:.1f} hours old)")
+                
+            # Also check file sizes to ensure they're not empty
+            for model_file in model_files:
+                if os.path.getsize(model_file) < 1024:  # Less than 1KB is suspicious
+                    print(f"Warning: Model file {os.path.basename(model_file)} is suspiciously small ({os.path.getsize(model_file)} bytes)")
+                    return False
+            
             return not should_retrain  # Return True if model is fresh, False if needs retraining
+            
         except Exception as e:
-            print(f"Error checking model age: {e}")
+            print(f"Error validating model: {e}")
+            traceback.print_exc()
             return False
 
 def load_data(file_path=None):
