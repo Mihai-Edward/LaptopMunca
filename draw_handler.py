@@ -187,42 +187,34 @@ class DrawHandler:
             self.pipeline_status['stage'] = 'prediction'
             model_path = self._get_latest_model()
             if model_path:
-                model_files = [
-                    f"{model_path}_prob_model.pkl",
-                    f"{model_path}_pattern_model.pkl",
-                    f"{model_path}_scaler.pkl"
-                ]
+                if self._validate_model(model_path):
+                    print(f"✓ Using valid model: {os.path.basename(model_path)}")
+                else:
+                    print("Model validation failed, attempting retraining...")
+                    if not self.train_ml_models(force_retrain=True):
+                        raise ValueError("Model retraining failed")
+                    print("Model retrained successfully")
+                    # Get the newly retrained model path
+                    model_path = self._get_latest_model()
                 
-                if all(os.path.exists(file) for file in model_files):
-                    print(f"✓ Model found: {os.path.basename(model_path)}")
-                    
-                    # Validate model state before prediction
-                    is_valid, message = self.predictor.validate_model_state()
-                    if not is_valid:
-                        print(f"Model validation failed: {message}")
-                        print("Attempting model retraining...")
-                        if not self.train_ml_models(force_retrain=True):
-                            raise ValueError("Model retraining failed")
-                        print("Model retrained successfully")
-                    
-                    # Get predictions
-                    result = self._run_prediction(processed_data)
-                    if result and len(result) == 3:
-                        numbers, probs, analysis = result
-                        if numbers is not None:
-                            next_draw_time = get_next_draw_time(datetime.now())
-                            
-                            if hasattr(self.predictor, 'save_prediction'):
-                                success = self.predictor.save_prediction(
-                                    prediction=numbers,
-                                    probabilities=probs,
-                                    next_draw_time=next_draw_time
-                                )
-                                if not success:
-                                    print("WARNING: Failed to save to consolidated format")
-                            
-                            self.pipeline_status['success'] = True
-                            return numbers, probs, analysis_results
+                # Get predictions
+                result = self._run_prediction(processed_data)
+                if result and len(result) == 3:
+                    numbers, probs, analysis = result
+                    if numbers is not None:
+                        next_draw_time = get_next_draw_time(datetime.now())
+                        
+                        if hasattr(self.predictor, 'save_prediction'):
+                            success = self.predictor.save_prediction(
+                                prediction=numbers,
+                                probabilities=probs,
+                                next_draw_time=next_draw_time
+                            )
+                            if not success:
+                                print("WARNING: Failed to save to consolidated format")
+                        
+                        self.pipeline_status['success'] = True
+                        return numbers, probs, analysis_results
 
             self.pipeline_status['error'] = "Failed to generate predictions"
             return None, None, None
@@ -864,94 +856,59 @@ class DrawHandler:
             return False
 
     def apply_learning_from_evaluations(self):
-        """Apply continuous learning with enhanced analysis and model adjustments"""
         try:
-            # Get current and display cycles completed
-            cycles_completed = self.learning_status.get('cycles_completed', 0)
-            print("\nLearning cycle metrics:")
-            print(f"- Cycles completed: {cycles_completed}")
-            
-            # Initialize evaluator and get stats
             evaluator = PredictionEvaluator()
             stats = evaluator.get_performance_stats()
-
-            # Handle initial accuracy with safety checks
-            if self.learning_status.get('initial_accuracy') is None:
-                if stats and stats.get('avg_accuracy', 0) > 0:
-                    self.learning_status['initial_accuracy'] = stats['avg_accuracy']
-                    print(f"- Initial accuracy: {self.learning_status['initial_accuracy']:.2f}% (newly set)")
-                else:
-                    self.learning_status['initial_accuracy'] = None
-                    print("- Initial accuracy: Not available yet")
-            else:
-                print(f"- Initial accuracy: {self.learning_status['initial_accuracy']:.2f}%")
-
-            # Get current performance metrics
-            current_accuracy = stats.get('avg_accuracy', 0) if stats else 0
-            if current_accuracy == 0:  # If no new evaluation data
-                current_accuracy = self.learning_status.get('current_accuracy', 0)
-                
-            print(f"- Current accuracy: {current_accuracy:.2f}%")
             
-            # Process performance stats
-            if not stats or stats.get('total_predictions', 0) < 5:
-                print("Not enough evaluation data for learning (need at least 5 predictions)")
-                return False
-
-            # Extract insights with safety
-            insights = {
-                'problematic_numbers': list(stats.get('most_frequently_missed', {}).keys()),
-                'successful_numbers': list(stats.get('most_frequent_correct', {}).keys()),
-                'recent_trend': stats.get('recent_trend', 0),
-                'average_accuracy': current_accuracy,  # Use our safely handled accuracy
-                'consistency_score': stats.get('consistency_score', 0),
-                'prediction_confidence': stats.get('prediction_confidence', 0)
-            }
-
-            # Update learning status - keeping track of best accuracy
-            if current_accuracy > 0:  # Only update if we have valid new data
-                self.learning_status['current_accuracy'] = max(
-                    current_accuracy,
-                    self.learning_status.get('current_accuracy', 0)
-                )
-
-            # Rest of your existing code...
-            print("\nEvaluation insights:")
-            print(f"- Problematic numbers: {insights['problematic_numbers']}")
-            print(f"- Successful numbers: {insights['successful_numbers']}")
-            print(f"- Recent trend: {insights['recent_trend']:.3f}")
-            print(f"- Average accuracy: {insights['average_accuracy']:.2f}%")
-            print(f"- Consistency score: {insights['consistency_score']:.2f}")
-            print(f"- Prediction confidence: {insights['prediction_confidence']:.2f}")
-
-            # When updating learning status, maintain accuracy carefully
-            self.learning_status.update({
-                'last_learning': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'cycles_completed': self.learning_status['cycles_completed'] + 1,
-                'current_accuracy': max(insights['average_accuracy'], 
-                                     self.learning_status.get('current_accuracy', 0)),
-                # ... rest of your update remains the same
-            })
-
-            # Calculate improvement rate only if we have valid initial and current accuracy
-            if (self.learning_status.get('initial_accuracy') is not None and 
-                self.learning_status['initial_accuracy'] > 0 and 
-                self.learning_status['current_accuracy'] > 0):
+            if stats:
+                # Extract problematic and successful numbers
+                most_missed = stats.get('most_frequently_missed', {})
+                most_correct = stats.get('most_frequently_correct', {})  # Fixed typo in method: most_frequent_correct -> most_frequently_correct
                 
-                self.learning_status['improvement_rate'] = (
-                    (self.learning_status['current_accuracy'] - self.learning_status['initial_accuracy'])
-                    / self.learning_status['initial_accuracy'] * 100
-                )
-            else:
-                # Keep existing improvement rate or set to 0 if none exists
-                self.learning_status['improvement_rate'] = self.learning_status.get('improvement_rate', 0)
-
-            # Rest of your existing code remains the same...
-
-            return True
-            
+                problematic_numbers = [
+                    num for num, count in most_missed.items()
+                    if count > 100  # Numbers missed more than 100 times
+                ]
+                successful_numbers = [
+                    num for num, count in most_correct.items()
+                    if count > 40   # Numbers correct more than 40 times
+                ]
+                
+                # Update insights
+                insights = {
+                    'problematic_numbers': problematic_numbers[:10],
+                    'successful_numbers': successful_numbers[:10],
+                    'recent_trend': stats.get('recent_trend', 0),
+                    'average_accuracy': stats.get('avg_accuracy', 0),
+                    'consistency_score': stats.get('consistency_score', 0),
+                    'prediction_confidence': max(stats.get('prediction_confidence', 0),
+                                              sum(most_correct.values()) / (sum(most_missed.values()) or 1))
+                }
+                
+                # Update learning status
+                self.learning_status.update({
+                    'problematic_numbers': problematic_numbers,
+                    'successful_numbers': successful_numbers,
+                    'current_accuracy': insights['average_accuracy'],
+                    'last_adjustments': []  # Will be filled by _adjust_model_parameters
+                })
+                
+                # Adjust model parameters based on insights
+                if self._adjust_model_parameters(
+                    problematic_numbers=problematic_numbers,
+                    successful_numbers=successful_numbers,
+                    trend=insights['recent_trend'],
+                    accuracy=insights['average_accuracy'],
+                    adjustments={'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                               'adjustments_made': []}
+                ):
+                    print("Model parameters adjusted based on learning insights")
+                
+                return True
+                
+            return False
         except Exception as e:
-            print(f"Error applying learning: {e}")
+            print(f"Error in apply_learning_from_evaluations: {e}")
             traceback.print_exc()
             return False
 
@@ -1473,6 +1430,34 @@ class DrawHandler:
         except Exception as e:
             print(f"Error saving models: {e}")
             traceback.print_exc()
+            return False
+
+    def _validate_model(self, model_path):
+        """Enhanced model validation"""
+        if not model_path:
+            print("No model path provided")
+            return False
+            
+        # Check if model files exist
+        model_files = [
+            f"{model_path}_prob_model.pkl",
+            f"{model_path}_pattern_model.pkl",
+            f"{model_path}_scaler.pkl"
+        ]
+        if not all(os.path.exists(f) for f in model_files):
+            print("Not all model files exist")
+            return False
+            
+        # Check model age
+        try:
+            model_timestamp = datetime.strptime(os.path.basename(model_path).split('_')[-1], '%Y%m%d_%H%M%S')
+            age_hours = (datetime.now() - model_timestamp).total_seconds() / 3600
+            should_retrain = age_hours >= 24
+            if should_retrain:
+                print(f"Model is {age_hours:.1f} hours old (>24 hours), needs retraining")
+            return not should_retrain  # Return True if model is fresh, False if needs retraining
+        except Exception as e:
+            print(f"Error checking model age: {e}")
             return False
 
 def load_data(file_path=None):
