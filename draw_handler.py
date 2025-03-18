@@ -870,8 +870,17 @@ class DrawHandler:
                 most_correct.sort(key=lambda x: x[1], reverse=True)
                 
                 # Extract numbers that meet thresholds
-                problematic_numbers = [num for num, count in most_missed if count > 50]  # Lower threshold
-                successful_numbers = [num for num, count in most_correct if count > 20]  # Lower threshold
+                problematic_numbers = [num for num, count in most_missed if count > 10]  # Lower threshold
+                successful_numbers = [num for num, count in most_correct if count > 5]   # Lower threshold
+                
+                # Ensure we always have some numbers to work with
+                if not problematic_numbers and most_missed:
+                    print("Using top 5 most missed numbers regardless of threshold")
+                    problematic_numbers = [num for num, _ in most_missed[:5]]
+                    
+                if not successful_numbers and most_correct:
+                    print("Using top 5 most correct numbers regardless of threshold")
+                    successful_numbers = [num for num, _ in most_correct[:5]]
                 
                 insights = {
                     'problematic_numbers': problematic_numbers[:10],
@@ -927,6 +936,17 @@ class DrawHandler:
 
     def _adjust_model_parameters(self, problematic_numbers, successful_numbers, trend, accuracy, adjustments):
         """Make specific adjustments to model parameters with enhanced tracking and validation"""
+        # Validate models exist before attempting adjustments
+        if not hasattr(self.predictor, 'probabilistic_model') or self.predictor.probabilistic_model is None:
+            print("Models not properly loaded, attempting to load them first...")
+            # Try to load existing models
+            model_path = self._get_latest_model()
+            if model_path:
+                self.predictor.load_models(model_path)
+            else:
+                print("No models found to load, will need to train new ones")
+                return False
+                
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         try:
             print(f"Current accuracy: {accuracy:.2f}%")
@@ -1037,8 +1057,15 @@ class DrawHandler:
                     f'lottery_predictor_adjusted_{timestamp}'
                 )
                 
-                # Save the adjusted model
-                if self.predictor.save_models(path_prefix=model_path):
+                # Verify models exist before trying to save
+                if not hasattr(self.predictor, 'probabilistic_model') or self.predictor.probabilistic_model is None or \
+                   not hasattr(self.predictor, 'pattern_model') or self.predictor.pattern_model is None:
+                    print("ERROR: Cannot save models because they don't exist")
+                    return False
+
+                # Now save the models
+                save_result = self.predictor.save_models(path_prefix=model_path)
+                if save_result:
                     # Save adjustment metadata
                     adjustment_file = os.path.join(self.models_dir, 'model_adjustments.txt')
                     with open(adjustment_file, 'a') as f:
@@ -1083,10 +1110,13 @@ class DrawHandler:
                             )
                     
                     return True
+                else:
+                    print("Error: Failed to save adjusted model")
+                    return False
             else:
                 print("No adjustments needed at this time")
                 return False
-                    
+
         except Exception as e:
             print(f"Error adjusting model parameters: {e}")
             traceback.print_exc()
