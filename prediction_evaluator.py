@@ -210,14 +210,23 @@ class PredictionEvaluator:
                     (self.evaluation_metrics['total_evaluated'] * 20)
                 ) * 100
             
-            # Save to Excel file
-            results_file = os.path.join(self.processed_dir, 'evaluation_results.xlsx')
+            # Important: Use the correct path from PATHS
+            results_file = os.path.join(PATHS['PROCESSED_DIR'], 'evaluation_results.xlsx')
+            
+            # Ensure directory exists before trying to read/write
+            os.makedirs(os.path.dirname(results_file), exist_ok=True)
             
             try:
-                # Check if file exists
+                # Check if file exists AND is not being written to
                 if os.path.exists(results_file):
-                    # Read existing results
-                    existing_df = pd.read_excel(results_file)
+                    try:
+                        # Try to open with pandas
+                        existing_df = pd.read_excel(results_file, engine='openpyxl')
+                    except PermissionError:
+                        print("File is being used by another process, waiting...")
+                        import time
+                        time.sleep(1)  # Wait 1 second and try again
+                        existing_df = pd.read_excel(results_file, engine='openpyxl')
                     
                     # Check if we already have this draw date
                     date_match = existing_df['date'] == draw_date
@@ -244,13 +253,24 @@ class PredictionEvaluator:
                         result_copy[key] = str(result_copy[key])
                     results_df = pd.DataFrame([result_copy])
                 
-                # Ensure directory exists
-                os.makedirs(os.path.dirname(results_file), exist_ok=True)
+                # Save with error handling
+                try:
+                    results_df.to_excel(results_file, index=False)
+                except PermissionError:
+                    print("File is being used, saving to temporary file...")
+                    import time
+                    temp_file = results_file.replace('.xlsx', '_temp.xlsx')
+                    results_df.to_excel(temp_file, index=False)
+                    # Try to rename after saving
+                    if os.path.exists(temp_file):
+                        time.sleep(1)  # Wait a moment before attempting file replacement
+                        try:
+                            os.replace(temp_file, results_file)
+                            print("Successfully replaced original file with temporary file")
+                        except PermissionError:
+                            print(f"Could not replace original file. Temporary file saved at {temp_file}")
                 
-                # Save to Excel
-                results_df.to_excel(results_file, index=False)
-                #print(f"Results saved to {results_file}")
-                if self.verbose:  # Add this condition
+                if self.verbose:
                     # Print evaluation summary
                     print(f"\nEvaluation Summary for {draw_date}:")
                     print(f"Numbers matched: {num_correct} of 20")
@@ -264,13 +284,13 @@ class PredictionEvaluator:
                 return result
                 
             except Exception as excel_error:
-              #  print(f"Error saving to Excel: {excel_error}")
+                print(f"Error handling Excel file: {excel_error}")
                 traceback.print_exc()
                 # Still return the result even if Excel save fails
                 return result
                 
         except Exception as e:
-           # print(f"Error in save_comparison: {e}")
+            print(f"Error in save_comparison: {e}")
             traceback.print_exc()
             return None
 
@@ -343,7 +363,7 @@ class PredictionEvaluator:
                 return None
                 
             try:
-                results_df = pd.read_excel(results_file)
+                results_df = pd.read_excel(results_file, engine='openpyxl')
             except Exception as xlsx_e:
                 print(f"Error reading Excel file: {xlsx_e}")
                 # Try fallback CSV
@@ -533,7 +553,7 @@ class PredictionEvaluator:
                 
             # Try to load the data
             try:
-                df = pd.read_excel(results_file)
+                df = pd.read_excel(results_file, engine='openpyxl')
             except Exception as e:
                 print(f"Error reading Excel file: {e}")
                 return

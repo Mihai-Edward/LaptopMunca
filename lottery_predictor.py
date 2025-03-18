@@ -158,33 +158,55 @@ class LotteryPredictor:
 
             # Validate feature dimensions
             if hasattr(self.probabilistic_model, 'n_features_in_'):
-                expected_features = self.probabilistic_model.n_features_in_
+                expected_features = int(self.probabilistic_model.n_features_in_)  # Convert to int
                 use_combined = self.pipeline_data.get('use_combined_features', True)
                 
-                # When using combined features, we expect 84 base + 80 analysis = 164 features
-                if use_combined and expected_features != 164:
-                    return False, f"Invalid feature dimension for combined model: expected 164, got {expected_features}"
-                elif not use_combined and expected_features != 84:
-                    return False, f"Invalid feature dimension for base features: expected 84, got {expected_features}"
+                # Store current feature dimension for comparison
+                current_features = None
+                
+                try:
+                    # When using combined features, we expect 84 base + 80 analysis = 164 features
+                    if use_combined:
+                        current_features = 164
+                        if expected_features != current_features:
+                            return False, f"Invalid feature dimension for combined model: expected {current_features}, got {expected_features}"
+                    else:
+                        current_features = 84
+                        if expected_features != current_features:
+                            return False, f"Invalid feature dimension for base features: expected {current_features}, got {expected_features}"
+                except Exception as feat_error:
+                    return False, f"Feature dimension validation error: {str(feat_error)}"
 
             # Check feature dimension consistency between models
-            if hasattr(self.probabilistic_model, 'n_features_in_') and \
-               hasattr(self.pattern_model, 'n_features_in_'):
-                if self.probabilistic_model.n_features_in_ != self.pattern_model.n_features_in_:
-                    return False, "Feature dimension mismatch between models"
+            try:
+                if hasattr(self.probabilistic_model, 'n_features_in_') and \
+                   hasattr(self.pattern_model, 'n_features_in_'):
+                    prob_features = int(self.probabilistic_model.n_features_in_)
+                    pattern_features = int(self.pattern_model.n_features_in_)
+                    
+                    if prob_features != pattern_features:
+                        return False, f"Feature dimension mismatch between models: prob={prob_features}, pattern={pattern_features}"
+            except Exception as model_error:
+                return False, f"Model dimension comparison error: {str(model_error)}"
 
             # Verify training status
             if not self.training_status.get('model_loaded', False):
                 return False, "Models not marked as loaded"
 
             # Verify feature dimension in training status
-            model_dim = self.training_status.get('model_config', {}).get('feature_dimension')
-            if model_dim is not None and model_dim != expected_features:
-                return False, f"Feature dimension mismatch with training status: {model_dim} vs {expected_features}"
+            try:
+                model_dim = self.training_status.get('model_config', {}).get('feature_dimension')
+                if model_dim is not None:
+                    model_dim = int(model_dim)  # Convert to int for comparison
+                    if current_features is not None and model_dim != current_features:
+                        return False, f"Feature dimension mismatch with training status: {model_dim} vs {current_features}"
+            except Exception as dim_error:
+                return False, f"Training status dimension validation error: {str(dim_error)}"
 
             return True, "Model state valid"
         except Exception as e:
             return False, f"Model validation error: {str(e)}"
+
     def _initialize_pipeline(self):
         """Initialize prediction pipeline with enhanced stages and validation"""
         try:
@@ -1499,14 +1521,6 @@ class LotteryPredictor:
             return False
 
     def predict(self, recent_draws):
-        # Add these logging lines right after the first print statement
-        print("\nStarting prediction pipeline...")
-        print("=== Model State Debug Info ===")
-        print(f"Model timestamp: {self.training_status.get('timestamp')}")
-        print(f"Model loaded status: {self.training_status.get('model_loaded')}")
-        print(f"Using combined features: {self.pipeline_data.get('use_combined_features', False)}")
-        print(f"Latest model file: {self.models_dir}")
-        print("===========================\n")
         """Enhanced prediction with improved pipeline execution and validation"""
         pipeline_tracking = {
             'start_time': datetime.now(),
@@ -1517,6 +1531,12 @@ class LotteryPredictor:
         
         try:
             print("\nStarting prediction pipeline...")
+            print("=== Model State Debug Info ===")
+            print(f"Model timestamp: {self.training_status.get('timestamp')}")
+            print(f"Model loaded status: {self.training_status.get('model_loaded')}")
+            print(f"Using combined features: {self.pipeline_data.get('use_combined_features', False)}")
+            print(f"Latest model file: {self.models_dir}")
+            print("===========================\n")
             
             # Validate model state
             is_valid, message = self.validate_model_state()

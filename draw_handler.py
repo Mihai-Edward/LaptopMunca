@@ -1016,14 +1016,12 @@ class DrawHandler:
                 needs_adjustment = True
             
             # 2. Adjust model weights based on trend and accuracy
-            weights = {}
-            if trend < 0 or accuracy < 30:  # More aggressive adjustment for poor performance
-                # Calculate dynamic weights based on performance
-                prob_weight = 0.5 - (0.1 * (trend if trend < 0 else 0))  # Increase probability weight for negative trends
+            if trend < 0 or accuracy < 30:
+                prob_weight = 0.5 - (0.1 * (trend if trend < 0 else 0))
                 pattern_weight = 1 - prob_weight
                 
                 weights = {
-                    'prob_weight': max(0.3, min(0.7, prob_weight)),  # Clamp between 0.3 and 0.7
+                    'prob_weight': max(0.3, min(0.7, prob_weight)),
                     'pattern_weight': max(0.3, min(0.7, pattern_weight))
                 }
                 
@@ -1033,14 +1031,12 @@ class DrawHandler:
                 )
                 adjustment_tracking['parameters_modified'].add('prediction_weights')
                 needs_adjustment = True
-            
+
             # 3. Enhanced feature mode adjustments
             if accuracy < 20 or (trend < -0.1 and accuracy < 30):
-                # Enable enhanced feature extraction and analysis
                 self.predictor.pipeline_data['use_enhanced_features'] = True
                 self.predictor.pipeline_data['use_combined_features'] = True
                 
-                # Adjust feature weights
                 self.predictor.pipeline_data['feature_weights'] = {
                     'frequency': 0.4,
                     'pattern': 0.3,
@@ -1053,21 +1049,18 @@ class DrawHandler:
                 adjustment_tracking['parameters_modified'].add('feature_mode')
                 needs_adjustment = True
                 
-                # Consider retraining if accuracy is very low
                 if accuracy < 10:
                     if hasattr(self.predictor, 'training_status'):
                         self.predictor.training_status['require_retraining'] = True
                         adjustments['adjustments_made'].append("Marked for retraining due to low accuracy")
-            
+
             # 4. Save adjusted model if changes were made
             if needs_adjustment:
-                # Create new model path with adjustment identifier - using the timestamp defined at the beginning
                 model_path = os.path.join(
                     self.models_dir,
                     f'lottery_predictor_adjusted_{timestamp}'
                 )
                 
-                # Verify models exist before trying to save
                 if not hasattr(self.predictor, 'probabilistic_model') or self.predictor.probabilistic_model is None or \
                    not hasattr(self.predictor, 'pattern_model') or self.predictor.pattern_model is None:
                     print("ERROR: Cannot save models because they don't exist")
@@ -1099,35 +1092,53 @@ class DrawHandler:
                         'metrics_before': adjustment_tracking['metrics_before']
                     }
                     
-                    # Compare with original parameters to log what changed
+                    # Get final parameter values
                     final_params = {
                         'number_boosts': self.predictor.pipeline_data.get('number_boosts', None),
                         'prediction_weights': self.predictor.pipeline_data.get('prediction_weights', None),
                         'feature_mode': self.predictor.pipeline_data.get('use_combined_features', False)
                     }
                     
-                    # Log what changed using numpy array comparison
+                    # Compare parameters safely
                     for param_name, original_value in original_params.items():
                         final_value = final_params.get(param_name)
                         
-                        if isinstance(original_value, np.ndarray) and isinstance(final_value, np.ndarray):
-                            # Use np.array_equal for array comparison
-                            if not np.array_equal(original_value, final_value):
-                                print(f"Changed parameter {param_name}:")
-                                print(f"  Before: {original_value}")
-                                print(f"  After:  {final_value}")
-                                adjustments['adjustments_made'].append(
-                                    f"Changed {param_name} from {original_value} to {final_value}"
-                                )
-                        else:
-                            # For non-array values, use regular comparison
-                            if original_value != final_value:
-                                print(f"Changed parameter {param_name}:")
-                                print(f"  Before: {original_value}")
-                                print(f"  After:  {final_value}")
-                                adjustments['adjustments_made'].append(
-                                    f"Changed {param_name} from {original_value} to {final_value}"
-                                )
+                        try:
+                            # Special handling for numpy arrays
+                            if isinstance(original_value, np.ndarray):
+                                if not np.array_equal(original_value, final_value):
+                                    print(f"Changed array parameter {param_name}")
+                                    # Show array shapes for better debugging
+                                    print(f"  - Original shape: {original_value.shape}")
+                                    print(f"  - New shape: {final_value.shape if final_value is not None else 'None'}")
+                                    # Show sample values if arrays aren't too large
+                                    if original_value.size < 10:
+                                        print(f"  - Original values: {original_value}")
+                                        print(f"  - New values: {final_value}")
+                                    adjustments['adjustments_made'].append(
+                                        f"Modified {param_name} array configuration"
+                                    )
+                            elif isinstance(original_value, dict):
+                                if original_value != final_value:
+                                    print(f"Changed dictionary parameter {param_name}")
+                                    # Show dictionary differences for better debugging
+                                    print(f"  - Original: {original_value}")
+                                    print(f"  - New: {final_value}")
+                                    adjustments['adjustments_made'].append(
+                                        f"Updated {param_name} configuration"
+                                    )
+                            else:
+                                if original_value != final_value:
+                                    print(f"Changed parameter {param_name}")
+                                    # Show value differences
+                                    print(f"  - Original: {original_value}")
+                                    print(f"  - New: {final_value}")
+                                    adjustments['adjustments_made'].append(
+                                        f"Changed {param_name} from {original_value} to {final_value}"
+                                    )
+                        except Exception as e:
+                            print(f"Warning: Could not compare {param_name}: {str(e)}")
+                            continue
                     
                     return True
                 else:
