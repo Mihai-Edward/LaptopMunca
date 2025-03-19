@@ -362,6 +362,19 @@ class DataAnalysis:
             clusters_df = pd.DataFrame([(k, v) for k, vs in clusters.items() for v in vs], 
                                      columns=["Cluster", "Number"])
     
+            # Create DataFrame for gap analysis
+            gap_stats = self.analyze_gaps()
+            gap_analysis_df = pd.DataFrame([
+                {
+                    'Number': num,
+                    'Average_Gap': stats['avg_gap'],
+                    'Max_Gap': stats['max_gap'],
+                    'Min_Gap': stats['min_gap'],
+                    'Current_Gap': stats['current_gap']
+                }
+                for num, stats in gap_stats.items()
+            ])
+    
             # Save to Excel with all sheets
             with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
                 frequency_df.to_excel(writer, sheet_name='Frequency', index=False)
@@ -375,6 +388,7 @@ class DataAnalysis:
                 sequence_patterns_df.to_excel(writer, sheet_name='Sequence Patterns', index=False)
                 time_analysis_df.to_excel(writer, sheet_name='Time Analysis', index=False)
                 clusters_df.to_excel(writer, sheet_name='Clusters', index=False)
+                gap_analysis_df.to_excel(writer, sheet_name='Gap Analysis', index=False)
     
             print(f"\nAnalysis results saved to {filename}")
             return True
@@ -383,6 +397,68 @@ class DataAnalysis:
             print(f"Error saving analysis results: {e}")
             traceback.print_exc()
             return False
+
+    def analyze_gaps(self, num_range=(1, 80)):
+        """
+        Analyze gaps between appearances for each number
+        
+        Args:
+            num_range (tuple): Range of numbers to analyze (min, max)
+            
+        Returns:
+            dict: Dictionary containing gap analysis for each number with structure:
+                {
+                    number: {
+                        'avg_gap': average gap between appearances,
+                        'max_gap': longest gap between appearances,
+                        'min_gap': shortest gap between appearances,
+                        'current_gap': draws since last appearance,
+                        'gap_history': list of all gaps
+                    }
+                }
+        """
+        # Initialize tracking dictionaries
+        gaps = defaultdict(list)
+        last_seen = defaultdict(int)
+        current_draw_index = 0
+        
+        # Track gaps for each number
+        for draw_index, (draw_date, numbers) in enumerate(self.draws):
+            current_draw_index = draw_index
+            
+            # Check each possible number
+            for num in range(num_range[0], num_range[1] + 1):
+                if num in numbers:
+                    # If we've seen this number before, calculate gap
+                    if last_seen[num] > 0:
+                        gap = draw_index - last_seen[num]
+                        gaps[num].append(gap)
+                    last_seen[num] = draw_index
+        
+        # Calculate statistics for each number
+        gap_stats = {}
+        for num in range(num_range[0], num_range[1] + 1):
+            if gaps[num]:  # Only include numbers that have appeared at least twice
+                gap_stats[num] = {
+                    'avg_gap': round(np.mean(gaps[num]), 2),
+                    'max_gap': max(gaps[num]),
+                    'min_gap': min(gaps[num]),
+                    'current_gap': current_draw_index - last_seen[num] if last_seen[num] > 0 else current_draw_index + 1,
+                    'gap_history': gaps[num]
+                }
+            else:  # Handle numbers that appeared once or never
+                gap_stats[num] = {
+                    'avg_gap': current_draw_index + 1,
+                    'max_gap': current_draw_index + 1,
+                    'min_gap': current_draw_index + 1,
+                    'current_gap': current_draw_index - last_seen[num] if last_seen[num] > 0 else current_draw_index + 1,
+                    'gap_history': []
+                }
+        
+        if self.debug:
+            print(f"DEBUG: Analyzed gaps for {len(gap_stats)} numbers")
+            
+        return gap_stats
 
 if __name__ == "__main__":
     example_draws = [
@@ -429,6 +505,12 @@ if __name__ == "__main__":
         
         top_numbers = analysis.get_top_numbers(20)
         print(f"Top 20 numbers: {', '.join(map(str, top_numbers))}")
+        
+        # Add gap analysis showcase
+        gap_analysis = analysis.analyze_gaps()
+        print("\nSample gap analysis for first 5 numbers:")
+        for num in range(1, 6):
+            print(f"Number {num}: {gap_analysis[num]}")
         
         analysis.save_to_excel(PATHS['ANALYSIS'])
         print("Analysis complete!")
