@@ -1,5 +1,5 @@
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import combinations
 import pandas as pd
 from sklearn.cluster import KMeans
@@ -11,39 +11,69 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.paths import PATHS, ensure_directories
 
 class DataAnalysis:
-    def __init__(self, draws, debug=False):
+    def __init__(self, draws=None, debug=False):
         """Initialize DataAnalysis with proper draw validation"""
-        self.draws = []
         self.debug = debug
-        
+        if draws is None:
+            self.draws = self.load_historical_data(PATHS['HISTORICAL_DATA'])
+        else:
+            self.draws = []
+            
         if self.debug:
-            print(f"\nDEBUG: Initializing DataAnalysis with {len(draws)} draws")
+            print(f"\nDEBUG: Initializing DataAnalysis with {len(draws if draws else [])} draws")
             print(f"DEBUG: First draw format: {draws[0] if draws else 'None'}")
         
-        for draw_date, numbers in draws:
-            try:
-                # Ensure numbers is a list and contains valid numbers
-                numbers = [n for n in numbers if isinstance(n, (int, float)) and 1 <= n <= 80]
-                
-                # Remove duplicates while preserving order
-                valid_numbers = []
-                seen = set()
-                for num in numbers:
-                    if num not in seen and len(valid_numbers) < 20:
-                        valid_numbers.append(num)
-                        seen.add(num)
-                
-                # Only add if we have exactly 20 valid numbers
-                if len(valid_numbers) == 20:
-                    self.draws.append((draw_date, valid_numbers))
-                else:
-                    print(f"DEBUG: Skipping draw {draw_date} - invalid number count: {len(valid_numbers)}")
+        # Process draws if provided directly
+        if draws:
+            for draw_date, numbers in draws:
+                try:
+                    # Ensure numbers is a list and contains valid numbers
+                    numbers = [n for n in numbers if isinstance(n, (int, float)) and 1 <= n <= 80]
                     
-            except Exception as e:
-                print(f"DEBUG: Error processing draw {draw_date}: {e}")
+                    # Remove duplicates while preserving order
+                    valid_numbers = []
+                    seen = set()
+                    for num in numbers:
+                        if num not in seen and len(valid_numbers) < 20:
+                            valid_numbers.append(num)
+                            seen.add(num)
+                    
+                    # Only add if we have exactly 20 valid numbers
+                    if len(valid_numbers) == 20:
+                        self.draws.append((draw_date, valid_numbers))
+                    else:
+                        print(f"DEBUG: Skipping draw {draw_date} - invalid number count: {len(valid_numbers)}")
+                        
+                except Exception as e:
+                    print(f"DEBUG: Error processing draw {draw_date}: {e}")
         
         if not self.draws:
             raise ValueError("No valid draws were processed!")
+
+    def load_historical_data(self, data_path):
+        """Load historical data from CSV file"""
+        draws = []
+        try:
+            if os.path.exists(data_path):
+                with open(data_path, 'r', encoding='utf-8') as file:
+                    import csv
+                    csv_reader = csv.reader(file)
+                    header = next(csv_reader, None)  # Skip header if exists
+                    
+                    for row in csv_reader:
+                        if len(row) >= 21:  # Date/time + 20 numbers
+                            draw_date = row[0]
+                            try:
+                                numbers = [int(num.strip()) for num in row[1:21] if num.strip()]
+                                draws.append((draw_date, numbers))
+                            except ValueError as e:
+                                print(f"Skipping row with invalid numbers: {e}")
+            else:
+                print(f"Historical data file not found: {data_path}")
+        except Exception as e:
+            print(f"Error loading historical data: {e}")
+            traceback.print_exc()
+        return draws
 
     def count_frequency(self):
         """Count frequency of all numbers across all draws"""
@@ -284,7 +314,7 @@ class DataAnalysis:
     def save_to_excel(self, filename=None):
         """Save analysis results to Excel file using config paths"""
         if filename is None:
-            filename = PATHS['ANALYSIS']
+            filename = os.path.join(PATHS['SRC_DIR'], "analysis_results.xlsx")  # Use SRC_DIR as that's where we want to save
         
         try:
             ensure_directories()
@@ -1292,8 +1322,8 @@ class DataAnalysis:
 
 if __name__ == "__main__":
     example_draws = [
-        ("20:15 26-02-2025", [1, 2, 2, 9, 12, 14, 17, 25, 26, 30, 38, 44, 54, 57, 58, 61, 65, 71, 72, 76, 79]),
-        ("20:10 26-02-2025", [4, 5, 7, 7, 9, 18, 24, 27, 29, 34, 40, 45, 48, 52, 55, 57, 70, 71, 72, 74, 77]),
+        (datetime.now().strftime("%H:%M %d-%m-%Y"), [1, 2, 2, 9, 12, 14, 17, 25, 26, 30, 38, 44, 54, 57, 58, 61, 65, 71, 72, 76, 79]),
+        ((datetime.now() - timedelta(minutes=5)).strftime("%H:%M %d-%m-%Y"), [4, 5, 7, 7, 9, 18, 24, 27, 29, 34, 40, 45, 48, 52, 55, 57, 70, 71, 72, 74, 77]),
     ]
     
     try:
@@ -1350,7 +1380,7 @@ if __name__ == "__main__":
                                 focused_prediction['confidence']):
                 print(f"Number {num}: {conf:.3f} confidence")
         
-        analysis.save_to_excel(PATHS['ANALYSIS'])
+        analysis.save_to_excel(PATHS['ANALYSIS'])  # Keep using PATHS['ANALYSIS']
         print("Analysis complete!")
         
     except Exception as e:
