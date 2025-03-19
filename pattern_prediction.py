@@ -1,3 +1,4 @@
+import csv
 import os
 import sys
 import numpy as np
@@ -36,12 +37,32 @@ class PatternPredictionModel:
         self.feature_importances = {}
         self.prediction_history = []
         self.model_performance = {}
-        self.predictions_path = os.path.join(PATHS.get('BASE_DIR', ''), 'predictions')
-        self.models_path = os.path.join(PATHS.get('BASE_DIR', ''), 'models')
+
+        # Get base directory from PATHS with fallback
+        base_dir = PATHS.get('BASE_DIR')
+        if not base_dir:
+            # Fallback to current directory if BASE_DIR not set
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
-        # Create necessary directories
-        os.makedirs(self.predictions_path, exist_ok=True)
-        os.makedirs(self.models_path, exist_ok=True)
+        # Set up prediction and model paths
+        self.predictions_path = os.path.join(base_dir, 'predictions')
+        self.models_path = os.path.join(base_dir, 'models')
+
+        # Create directories if they don't exist
+        for path in [self.predictions_path, self.models_path]:
+            try:
+                os.makedirs(path, exist_ok=True)
+            except Exception as e:
+                print(f"Warning: Could not create directory {path}: {e}")
+                # Fall back to temporary directory if needed
+                if not os.path.exists(path):
+                    temp_dir = os.path.join(os.path.expanduser('~'), '.pattern_prediction')
+                    os.makedirs(temp_dir, exist_ok=True)
+                    if path == self.predictions_path:
+                        self.predictions_path = os.path.join(temp_dir, 'predictions')
+                    else:
+                        self.models_path = os.path.join(temp_dir, 'models')
+                    os.makedirs(path, exist_ok=True)
         
     def _extract_pattern_features(self, target_position=None):
         """
@@ -551,14 +572,22 @@ class PatternPredictionModel:
         """Save all models to disk"""
         try:
             if 'xgboost' not in self.models:
+                print("No XGBoost models to save")
                 return False
+                
+            # Ensure models directory exists
+            os.makedirs(self.models_path, exist_ok=True)
                 
             # Save each number's model separately
             for num, model in self.models['xgboost'].items():
                 model_file = os.path.join(self.models_path, f"xgb_model_{num}.joblib")
-                dump(model, model_file)
+                try:
+                    dump(model, model_file)
+                except Exception as e:
+                    print(f"Error saving model {num}: {e}")
+                    continue
             
-            # Save metadata
+            # Prepare metadata
             metadata = {
                 'feature_importances': self.feature_importances,
                 'model_performance': self.model_performance,
@@ -566,12 +595,14 @@ class PatternPredictionModel:
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
             
+            # Save metadata
             metadata_file = os.path.join(self.models_path, "model_metadata.pkl")
             with open(metadata_file, 'wb') as f:
                 pickle.dump(metadata, f)
                 
-            print(f"Models saved to {self.models_path}")
+            print(f"Successfully saved models and metadata to {self.models_path}")
             return True
+            
         except Exception as e:
             print(f"Error saving models: {e}")
             return False
@@ -736,33 +767,57 @@ class PatternPredictionModel:
 
 # Example usage of the pattern prediction model
 if __name__ == "__main__":
-    # Create an instance of DataAnalysis with historical data
     try:
-        # Load historical data
-        historical_data_path = PATHS.get('HISTORICAL_DATA', '')
+        # Ensure all directories exist first
+        ensure_directories()
         
-        if not os.path.exists(historical_data_path):
-            print(f"Historical data file not found: {historical_data_path}")
+        # Get historical data path with proper error handling
+        historical_data_path = PATHS.get('HISTORICAL_DATA')
+        if not historical_data_path:
+            print("Error: HISTORICAL_DATA path not configured in config/paths.py")
             sys.exit(1)
             
-        # Load draws from CSV file
-        draws = []
-        import csv
-        
-        with open(historical_data_path, 'r', encoding='utf-8') as file:
-            csv_reader = csv.reader(file)
-            header = next(csv_reader, None)  # Skip header if exists
+        # Convert to absolute path if relative
+        if not os.path.isabs(historical_data_path):
+            base_dir = PATHS.get('BASE_DIR', os.path.dirname(os.path.dirname(__file__)))
+            historical_data_path = os.path.join(base_dir, historical_data_path)
             
-            for row in csv_reader:
-                if len(row) >= 21:  # Date/time + 20 numbers
-                    draw_date = row[0]
-                    try:
-                        numbers = [int(num.strip()) for num in row[1:21] if num.strip()]
-                        draws.append((draw_date, numbers))
-                    except ValueError as e:
-                        print(f"Skipping row with invalid numbers: {e}")
-        
-        print(f"Loaded {len(draws)} historical draws")
+        # Check if file exists
+        if not os.path.exists(historical_data_path):
+            print(f"Error: Historical data file not found at: {historical_data_path}")
+            sys.exit(1)
+            
+        # Load and parse CSV data
+        draws = []
+        try:
+            with open(historical_data_path, 'r', encoding='utf-8') as file:
+                csv_reader = csv.reader(file)
+                header = next(csv_reader, None)  # Skip header
+                
+                for row_num, row in enumerate(csv_reader, start=1):
+                    if len(row) >= 21:  # Date/time + 20 numbers
+                        draw_date = row[0]
+                        try:
+                            numbers = [int(num.strip()) for num in row[1:21] if num.strip()]
+                            if len(numbers) == 20:  # Ensure exactly 20 numbers
+                                draws.append((draw_date, numbers))
+                            else:
+                                print(f"Warning: Row {row_num} has {len(numbers)} numbers instead of 20")
+                        except ValueError as e:
+                            print(f"Warning: Skipping row {row_num}, invalid number format: {e}")
+                            continue
+                    else:
+                        print(f"Warning: Skipping row {row_num}, insufficient columns")
+
+        except Exception as e:
+            print(f"Error reading historical data file: {e}")
+            sys.exit(1)
+            
+        if not draws:
+            print("Error: No valid draws found in historical data")
+            sys.exit(1)
+            
+        print(f"Successfully loaded {len(draws)} historical draws")
         
         # Create DataAnalysis instance
         data_analysis = DataAnalysis(draws)
