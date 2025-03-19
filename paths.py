@@ -15,9 +15,21 @@ DRIVER_FILENAME = "msedgedriver.exe" if IS_WINDOWS else "msedgedriver"
 PATHS = {
     'BASE_DIR': BASE_DIR,
     'SRC_DIR': os.path.join(BASE_DIR, "src"),
+    'DATA_DIR': os.path.join(BASE_DIR, "data"),
+    'MODELS_DIR': os.path.join(BASE_DIR, "models"),
+    'PREDICTIONS_DIR': os.path.join(BASE_DIR, "predictions"),
     'DRIVER': os.path.join(BASE_DIR, "drivers", DRIVER_FILENAME),
     'DRIVERS_DIR': os.path.join(BASE_DIR, "drivers"),
-    'HISTORICAL_DATA': os.path.join(BASE_DIR, "src", "historical_draws.csv"),  # Added HISTORICAL_DATA path
+    
+    # Data files
+    'HISTORICAL_DATA': os.path.join(BASE_DIR, "src", "historical_draws.csv"),
+    'PROCESSED_DATA': os.path.join(BASE_DIR, "data", "processed"),
+    'ANALYSIS_RESULTS': os.path.join(BASE_DIR, "data", "processed", "analysis_results.xlsx"),
+    
+    # Model files
+    'MODEL_METADATA': os.path.join(BASE_DIR, "models", "model_metadata.pkl"),
+    'MODEL_PREDICTIONS': os.path.join(BASE_DIR, "predictions", "prediction_history.pkl"),
+    'EVALUATION_RESULTS': os.path.join(BASE_DIR, "predictions", "prediction_evaluations.pkl"),
 }
 
 def get_project_root():
@@ -27,13 +39,23 @@ def get_project_root():
 def ensure_directories():
     """Ensure all required directories exist"""
     try:
-        # Create directories based on PATHS
-        for name, path in PATHS.items():
-            if name.endswith('_DIR') or name == 'BASE_DIR':
-                os.makedirs(path, exist_ok=True)
-                print(f"Ensured directory exists: {path}")
-            else:
-                # For files, create their parent directories
+        # Create main directories
+        required_dirs = [
+            os.path.join(BASE_DIR, "data", "raw"),
+            os.path.join(BASE_DIR, "data", "processed"),
+            os.path.join(BASE_DIR, "models"),
+            os.path.join(BASE_DIR, "predictions"),
+            os.path.join(BASE_DIR, "src"),
+            os.path.join(BASE_DIR, "drivers"),
+        ]
+        
+        for directory in required_dirs:
+            os.makedirs(directory, exist_ok=True)
+            print(f"Ensured directory exists: {directory}")
+            
+        # For files, create their parent directories
+        for path in PATHS.values():
+            if not path.endswith('_DIR'):
                 directory = os.path.dirname(path)
                 os.makedirs(directory, exist_ok=True)
                 print(f"Ensured parent directory exists for: {path}")
