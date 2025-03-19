@@ -314,7 +314,7 @@ class DataAnalysis:
     def save_to_excel(self, filename=None):
         """Save analysis results to Excel file using config paths"""
         if filename is None:
-            filename = os.path.join(PATHS['SRC_DIR'], "analysis_results.xlsx")  # Use SRC_DIR as that's where we want to save
+           filename = PATHS['ANALYSIS_RESULTS'] 
         
         try:
             ensure_directories()
@@ -1197,7 +1197,7 @@ class DataAnalysis:
             })
             
             # Save to a new sheet in the existing Excel file
-            with pd.ExcelWriter(PATHS['ANALYSIS'], mode='a', engine='openpyxl', if_sheet_exists='replace') as writer:
+            with pd.ExcelWriter(PATHS['ANALYSIS_RESULTS'], mode='a', engine='openpyxl', if_sheet_exists='replace') as writer:  # CORRECT
                 focused_predictions_df.to_excel(writer, 
                                              sheet_name='Focused_Predictions', 
                                              index=False)
@@ -1380,7 +1380,7 @@ if __name__ == "__main__":
                                 focused_prediction['confidence']):
                 print(f"Number {num}: {conf:.3f} confidence")
         
-        analysis.save_to_excel(PATHS['ANALYSIS'])  # Keep using PATHS['ANALYSIS']
+        analysis.save_to_excel(PATHS['ANALYSIS_RESULTS'])  # Keep using PATHS['ANALYSIS']
         print("Analysis complete!")
         
     except Exception as e:
