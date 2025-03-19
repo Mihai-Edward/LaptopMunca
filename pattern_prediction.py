@@ -3,7 +3,7 @@ import os
 import sys
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import Counter
 import pickle
 import matplotlib.pyplot as plt
@@ -53,6 +53,35 @@ class PatternPredictionModel:
         if not os.path.exists(self.predictions_path) or not os.path.exists(self.models_path):
             raise RuntimeError(f"Required directories could not be created or accessed")
         
+    def get_next_draw_time(self):
+        """
+        Get the next draw time in the format 'HH:MM DD-MM-YYYY'
+        Returns time in your exact CSV format
+        """
+        current_time = datetime.now()
+        current_minute = current_time.hour * 60 + current_time.minute
+        
+        # Round to next 5 minute interval
+        next_interval = ((current_minute // 5) + 1) * 5
+        
+        # Calculate next draw time
+        next_draw = current_time.replace(
+            hour=next_interval // 60,
+            minute=next_interval % 60,
+            second=0,
+            microsecond=0
+        )
+        
+        # If we've passed the last draw of the day, move to next day
+        if next_interval >= 24 * 60:
+            next_draw = next_draw + timedelta(days=1)
+            next_draw = next_draw.replace(hour=0, minute=0)
+        
+        # Format in your exact format: "HH:MM %d-%m-%Y"
+        formatted_time = next_draw.strftime("%H:%M %d-%m-%Y")
+        
+        return formatted_time
+
     def _extract_pattern_features(self, target_position=None):
         """
         Extract features from historical draws for pattern recognition
@@ -249,16 +278,9 @@ class PatternPredictionModel:
                 'subsample': 0.8,
                 'colsample_bytree': 0.8,
                 'objective': 'binary:logistic',
-                'use_label_encoder': False,
                 'eval_metric': 'logloss',
                 'tree_method': 'hist',  # Faster training method
-                'callbacks': [
-                    xgb.callback.EarlyStopping(
-                        rounds=10,
-                        save_best=True,
-                        metric='logloss'
-                    )
-                ]
+                'early_stopping_rounds': 10  # Early stopping in params instead of callbacks
             }
             
             # Train models for each number
@@ -274,21 +296,20 @@ class PatternPredictionModel:
                     pos_weight = np.sum(y_train[:, num] == 0) / np.sum(y_train[:, num] == 1)
                     model.set_params(scale_pos_weight=pos_weight)
                     
-                    # Train with validation set
+                    # Train with validation set - removed callbacks parameter
                     model.fit(
                         X_train, y_train[:, num],
                         eval_set=[(X_val, y_val[:, num])],
                         verbose=False
                     )
                     
-                    # Evaluate performance
+                    # Rest of your existing code...
                     train_preds = model.predict(X_train)
                     val_preds = model.predict(X_val)
                     
                     train_acc = np.mean(train_preds == y_train[:, num])
                     val_acc = np.mean(val_preds == y_val[:, num])
                     
-                    # Record performance metrics
                     performances[actual_num] = {
                         'train_accuracy': train_acc,
                         'val_accuracy': val_acc,
@@ -298,7 +319,6 @@ class PatternPredictionModel:
                     
                     print(f"  Model {actual_num}: Train acc: {train_acc:.4f}, Val acc: {val_acc:.4f}")
                     
-                    # Save model and feature importance
                     models[actual_num] = model
                     importances[actual_num] = {
                         'importance': model.feature_importances_,
@@ -306,28 +326,30 @@ class PatternPredictionModel:
                     }
                     
                     successful_models += 1
+                    
                 except Exception as e:
                     print(f"Error training model for number {actual_num}: {e}")
                     failed_models += 1
-            
+                    continue
+
+            # Save results
             self.models['xgboost'] = models
             self.model_performance['xgboost'] = performances
             self.feature_importances['xgboost'] = importances
             
-            # Calculate overall model performance
+            # Print summary
             avg_val_acc = np.mean([perf['val_accuracy'] for perf in performances.values()])
             print(f"\nTraining complete. Average validation accuracy: {avg_val_acc:.4f}")
             print(f"Successfully trained {successful_models} models, failed to train {failed_models} models.")
             
-            # Save the models
             self.save_models()
-            
             return models
+            
         except Exception as e:
             print(f"Error during training: {e}")
             return None
     
-    def predict_next_draw(self, num_predictions=15):
+    def predict_next_draw(self, num_predictions=15):  # Keep at 15 numbers
         """
         Predict the next draw using the trained models
         
@@ -340,35 +362,32 @@ class PatternPredictionModel:
         if 'xgboost' not in self.models or not self.models['xgboost']:
             raise ValueError("Models not trained yet. Call train_ensemble_model first.")
         
+        next_draw_time = self.get_next_draw_time()  # Get next draw time
+        print(f"Making prediction for draw at: {next_draw_time}")
+        
         # Extract features for prediction
         features = self._extract_pattern_features()
         features_df = pd.DataFrame([features])
-        
-        # Get predictions from each model
         probabilities = {}
         
         for num, model in self.models['xgboost'].items():
-            # Get probability of the number appearing
             prob = model.predict_proba(features_df)[0][1]
             probabilities[num] = prob
         
-        # Apply additional weights based on analysis insights
         self._apply_prediction_weights(probabilities)
-        
-        # Sort by probability and get top predictions
         sorted_probs = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)
         predicted_numbers = [num for num, _ in sorted_probs[:num_predictions]]
         confidence_scores = [prob for _, prob in sorted_probs[:num_predictions]]
         
-        # Create prediction record
+        # Update prediction record with next draw time
         prediction = {
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'draw_time': next_draw_time,  # Add the next draw time
             'predicted_numbers': predicted_numbers,
             'confidence_scores': [round(score, 4) for score in confidence_scores],
             'full_probabilities': {k: round(v, 4) for k, v in sorted_probs}
         }
         
-        # Save prediction to history
         self.prediction_history.append(prediction)
         self._save_prediction(prediction)
         
@@ -909,6 +928,10 @@ if __name__ == "__main__":
         
         # Current prediction timestamp
         print(f"\nPrediction generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        model = PatternPredictionModel(data_analysis_instance)
+        next_draw_time = model.get_next_draw_time()
+        print(f"Next draw time: {next_draw_time}")  # Example output: "14:35 19-03-2025"
         
     except Exception as e:
         print(f"Error in pattern prediction: {e}")
