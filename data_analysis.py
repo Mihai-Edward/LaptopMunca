@@ -1016,6 +1016,155 @@ class DataAnalysis:
             traceback.print_exc()
             return None
 
+    def get_focused_prediction(self, top_n=15):
+        """
+        Get focused prediction of top N numbers
+        
+        Args:
+            top_n (int): Number of predictions to return
+            
+        Returns:
+            dict: Dictionary containing predicted numbers, confidence scores, and timestamp
+        """
+        try:
+            # Combine multiple analysis methods for scoring
+            scores = {}
+            
+            # 1. Frequency Analysis (30%)
+            frequency = self.count_frequency()
+            max_freq = max(frequency.values()) if frequency else 1
+            
+            # 2. Recent Performance (30%)
+            hot_cold = self.hot_and_cold_numbers(top_n=80)  # Get all numbers
+            
+            # 3. Pattern Strength (40%)
+            gaps = self.analyze_gaps()
+            
+            # Calculate combined scores
+            for num in range(1, 81):
+                # Frequency score
+                freq_score = (frequency.get(num, 0) / max_freq) * 0.30
+                
+                # Recent performance score
+                recent_score = 0
+                for hot_num, _ in hot_cold['hot_numbers']:
+                    if hot_num == num:
+                        recent_score = 0.30
+                        break
+                
+                # Pattern score
+                gap_data = gaps.get(num, {})
+                if gap_data:
+                    current_gap = gap_data.get('current_gap', 0)
+                    avg_gap = gap_data.get('avg_gap', 0)
+                    pattern_score = 0.40 if current_gap > avg_gap else 0.20
+                else:
+                    pattern_score = 0
+                    
+                # Combined score
+                scores[num] = freq_score + recent_score + pattern_score
+                
+            # Get top N numbers with their confidence scores
+            sorted_numbers = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+            top_numbers = sorted_numbers[:top_n]
+            
+            return {
+                'numbers': [num for num, _ in top_numbers],
+                'confidence': [round(score, 3) for _, score in top_numbers],
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+        except Exception as e:
+            print(f"Error in focused prediction: {e}")
+            traceback.print_exc()
+            return None
+
+    def check_prediction_health(self):
+        """Monitor prediction system health"""
+        health_status = {
+            'needs_attention': False,
+            'reasons': []
+        }
+        
+        try:
+            # 1. Check pattern stability
+            validation_results = self.validate_patterns()
+            if validation_results:
+                stability = validation_results['validation_summary']['average_hot_numbers_stability']
+                if stability < 50:  # Less than 50% stability
+                    health_status['needs_attention'] = True
+                    health_status['reasons'].append(f"Low pattern stability: {stability}%")
+            
+            # 2. Check recent accuracy
+            recent_performance = self.analyze_recent_performance()
+            if recent_performance['average_accuracy'] < 15:  # Less than 15% accuracy
+                health_status['needs_attention'] = True
+                health_status['reasons'].append("Low prediction accuracy")
+            
+            # 3. Check pattern changes
+            if self.check_significant_pattern_changes():
+                health_status['needs_attention'] = True
+                health_status['reasons'].append("Significant pattern changes detected")
+                
+            return health_status
+            
+        except Exception as e:
+            print(f"Error in health check: {e}")
+            return {'needs_attention': True, 'reasons': ['Error in health monitoring']}
+
+    def track_prediction_performance(self, prediction, actual_draw):
+        """Track prediction performance"""
+        try:
+            correct_numbers = set(prediction['numbers']).intersection(set(actual_draw))
+            accuracy = len(correct_numbers) / len(prediction['numbers'])
+            
+            performance_data = {
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'predicted_numbers': prediction['numbers'],
+                'actual_numbers': actual_draw,
+                'correct_count': len(correct_numbers),
+                'accuracy': accuracy,
+                'confidence_correlation': self.calculate_confidence_correlation(
+                    prediction['numbers'], 
+                    prediction['confidence'], 
+                    actual_draw
+                )
+            }
+            
+            return performance_data
+            
+        except Exception as e:
+            print(f"Error tracking performance: {e}")
+            return None
+
+    def save_focused_predictions(self, prediction_data):
+        """
+        Save focused predictions with confidence scores
+        
+        Args:
+            prediction_data (dict): Dictionary containing prediction data
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Add to the existing save_to_excel method
+            focused_predictions_df = pd.DataFrame({
+                'timestamp': [prediction_data['timestamp']],
+                'numbers': [str(prediction_data['numbers'])],  # Convert list to string for Excel
+                'confidence_scores': [str(prediction_data['confidence'])]  # Convert list to string for Excel
+            })
+            
+            # Save to a new sheet in the existing Excel file
+            with pd.ExcelWriter(PATHS['ANALYSIS'], mode='a', engine='openpyxl', if_sheet_exists='replace') as writer:
+                focused_predictions_df.to_excel(writer, 
+                                             sheet_name='Focused_Predictions', 
+                                             index=False)
+            return True
+        except Exception as e:
+            print(f"Error saving focused predictions: {e}")
+            traceback.print_exc()
+            return False
+
 if __name__ == "__main__":
     example_draws = [
         ("20:15 26-02-2025", [1, 2, 2, 9, 12, 14, 17, 25, 26, 30, 38, 44, 54, 57, 58, 61, 65, 71, 72, 76, 79]),
