@@ -146,10 +146,9 @@ class PredictionEvaluator:
             # Set up timestamp handling
             current_time = datetime.now()
             if draw_date is None:
-                # Format timestamp in required format: "HH:MM  %d-%m-%Y"
-                draw_date = current_time.strftime('%H:%M  %d-%m-%Y')
-            
-            # Calculate matches
+                draw_date = current_time.strftime('%H:%M  %d-%m-%Y')  # Keep double space format
+                
+            # Calculate matches and metrics
             matches = set(predicted_numbers).intersection(set(actual_numbers))
             num_correct = len(matches)
             
@@ -158,21 +157,7 @@ class PredictionEvaluator:
             precision = (num_correct / len(predicted_numbers)) * 100 if predicted_numbers else 0
             recall = (num_correct / len(actual_numbers)) * 100 if actual_numbers else 0
             f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-            
-            # Initialize evaluation metrics if not exists
-            if not hasattr(self, 'evaluation_metrics'):
-                self.evaluation_metrics = {
-                    'accuracy_history': [],
-                    'precision_history': [],
-                    'recall_history': [],
-                    'f1_history': [],
-                    'total_evaluated': 0,
-                    'total_correct': 0,
-                    'best_prediction': 0,
-                    'avg_accuracy': 0.0,
-                    'matched_numbers': Counter()
-                }
-            
+
             # Create result dictionary
             result = {
                 'date': draw_date,
@@ -188,7 +173,21 @@ class PredictionEvaluator:
                 'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S')
             }
             
-            # Update evaluation metrics
+            # Update evaluation metrics for DrawHandler compatibility
+            if not hasattr(self, 'evaluation_metrics'):
+                self.evaluation_metrics = {
+                    'accuracy_history': [],
+                    'precision_history': [],
+                    'recall_history': [],
+                    'f1_history': [],
+                    'total_evaluated': 0,
+                    'total_correct': 0,
+                    'best_prediction': 0,
+                    'avg_accuracy': 0.0,
+                    'matched_numbers': Counter()
+                }
+
+            # Update metrics that DrawHandler uses
             self.evaluation_metrics['accuracy_history'].append(accuracy)
             self.evaluation_metrics['precision_history'].append(precision)
             self.evaluation_metrics['recall_history'].append(recall)
@@ -196,11 +195,9 @@ class PredictionEvaluator:
             self.evaluation_metrics['total_evaluated'] += 1
             self.evaluation_metrics['total_correct'] += num_correct
             self.evaluation_metrics['best_prediction'] = max(
-                self.evaluation_metrics['best_prediction'], 
+                self.evaluation_metrics['best_prediction'],
                 num_correct
             )
-            
-            # Update matched numbers counter
             self.evaluation_metrics['matched_numbers'].update(matches)
             
             # Calculate average accuracy
@@ -209,66 +206,51 @@ class PredictionEvaluator:
                     self.evaluation_metrics['total_correct'] / 
                     (self.evaluation_metrics['total_evaluated'] * 20)
                 ) * 100
-            
-            # Important: Use the correct path from PATHS
+
+            # Use PATHS structure but save directly without temp files
             results_file = os.path.join(PATHS['PROCESSED_DIR'], 'evaluation_results.xlsx')
             
-            # Ensure directory exists before trying to read/write
+            # Ensure directory exists
             os.makedirs(os.path.dirname(results_file), exist_ok=True)
             
             try:
-                # Check if file exists AND is not being written to
+                # Read existing or create new
                 if os.path.exists(results_file):
                     try:
-                        # Try to open with pandas
                         existing_df = pd.read_excel(results_file, engine='openpyxl')
-                    except PermissionError:
-                        print("File is being used by another process, waiting...")
-                        import time
-                        time.sleep(1)  # Wait 1 second and try again
-                        existing_df = pd.read_excel(results_file, engine='openpyxl')
-                    
-                    # Check if we already have this draw date
-                    date_match = existing_df['date'] == draw_date
-                    if any(date_match):
-                        # Update existing entry
-                        for key, value in result.items():
-                            if key in existing_df.columns:
-                                existing_df.loc[date_match, key] = str(value) if isinstance(value, (list, set)) else value
-                        results_df = existing_df
-                    else:
-                        # Convert lists to strings for Excel storage
-                        result_copy = result.copy()
-                        for key in ['matches', 'predicted', 'actual']:
-                            result_copy[key] = str(result_copy[key])
-                        
-                        # Append new result
-                        new_df = pd.DataFrame([result_copy])
-                        results_df = pd.concat([existing_df, new_df], ignore_index=True)
+                        date_match = existing_df['date'].astype(str).str.strip() == str(draw_date).strip()
+                        if any(date_match):
+                            # Update existing entry
+                            for key, value in result.items():
+                                if key in existing_df.columns:
+                                    existing_df.loc[date_match, key] = str(value) if isinstance(value, (list, set)) else value
+                            results_df = existing_df
+                        else:
+                            # Append new result
+                            result_copy = {
+                                k: str(v) if isinstance(v, (list, set)) else v 
+                                for k, v in result.items()
+                            }
+                            new_df = pd.DataFrame([result_copy])
+                            results_df = pd.concat([existing_df, new_df], ignore_index=True)
+                    except Exception as read_error:
+                        print(f"Warning: Could not read existing file: {read_error}")
+                        # Create new DataFrame with proper string conversion
+                        result_copy = {
+                            k: str(v) if isinstance(v, (list, set)) else v 
+                            for k, v in result.items()
+                        }
+                        results_df = pd.DataFrame([result_copy])
                 else:
-                    # Create new file
-                    # Convert lists to strings for Excel storage
-                    result_copy = result.copy()
-                    for key in ['matches', 'predicted', 'actual']:
-                        result_copy[key] = str(result_copy[key])
+                    # Create new DataFrame with proper string conversion
+                    result_copy = {
+                        k: str(v) if isinstance(v, (list, set)) else v 
+                        for k, v in result.items()
+                    }
                     results_df = pd.DataFrame([result_copy])
-                
-                # Save with error handling
-                try:
-                    results_df.to_excel(results_file, index=False)
-                except PermissionError:
-                    print("File is being used, saving to temporary file...")
-                    import time
-                    temp_file = results_file.replace('.xlsx', '_temp.xlsx')
-                    results_df.to_excel(temp_file, index=False)
-                    # Try to rename after saving
-                    if os.path.exists(temp_file):
-                        time.sleep(1)  # Wait a moment before attempting file replacement
-                        try:
-                            os.replace(temp_file, results_file)
-                            print("Successfully replaced original file with temporary file")
-                        except PermissionError:
-                            print(f"Could not replace original file. Temporary file saved at {temp_file}")
+
+                # Save directly - no temp file
+                results_df.to_excel(results_file, index=False, engine='openpyxl')
                 
                 if self.verbose:
                     # Print evaluation summary
@@ -280,15 +262,14 @@ class PredictionEvaluator:
                     print(f"F1 Score: {f1_score:.2f}")
                     if matches:
                         print(f"Matched numbers: {sorted(matches)}")
-                
+
                 return result
-                
+
             except Exception as excel_error:
                 print(f"Error handling Excel file: {excel_error}")
                 traceback.print_exc()
-                # Still return the result even if Excel save fails
-                return result
-                
+                return result  # Still return result for DrawHandler
+
         except Exception as e:
             print(f"Error in save_comparison: {e}")
             traceback.print_exc()
@@ -543,15 +524,15 @@ class PredictionEvaluator:
         return ((second_half_avg - first_half_avg) / first_half_avg) * 100 if first_half_avg > 0 else 0
 
     def plot_performance_trends(self):
-        """Plot trends in prediction accuracy"""
+        """Plot trends in prediction accuracy without using temporary files"""
         try:
-            # Load results from Excel file
+            # Load results directly from Excel file
             results_file = os.path.join(PATHS.get('PROCESSED_DIR', ''), 'evaluation_results.xlsx')
             if not os.path.exists(results_file):
                 print("No evaluation results file found.")
                 return
                 
-            # Try to load the data
+            # Try to load the data directly
             try:
                 df = pd.read_excel(results_file, engine='openpyxl')
             except Exception as e:
@@ -567,7 +548,7 @@ class PredictionEvaluator:
                 print(f"Column 'num_correct' not found in results file. Available columns: {df.columns.tolist()}")
                 return
                 
-            # Create plot
+            # Create plot directly in memory - no temp files
             plt.figure(figsize=(12, 6))
             
             # Plot number of correct predictions over time
@@ -600,9 +581,10 @@ class PredictionEvaluator:
             
             plt.tight_layout()
             
-            # Save plot
+            # Save plot directly - no temp file
             plot_file = os.path.join(PATHS.get('PROCESSED_DIR', ''), 'performance_trends.png')
             plt.savefig(plot_file)
+            plt.close()  # Explicitly close the plot to free memory
             print(f"Performance trends plot saved to {plot_file}")
             
         except Exception as e:
@@ -616,7 +598,7 @@ class PredictionEvaluator:
             
             if not os.path.exists(self.excel_file):
                 print(f"\nNo predictions file found at: {self.excel_file}")
-                return
+                return False
                 
             try:
                 # Load predictions from Excel
@@ -625,7 +607,7 @@ class PredictionEvaluator:
                 
                 if len(predictions_df) == 0:
                     print("No predictions found in Excel file.")
-                    return
+                    return False
                 
                 # Load historical data
                 historical_df = pd.read_csv(self.historical_file, dtype={'date': str})
@@ -637,6 +619,7 @@ class PredictionEvaluator:
                 
                 evaluation_results = []
                 
+                # Process each prediction directly - no temp files
                 for idx, pred_row in predictions_df.iterrows():
                     try:
                         draw_time = pred_row['standardized_time']
@@ -656,7 +639,6 @@ class PredictionEvaluator:
                         matching_draws = historical_df[historical_df['standardized_date'] == draw_time]
                         
                         if len(matching_draws) == 0:
-                            #print(f"No matching draw found for {draw_time}")
                             continue
                         
                         # Get actual numbers
@@ -667,7 +649,7 @@ class PredictionEvaluator:
                             if not pd.isna(val):
                                 actual_numbers.append(int(val))
                         
-                        # Compare and save results
+                        # Compare and save results directly - no temp files
                         result = self.save_comparison(
                             predicted_numbers,
                             actual_numbers,
@@ -676,7 +658,6 @@ class PredictionEvaluator:
                         
                         if result:
                             evaluation_results.append(result)
-                            #print(f"Evaluated prediction for {draw_time}: {result['num_correct']} correct")
                         
                     except Exception as row_error:
                         print(f"Error processing prediction row {idx}: {row_error}")
@@ -687,17 +668,21 @@ class PredictionEvaluator:
                     stats = self.get_performance_stats()
                     self.display_summary_results(stats)
                     self.plot_performance_trends()
-                    #print(f"\nSuccessfully evaluated {len(evaluation_results)} predictions")
+                    print(f"\nSuccessfully evaluated {len(evaluation_results)} predictions")
                 else:
                     print("\nNo valid predictions found to evaluate.")
                     
+                return True
+                
             except Exception as e:
                 print(f"Error processing predictions: {e}")
                 traceback.print_exc()
+                return False
                 
         except Exception as e:
             print(f"\nError in evaluation: {e}")
             traceback.print_exc()
+            return False
 
     def display_summary_results(self, stats):
         """Display summary of evaluation results"""
