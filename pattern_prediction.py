@@ -31,38 +31,27 @@ class PatternPredictionModel:
             data_analysis_instance: Instance of DataAnalysis class with historical data
             sequence_length: Number of previous draws to consider for pattern recognition
         """
+        # Initialize core attributes
         self.data_analysis = data_analysis_instance
         self.sequence_length = sequence_length
         self.models = {}
         self.feature_importances = {}
         self.prediction_history = []
         self.model_performance = {}
-
-        # Get base directory from PATHS with fallback
-        base_dir = PATHS.get('BASE_DIR')
-        if not base_dir:
-            # Fallback to current directory if BASE_DIR not set
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
-        # Set up prediction and model paths
-        self.predictions_path = os.path.join(base_dir, 'predictions')
-        self.models_path = os.path.join(base_dir, 'models')
-
-        # Create directories if they don't exist
-        for path in [self.predictions_path, self.models_path]:
-            try:
-                os.makedirs(path, exist_ok=True)
-            except Exception as e:
-                print(f"Warning: Could not create directory {path}: {e}")
-                # Fall back to temporary directory if needed
-                if not os.path.exists(path):
-                    temp_dir = os.path.join(os.path.expanduser('~'), '.pattern_prediction')
-                    os.makedirs(temp_dir, exist_ok=True)
-                    if path == self.predictions_path:
-                        self.predictions_path = os.path.join(temp_dir, 'predictions')
-                    else:
-                        self.models_path = os.path.join(temp_dir, 'models')
-                    os.makedirs(path, exist_ok=True)
+        # Use paths directly from PATHS with error checking
+        if 'PREDICTIONS' not in PATHS or 'MODELS' not in PATHS:
+            raise ValueError("PREDICTIONS and MODELS paths must be configured in PATHS")
+            
+        self.predictions_path = PATHS['PREDICTIONS']
+        self.models_path = PATHS['MODELS']
+        
+        # Ensure directories exist
+        ensure_directories()
+        
+        # Verify directories are accessible
+        if not os.path.exists(self.predictions_path) or not os.path.exists(self.models_path):
+            raise RuntimeError(f"Required directories could not be created or accessed")
         
     def _extract_pattern_features(self, target_position=None):
         """
