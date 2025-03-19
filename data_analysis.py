@@ -375,6 +375,38 @@ class DataAnalysis:
                 for num, stats in gap_stats.items()
             ])
     
+            # Get combinations analysis
+            combinations_analysis = self.analyze_combinations(group_size=3, top_n=10)
+            
+            # Create DataFrames for combinations analysis
+            most_common_combinations_df = pd.DataFrame([
+                {
+                    'Combination': str(list(item['combination'])),
+                    'Frequency': item['frequency'],
+                    'Percentage': round(item['percentage'], 2),
+                    'Average_Gap': round(item['average_gap'], 2)
+                }
+                for item in combinations_analysis['most_common']
+            ])
+            
+            least_common_combinations_df = pd.DataFrame([
+                {
+                    'Combination': str(list(item['combination'])),
+                    'Frequency': item['frequency'],
+                    'Percentage': round(item['percentage'], 2),
+                    'Average_Gap': round(item['average_gap'], 2)
+                }
+                for item in combinations_analysis['least_common']
+            ])
+            
+            # Create statistics dataframe for combinations
+            combinations_stats_df = pd.DataFrame([{
+                'Total_Combinations': combinations_analysis['statistics']['total_combinations'],
+                'Total_Occurrences': combinations_analysis['statistics']['total_occurrences'],
+                'Average_Frequency': combinations_analysis['statistics']['avg_frequency'],
+                'Group_Size': combinations_analysis['statistics']['group_size']
+            }])
+    
             # Save to Excel with all sheets
             with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
                 frequency_df.to_excel(writer, sheet_name='Frequency', index=False)
@@ -389,6 +421,9 @@ class DataAnalysis:
                 time_analysis_df.to_excel(writer, sheet_name='Time Analysis', index=False)
                 clusters_df.to_excel(writer, sheet_name='Clusters', index=False)
                 gap_analysis_df.to_excel(writer, sheet_name='Gap Analysis', index=False)
+                most_common_combinations_df.to_excel(writer, sheet_name='Most Common Combinations', index=False)
+                least_common_combinations_df.to_excel(writer, sheet_name='Least Common Combinations', index=False)
+                combinations_stats_df.to_excel(writer, sheet_name='Combinations Statistics', index=False)
     
             print(f"\nAnalysis results saved to {filename}")
             return True
@@ -459,6 +494,96 @@ class DataAnalysis:
             print(f"DEBUG: Analyzed gaps for {len(gap_stats)} numbers")
             
         return gap_stats
+
+    def analyze_combinations(self, group_size=3, top_n=10):
+        """
+        Analyze frequently occurring number combinations
+        
+        Args:
+            group_size (int): Size of number combinations to analyze (2-5)
+            top_n (int): Number of top/bottom combinations to return
+            
+        Returns:
+            dict: Dictionary containing combination analysis
+        """
+        try:
+            # Validate inputs
+            if not self.draws:
+                raise ValueError("No draws available for analysis")
+                
+            group_size = max(2, min(5, group_size))  # Ensure group_size is between 2 and 5
+            top_n = max(1, min(50, top_n))  # Ensure top_n is between 1 and 50
+            
+            if self.debug:
+                print(f"DEBUG: Analyzing combinations of size {group_size}")
+            
+            # Track combinations
+            combinations_count = Counter()
+            total_draws = len(self.draws)
+            
+            # Process each draw
+            for _, numbers in self.draws:
+                if len(numbers) >= group_size:  # Ensure we have enough numbers
+                    # Get all possible combinations of the specified size
+                    combos = combinations(sorted(numbers), group_size)
+                    combinations_count.update(combos)
+            
+            if not combinations_count:
+                raise ValueError(f"No valid combinations of size {group_size} found")
+                
+            # Calculate statistics
+            most_common = combinations_count.most_common(top_n)
+            least_common = sorted(combinations_count.items(), key=lambda x: x[1])[:top_n]
+            
+            # Calculate averages and percentages
+            total_combinations = len(combinations_count)
+            total_occurrences = sum(combinations_count.values())
+            avg_frequency = total_occurrences / total_combinations if total_combinations > 0 else 0
+            
+            if self.debug:
+                print(f"DEBUG: Found {total_combinations} unique combinations")
+                print(f"DEBUG: Average frequency: {avg_frequency:.2f}")
+            
+            return {
+                'most_common': [
+                    {
+                        'combination': combo,
+                        'frequency': freq,
+                        'percentage': round((freq / total_draws) * 100, 2),
+                        'average_gap': round(total_draws / freq, 2) if freq > 0 else total_draws
+                    }
+                    for combo, freq in most_common
+                ],
+                'least_common': [
+                    {
+                        'combination': combo,
+                        'frequency': freq,
+                        'percentage': round((freq / total_draws) * 100, 2),
+                        'average_gap': round(total_draws / freq, 2) if freq > 0 else total_draws
+                    }
+                    for combo, freq in least_common
+                ],
+                'statistics': {
+                    'total_combinations': total_combinations,
+                    'total_occurrences': total_occurrences,
+                    'avg_frequency': round(avg_frequency, 2),
+                    'group_size': group_size
+                }
+            }
+            
+        except Exception as e:
+            print(f"ERROR in analyze_combinations: {e}")
+            traceback.print_exc()
+            return {
+                'most_common': [],
+                'least_common': [],
+                'statistics': {
+                    'total_combinations': 0,
+                    'total_occurrences': 0,
+                    'avg_frequency': 0,
+                    'group_size': group_size
+                }
+            }
 
 if __name__ == "__main__":
     example_draws = [
