@@ -381,7 +381,7 @@ class DataAnalysis:
             # Create DataFrames for combinations analysis
             most_common_combinations_df = pd.DataFrame([
                 {
-                    'Combination': str(list(item['combination'])).replace('[', '').replace(']', ''),  # More readable format
+                    'Combination': str(list(item['combination'])).replace('[', '').replace(']', ''),
                     'Frequency': item['frequency'],
                     'Percentage': round(item['percentage'], 2),
                     'Average_Gap': round(item['average_gap'], 2)
@@ -391,7 +391,7 @@ class DataAnalysis:
             
             least_common_combinations_df = pd.DataFrame([
                 {
-                    'Combination': str(list(item['combination'])).replace('[', '').replace(']', ''),  # More readable format
+                    'Combination': str(list(item['combination'])).replace('[', '').replace(']', ''),
                     'Frequency': item['frequency'],
                     'Percentage': round(item['percentage'], 2),
                     'Average_Gap': round(item['average_gap'], 2)
@@ -432,6 +432,43 @@ class DataAnalysis:
                 'Most Stable Date': skip_analysis['statistics']['most_stable_dates'][0]['draw_date'] if skip_analysis['statistics']['most_stable_dates'] else 'N/A'
             }])
     
+            # Get statistical significance results
+            significance_results = self.analyze_statistical_significance()
+            if significance_results and 'frequency_tests' in significance_results:
+                significance_df = pd.DataFrame(significance_results['frequency_tests'])
+                pattern_tests_df = pd.DataFrame(significance_results['pattern_tests']) if 'pattern_tests' in significance_results and significance_results['pattern_tests'] else pd.DataFrame()
+                time_tests_df = pd.DataFrame(significance_results['time_tests']) if 'time_tests' in significance_results and significance_results['time_tests'] else pd.DataFrame()
+            else:
+                significance_df = pd.DataFrame()
+                pattern_tests_df = pd.DataFrame()
+                time_tests_df = pd.DataFrame()
+                
+            # Get cross-validation results
+            validation_results = self.validate_patterns()
+            if validation_results and 'fold_results' in validation_results:
+                validation_folds_df = pd.DataFrame(validation_results['fold_results'])
+                validation_summary_df = pd.DataFrame([validation_results['validation_summary']])
+                
+                # Create DataFrame for consistent patterns
+                consistent_hot_numbers_df = pd.DataFrame(
+                    validation_results['pattern_stability']['consistent_hot_numbers']
+                    if 'pattern_stability' in validation_results else []
+                )
+                consistent_pairs_df = pd.DataFrame(
+                    validation_results['pattern_stability']['consistent_pairs']
+                    if 'pattern_stability' in validation_results else []
+                )
+                consistent_trends_df = pd.DataFrame(
+                    validation_results['pattern_stability']['consistent_trends']
+                    if 'pattern_stability' in validation_results else []
+                )
+            else:
+                validation_folds_df = pd.DataFrame()
+                validation_summary_df = pd.DataFrame()
+                consistent_hot_numbers_df = pd.DataFrame()
+                consistent_pairs_df = pd.DataFrame()
+                consistent_trends_df = pd.DataFrame()
+    
             # Save to Excel with all sheets
             with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
                 frequency_df.to_excel(writer, sheet_name='Frequency', index=False)
@@ -451,6 +488,14 @@ class DataAnalysis:
                 combinations_stats_df.to_excel(writer, sheet_name='Combinations Statistics', index=False)
                 skip_patterns_df.to_excel(writer, sheet_name='Skip Patterns', index=False)
                 skip_patterns_stats_df.to_excel(writer, sheet_name='Skip Pattern Stats', index=False)
+                significance_df.to_excel(writer, sheet_name='Significance Tests', index=False)
+                pattern_tests_df.to_excel(writer, sheet_name='Pattern Tests', index=False)
+                time_tests_df.to_excel(writer, sheet_name='Time Tests', index=False)
+                validation_folds_df.to_excel(writer, sheet_name='Validation Folds', index=False)
+                validation_summary_df.to_excel(writer, sheet_name='Validation Summary', index=False)
+                consistent_hot_numbers_df.to_excel(writer, sheet_name='Consistent Hot Numbers', index=False)
+                consistent_pairs_df.to_excel(writer, sheet_name='Consistent Pairs', index=False)
+                consistent_trends_df.to_excel(writer, sheet_name='Consistent Trends', index=False)
     
             print(f"\nAnalysis results saved to {filename}")
             return True
@@ -694,6 +739,282 @@ class DataAnalysis:
                 },
                 'recent_patterns': []
             }
+
+    def analyze_statistical_significance(self):
+        """
+        Analyze statistical significance of patterns
+        
+        Returns:
+            dict: Dictionary containing statistical test results for frequencies and patterns
+        """
+        try:
+            from scipy import stats
+            
+            results = {
+                'frequency_tests': [],
+                'pattern_tests': [],
+                'time_tests': []
+            }
+            
+            # Expected frequency if uniform distribution
+            expected_per_draw = 20/80  # Each number has 20/80 chance per draw
+            total_draws = len(self.draws)
+            expected_frequency = total_draws * expected_per_draw
+            
+            # Test frequency significance
+            frequency = self.count_frequency()
+            for number, observed_freq in frequency.items():
+                chi_square = ((observed_freq - expected_frequency) ** 2) / expected_frequency
+                p_value = 1 - stats.chi2.cdf(chi_square, df=1)
+                
+                results['frequency_tests'].append({
+                    'number': number,
+                    'observed': observed_freq,
+                    'expected': expected_frequency,
+                    'chi_square': round(chi_square, 4),
+                    'p_value': round(p_value, 4),
+                    'significant': p_value < 0.05
+                })
+                
+            # Test for patterns in time series (runs test)
+            try:
+                # For each number, create a binary time series (1=appeared, 0=didn't appear)
+                for number in range(1, 81):
+                    binary_series = [1 if number in draw[1] else 0 for draw in self.draws]
+                    
+                    # Need at least a few occurrences for meaningful analysis
+                    if sum(binary_series) > 5 and sum(binary_series) < len(binary_series) - 5:
+                        runs, n1, n0 = stats.runstest_1samp(binary_series)
+                        # Convert runs to p-value
+                        p_value = 2 * (1 - stats.norm.cdf(abs(runs)))
+                        
+                        results['pattern_tests'].append({
+                            'number': number,
+                            'runs_test': round(runs, 4),
+                            'p_value': round(p_value, 4),
+                            'significant': p_value < 0.05,
+                            'interpretation': "Non-random" if p_value < 0.05 else "Random"
+                        })
+            except AttributeError:
+                # If runstest is not available in the scipy version
+                if self.debug:
+                    print("DEBUG: Runs test not available in this scipy version")
+                pass
+                
+            # Analyze hot/cold patterns over time
+            try:
+                hot_cold = self.hot_and_cold_numbers()
+                trending_up = [num for num, data in hot_cold['trending_up']]
+                trending_down = [num for num, data in hot_cold['trending_down']]
+                
+                # Test if trending patterns are statistically significant
+                # Using binomial test to see if trend deviates from random chance
+                for num in range(1, 81):
+                    if num in trending_up or num in trending_down:
+                        # Get recent vs overall frequency
+                        window_size = min(50, len(self.draws))
+                        recent_draws = self.draws[-window_size:]
+                        
+                        # Count occurrences
+                        recent_count = sum(1 for _, numbers in recent_draws if num in numbers)
+                        total_count = frequency[num]
+                        
+                        # Expected probability based on overall data
+                        expected_prob = total_count / len(self.draws)
+                        
+                        # Binomial test for recent data
+                        p_value = stats.binom_test(recent_count, n=window_size, p=expected_prob)
+                        
+                        results['time_tests'].append({
+                            'number': num,
+                            'trend': "Up" if num in trending_up else "Down",
+                            'recent_frequency': recent_count / window_size,
+                            'overall_frequency': expected_prob,
+                            'p_value': round(p_value, 4),
+                            'significant': p_value < 0.05
+                        })
+            except Exception as e:
+                if self.debug:
+                    print(f"DEBUG: Error in time trend analysis: {e}")
+                    
+            if self.debug:
+                significant_freq = sum(1 for t in results['frequency_tests'] if t['significant'])
+                significant_patterns = sum(1 for t in results['pattern_tests'] if t['significant'])
+                print(f"DEBUG: Found {significant_freq} statistically significant frequencies")
+                print(f"DEBUG: Found {significant_patterns} statistically significant patterns")
+                
+            return results
+            
+        except ImportError:
+            print("Warning: scipy not installed. Statistical tests unavailable.")
+            return {'error': 'scipy library not installed'}
+        except Exception as e:
+            print(f"Error in statistical significance analysis: {e}")
+            traceback.print_exc()
+            return None
+
+    def validate_patterns(self, k_folds=5):
+        """
+        Cross-validate patterns using k-fold validation
+        
+        Args:
+            k_folds (int): Number of folds to use in cross-validation
+            
+        Returns:
+            dict: Dictionary containing validation results and stability metrics
+        """
+        try:
+            results = {
+                'fold_results': [],
+                'pattern_stability': {},
+                'validation_summary': {}
+            }
+            
+            # Ensure we have enough data for k-fold validation
+            total_draws = len(self.draws)
+            if total_draws < k_folds * 2:
+                k_folds = max(2, total_draws // 2)
+                if self.debug:
+                    print(f"DEBUG: Not enough draws for {k_folds} folds, reducing to {k_folds}")
+            
+            # Split data into k folds
+            fold_size = total_draws // k_folds
+            
+            # Track pattern stability across folds
+            all_hot_numbers = []
+            all_pairs = []
+            all_trends_up = []
+            
+            for fold in range(k_folds):
+                start_idx = fold * fold_size
+                end_idx = start_idx + fold_size
+                
+                # Create training and validation sets
+                validation_draws = self.draws[start_idx:end_idx]
+                training_draws = self.draws[:start_idx] + self.draws[end_idx:]
+                
+                # Skip if either set is too small
+                if len(training_draws) < 5 or len(validation_draws) < 5:
+                    continue
+                
+                # Analyze each set
+                training_analysis = DataAnalysis(training_draws, debug=False)
+                validation_analysis = DataAnalysis(validation_draws, debug=False)
+                
+                # Compare hot numbers
+                train_hot = set(num for num, _ in training_analysis.hot_and_cold_numbers()['hot_numbers'][:10])
+                val_hot = set(num for num, _ in validation_analysis.hot_and_cold_numbers()['hot_numbers'][:10])
+                hot_overlap = len(train_hot.intersection(val_hot))
+                all_hot_numbers.append(train_hot)
+                
+                # Compare common pairs
+                train_pairs = set(pair for pair, _ in training_analysis.find_common_pairs(10))
+                val_pairs = set(pair for pair, _ in validation_analysis.find_common_pairs(10))
+                pair_overlap = len(train_pairs.intersection(val_pairs))
+                all_pairs.append(train_pairs)
+                
+                # Compare trending numbers
+                train_trending_up = set(num for num, _ in training_analysis.hot_and_cold_numbers()['trending_up'][:5])
+                val_trending_up = set(num for num, _ in validation_analysis.hot_and_cold_numbers()['trending_up'][:5])
+                trend_overlap = len(train_trending_up.intersection(val_trending_up))
+                all_trends_up.append(train_trending_up)
+                
+                # Calculate prediction accuracy
+                # For each validation draw, check if training hot numbers appear more frequently
+                validation_hot_hits = 0
+                validation_draws_count = 0
+                
+                for _, numbers in validation_draws:
+                    validation_draws_count += 1
+                    # Count hot numbers that appeared
+                    hot_hits = sum(1 for num in numbers if num in train_hot)
+                    validation_hot_hits += hot_hits
+                
+                # Average hit rate per draw
+                avg_hot_hits = validation_hot_hits / validation_draws_count if validation_draws_count > 0 else 0
+                expected_hits = 10 * (20 / 80)  # Expected hits if random
+                
+                results['fold_results'].append({
+                    'fold': fold + 1,
+                    'training_size': len(training_draws),
+                    'validation_size': len(validation_draws),
+                    'hot_numbers_overlap': hot_overlap,
+                    'hot_numbers_overlap_percentage': round((hot_overlap / 10) * 100, 2),
+                    'common_pairs_overlap': pair_overlap,
+                    'common_pairs_overlap_percentage': round((pair_overlap / 10) * 100, 2) if train_pairs else 0,
+                    'trend_up_overlap': trend_overlap,
+                    'trend_up_overlap_percentage': round((trend_overlap / 5) * 100, 2) if train_trending_up else 0,
+                    'hot_number_hit_rate': round(avg_hot_hits, 2),
+                    'expected_random_hit_rate': round(expected_hits, 2),
+                    'hit_rate_vs_random': round((avg_hot_hits / expected_hits if expected_hits > 0 else 0), 2)
+                })
+            
+            # Calculate consistency across all folds
+            # For hot numbers: how many numbers appear in multiple fold analyses
+            hot_number_counts = Counter()
+            for hot_set in all_hot_numbers:
+                hot_number_counts.update(hot_set)
+                
+            pair_counts = Counter()
+            for pair_set in all_pairs:
+                pair_counts.update(pair_set)
+                
+            trend_counts = Counter()
+            for trend_set in all_trends_up:
+                trend_counts.update(trend_set)
+                
+            # Calculate stability metrics
+            results['pattern_stability'] = {
+                'consistent_hot_numbers': [
+                    {'number': num, 'fold_occurrences': count, 'percentage': round((count / k_folds) * 100, 2)}
+                    for num, count in hot_number_counts.most_common()
+                    if count > 1  # Appears in more than one fold
+                ],
+                'consistent_pairs': [
+                    {'pair': pair, 'fold_occurrences': count, 'percentage': round((count / k_folds) * 100, 2)}
+                    for pair, count in pair_counts.most_common(5)
+                    if count > 1
+                ],
+                'consistent_trends': [
+                    {'number': num, 'fold_occurrences': count, 'percentage': round((count / k_folds) * 100, 2)}
+                    for num, count in trend_counts.most_common(5)
+                    if count > 1
+                ]
+            }
+            
+            # Calculate overall stability scores
+            avg_hot_overlap = sum(r['hot_numbers_overlap_percentage'] for r in results['fold_results']) / len(results['fold_results']) if results['fold_results'] else 0
+            avg_pair_overlap = sum(r['common_pairs_overlap_percentage'] for r in results['fold_results']) / len(results['fold_results']) if results['fold_results'] else 0
+            avg_trend_overlap = sum(r['trend_up_overlap_percentage'] for r in results['fold_results']) / len(results['fold_results']) if results['fold_results'] else 0
+            avg_hit_rate = sum(r['hot_number_hit_rate'] for r in results['fold_results']) / len(results['fold_results']) if results['fold_results'] else 0
+            avg_random_rate = sum(r['expected_random_hit_rate'] for r in results['fold_results']) / len(results['fold_results']) if results['fold_results'] else 0
+            
+            results['validation_summary'] = {
+                'average_hot_numbers_stability': round(avg_hot_overlap, 2),
+                'average_common_pairs_stability': round(avg_pair_overlap, 2),
+                'average_trend_stability': round(avg_trend_overlap, 2),
+                'average_hit_rate': round(avg_hit_rate, 2),
+                'average_expected_random_rate': round(avg_random_rate, 2),
+                'hit_rate_advantage': round(avg_hit_rate - avg_random_rate, 2),
+                'number_of_folds': k_folds,
+                'total_draws_analyzed': total_draws,
+                'most_consistent_number': results['pattern_stability']['consistent_hot_numbers'][0]['number'] 
+                    if results['pattern_stability']['consistent_hot_numbers'] else None,
+                'predictive_power': "Above Random" if avg_hit_rate > avg_random_rate else 
+                                   "Below Random" if avg_hit_rate < avg_random_rate else "Random"
+            }
+            
+            if self.debug:
+                print(f"DEBUG: Completed {k_folds}-fold cross-validation")
+                print(f"DEBUG: Hot number stability: {avg_hot_overlap:.2f}%")
+                print(f"DEBUG: Predictive power: {results['validation_summary']['predictive_power']}")
+                
+            return results
+            
+        except Exception as e:
+            print(f"Error in pattern validation: {e}")
+            traceback.print_exc()
+            return None
 
 if __name__ == "__main__":
     example_draws = [
