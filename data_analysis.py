@@ -381,7 +381,7 @@ class DataAnalysis:
             # Create DataFrames for combinations analysis
             most_common_combinations_df = pd.DataFrame([
                 {
-                    'Combination': str(list(item['combination'])),
+                    'Combination': str(list(item['combination'])).replace('[', '').replace(']', ''),  # More readable format
                     'Frequency': item['frequency'],
                     'Percentage': round(item['percentage'], 2),
                     'Average_Gap': round(item['average_gap'], 2)
@@ -391,7 +391,7 @@ class DataAnalysis:
             
             least_common_combinations_df = pd.DataFrame([
                 {
-                    'Combination': str(list(item['combination'])),
+                    'Combination': str(list(item['combination'])).replace('[', '').replace(']', ''),  # More readable format
                     'Frequency': item['frequency'],
                     'Percentage': round(item['percentage'], 2),
                     'Average_Gap': round(item['average_gap'], 2)
@@ -405,6 +405,31 @@ class DataAnalysis:
                 'Total_Occurrences': combinations_analysis['statistics']['total_occurrences'],
                 'Average_Frequency': combinations_analysis['statistics']['avg_frequency'],
                 'Group_Size': combinations_analysis['statistics']['group_size']
+            }])
+    
+            # Add skip patterns analysis
+            skip_analysis = self.analyze_skip_patterns()
+    
+            # Create DataFrames for skip patterns
+            skip_patterns_df = pd.DataFrame([
+                {
+                    'Draw Date': pattern['draw_date'],
+                    'Skipped Count': pattern['skipped_count'],
+                    'New Count': pattern['new_count'],
+                    'Repeat Count': pattern['repeat_count'],
+                    'Skipped Numbers': str(pattern['skipped_numbers']).replace('[', '').replace(']', ''),
+                    'New Numbers': str(pattern['new_numbers']).replace('[', '').replace(']', ''),
+                    'Repeated Numbers': str(pattern['repeated_numbers']).replace('[', '').replace(']', '')
+                }
+                for pattern in skip_analysis['patterns']
+            ])
+    
+            # Create stats DataFrame for skip patterns
+            skip_patterns_stats_df = pd.DataFrame([{
+                'Average Skipped': skip_analysis['statistics']['avg_skipped'],
+                'Average New': skip_analysis['statistics']['avg_new'],
+                'Most Volatile Date': skip_analysis['statistics']['most_volatile_dates'][0]['draw_date'] if skip_analysis['statistics']['most_volatile_dates'] else 'N/A',
+                'Most Stable Date': skip_analysis['statistics']['most_stable_dates'][0]['draw_date'] if skip_analysis['statistics']['most_stable_dates'] else 'N/A'
             }])
     
             # Save to Excel with all sheets
@@ -424,6 +449,8 @@ class DataAnalysis:
                 most_common_combinations_df.to_excel(writer, sheet_name='Most Common Combinations', index=False)
                 least_common_combinations_df.to_excel(writer, sheet_name='Least Common Combinations', index=False)
                 combinations_stats_df.to_excel(writer, sheet_name='Combinations Statistics', index=False)
+                skip_patterns_df.to_excel(writer, sheet_name='Skip Patterns', index=False)
+                skip_patterns_stats_df.to_excel(writer, sheet_name='Skip Pattern Stats', index=False)
     
             print(f"\nAnalysis results saved to {filename}")
             return True
@@ -583,6 +610,89 @@ class DataAnalysis:
                     'avg_frequency': 0,
                     'group_size': group_size
                 }
+            }
+
+    def analyze_skip_patterns(self, window_size=10):
+        """
+        Analyze patterns in number skips between consecutive draws
+        
+        Args:
+            window_size (int): Number of recent draws to analyze in detail
+            
+        Returns:
+            dict: Dictionary containing skip pattern analysis
+        """
+        try:
+            if len(self.draws) < 2:
+                raise ValueError("Need at least 2 draws to analyze skip patterns")
+                
+            skip_patterns = []
+            total_skips = 0
+            total_new_numbers = 0
+            
+            # Analyze consecutive draws
+            for i in range(len(self.draws) - 1):
+                current_numbers = set(self.draws[i][1])
+                next_numbers = set(self.draws[i+1][1])
+                
+                # Calculate skips and new numbers
+                skipped = current_numbers - next_numbers
+                new_numbers = next_numbers - current_numbers
+                repeated = current_numbers.intersection(next_numbers)
+                
+                pattern = {
+                    'draw_date': self.draws[i+1][0],
+                    'skipped_count': len(skipped),
+                    'new_count': len(new_numbers),
+                    'repeat_count': len(repeated),
+                    'skipped_numbers': sorted(skipped),
+                    'new_numbers': sorted(new_numbers),
+                    'repeated_numbers': sorted(repeated)
+                }
+                
+                skip_patterns.append(pattern)
+                total_skips += len(skipped)
+                total_new_numbers += len(new_numbers)
+            
+            # Calculate recent patterns
+            recent_patterns = skip_patterns[-window_size:] if len(skip_patterns) > window_size else skip_patterns
+            
+            # Calculate statistics
+            total_draws = len(skip_patterns)
+            stats = {
+                'avg_skipped': round(total_skips / total_draws, 2) if total_draws > 0 else 0,
+                'avg_new': round(total_new_numbers / total_draws, 2) if total_draws > 0 else 0,
+                'most_volatile_dates': sorted(skip_patterns, 
+                                           key=lambda x: x['skipped_count'] + x['new_count'], 
+                                           reverse=True)[:5],
+                'most_stable_dates': sorted(skip_patterns, 
+                                         key=lambda x: x['repeat_count'], 
+                                         reverse=True)[:5]
+            }
+            
+            if self.debug:
+                print(f"DEBUG: Analyzed {len(skip_patterns)} skip patterns")
+                print(f"DEBUG: Average numbers skipped: {stats['avg_skipped']}")
+                print(f"DEBUG: Average new numbers: {stats['avg_new']}")
+            
+            return {
+                'patterns': skip_patterns,
+                'statistics': stats,
+                'recent_patterns': recent_patterns
+            }
+            
+        except Exception as e:
+            print(f"ERROR in analyze_skip_patterns: {e}")
+            traceback.print_exc()
+            return {
+                'patterns': [],
+                'statistics': {
+                    'avg_skipped': 0,
+                    'avg_new': 0,
+                    'most_volatile_dates': [],
+                    'most_stable_dates': []
+                },
+                'recent_patterns': []
             }
 
 if __name__ == "__main__":
