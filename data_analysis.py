@@ -1,4 +1,5 @@
-from collections import Counter
+from collections import Counter, defaultdict
+from datetime import datetime
 from itertools import combinations
 import pandas as pd
 from sklearn.cluster import KMeans
@@ -17,7 +18,7 @@ class DataAnalysis:
         
         if self.debug:
             print(f"\nDEBUG: Initializing DataAnalysis with {len(draws)} draws")
-            print(f"DEBUG: First draw format: {draws[0] if draws else 'None'}")  # Add this line
+            print(f"DEBUG: First draw format: {draws[0] if draws else 'None'}")
         
         for draw_date, numbers in draws:
             try:
@@ -43,9 +44,6 @@ class DataAnalysis:
         
         if not self.draws:
             raise ValueError("No valid draws were processed!")
-        
-        # if self.debug:
-        #     print(f"DEBUG: Successfully processed {len(self.draws)} valid draws")
 
     def count_frequency(self):
         """Count frequency of all numbers across all draws"""
@@ -106,30 +104,136 @@ class DataAnalysis:
                     
         print(f"DEBUG: Range analysis completed. Distribution: {ranges}")
         return ranges
-
-    def hot_and_cold_numbers(self, top_n=10):
-        """Identify hot (frequent) and cold (rare) numbers"""
+    
+    def hot_and_cold_numbers(self, top_n=10, window_size=50):
+        """Enhanced hot/cold analysis with trending detection"""
+        # Overall hot/cold
         frequency = self.count_frequency()
-        # Get full sorted frequency list
         sorted_numbers = frequency.most_common()
         
-        # Get hot numbers (most frequent)
-        hot_numbers = sorted_numbers[:top_n]
+        # Recent trends (using window)
+        recent_draws = self.draws[-window_size:] if len(self.draws) > window_size else self.draws
+        recent_numbers = [number for _, numbers in recent_draws for number in numbers]
+        recent_frequency = Counter(recent_numbers)
         
-        # Get cold numbers (least frequent)
-        cold_numbers = sorted_numbers[-top_n:]
+        # Calculate trend (increasing/decreasing frequency)
+        trends = {}
+        for num in range(1, 81):
+            overall_freq = frequency[num] / max(len(self.draws), 1) if self.draws else 0
+            recent_freq = recent_frequency[num] / max(len(recent_draws), 1) if recent_draws else 0
+            trend = recent_freq - overall_freq
+            trends[num] = {
+                'overall_freq': round(overall_freq, 4),
+                'recent_freq': round(recent_freq, 4),
+                'trend': round(trend, 4),
+                'number': num
+            }
         
-        return hot_numbers, cold_numbers
+        # Get trending up and down numbers
+        trending_up = sorted([(k, v) for k, v in trends.items()], key=lambda x: x[1]['trend'], reverse=True)[:top_n]
+        trending_down = sorted([(k, v) for k, v in trends.items()], key=lambda x: x[1]['trend'])[:top_n]
+        
+        if self.debug:
+            print(f"DEBUG: Analyzed hot/cold numbers with window size {window_size}")
+            print(f"DEBUG: Found {len(trending_up)} trending up and {len(trending_down)} trending down numbers")
+        
+        return {
+            'hot_numbers': sorted_numbers[:top_n],
+            'cold_numbers': sorted_numbers[-top_n:],
+            'trending_up': trending_up,
+            'trending_down': trending_down
+        }
 
     def sequence_pattern_analysis(self, sequence_length=3):
-        """Analyze patterns of consecutive numbers"""
+        """Enhanced sequence analysis with detailed time patterns"""
         sequences = Counter()
-        for draw in self.draws:
-            numbers = sorted(draw[1])
-            for i in range(len(numbers) - sequence_length + 1):
-                sequence = tuple(numbers[i:i+sequence_length])
-                sequences.update([sequence])
-        return sequences.most_common()
+        time_patterns = {
+            'hourly': defaultdict(Counter),
+            'daily': defaultdict(Counter),
+            'five_minute': defaultdict(Counter)
+        }
+        
+        for i in range(len(self.draws) - sequence_length + 1):
+            window = self.draws[i:i+sequence_length]
+            numbers_sequence = tuple(sorted(window[-1][1]))
+            sequences.update([numbers_sequence])
+            
+            draw_time = window[-1][0]
+            try:
+                time_parts = draw_time.split()
+                hour_min = time_parts[0].split(':')
+                hour = int(hour_min[0])
+                minute = int(hour_min[1])
+                
+                date_parts = time_parts[1].split('-')
+                draw_datetime = datetime(
+                    year=int(date_parts[2]),
+                    month=int(date_parts[1]),
+                    day=int(date_parts[0]),
+                    hour=hour,
+                    minute=minute
+                )
+                
+                time_patterns['hourly'][hour].update([numbers_sequence])
+                time_patterns['daily'][draw_datetime.weekday()].update([numbers_sequence])
+                
+                five_min_interval = 5 * (minute // 5)
+                time_key = f"{hour:02d}:{five_min_interval:02d}"
+                time_patterns['five_minute'][time_key].update([numbers_sequence])
+                
+            except (ValueError, IndexError) as e:
+                if self.debug:
+                    print(f"Error parsing time {draw_time}: {e}")
+                continue
+        
+        time_analysis = {
+            'hourly_favorites': {
+                hour: {
+                    'most_common': seqs.most_common(5),
+                    'total_draws': sum(seqs.values())
+                }
+                for hour, seqs in time_patterns['hourly'].items()
+            },
+            'daily_favorites': {
+                ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][day]: {
+                    'most_common': seqs.most_common(5),
+                    'total_draws': sum(seqs.values())
+                }
+                for day, seqs in time_patterns['daily'].items()
+            },
+            'time_slot_favorites': {
+                time_slot: {
+                    'most_common': seqs.most_common(5),
+                    'total_draws': sum(seqs.values())
+                }
+                for time_slot, seqs in time_patterns['five_minute'].items()
+            }
+        }
+        
+        most_active_hour = max(time_patterns['hourly'].items(), 
+                              key=lambda x: sum(x[1].values()))[0] if time_patterns['hourly'] else None
+        
+        most_active_day = None
+        if time_patterns['daily']:
+            day_index = max(time_patterns['daily'].items(),
+                          key=lambda x: sum(x[1].values()))[0]
+            most_active_day = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 
+                              'Friday', 'Saturday', 'Sunday'][day_index]
+        
+        most_active_time_slot = max(time_patterns['five_minute'].items(),
+                                  key=lambda x: sum(x[1].values()))[0] if time_patterns['five_minute'] else None
+        
+        return {
+            'overall_sequences': sequences.most_common(),
+            'time_analysis': time_analysis,
+            'statistics': {
+                'total_sequences': sum(sequences.values()),
+                'unique_sequences': len(sequences),
+                'most_active_hour': most_active_hour,
+                'most_active_day': most_active_day,
+                'most_active_time_slot': most_active_time_slot
+            }
+        }
 
     def cluster_analysis(self, n_clusters=3):
         """Cluster numbers based on their frequency"""
@@ -155,7 +259,7 @@ class DataAnalysis:
         except Exception as e:
             print(f"ERROR in cluster_analysis: {e}")
             traceback.print_exc()
-            return {0: list(range(1, 81))}  # Fallback to single cluster
+            return {0: list(range(1, 81))}
 
     def get_analysis_results(self):
         """Get all analysis results in one call"""
@@ -183,22 +287,27 @@ class DataAnalysis:
             filename = PATHS['ANALYSIS']
         
         try:
-            # Ensure directories exist
             ensure_directories()
             
-            # Make sure we have a directory path
             if os.path.dirname(filename):
                 os.makedirs(os.path.dirname(filename), exist_ok=True)
-
+    
             # Get all analysis results
             frequency = self.count_frequency()
             common_pairs = self.find_common_pairs()
             consecutive_numbers = self.find_consecutive_numbers()
             range_analysis = self.number_range_analysis()
-            hot_numbers, cold_numbers = self.hot_and_cold_numbers()
+            
+            # Update to use new hot_and_cold_numbers return format
+            hot_cold_data = self.hot_and_cold_numbers()
+            hot_numbers = hot_cold_data['hot_numbers']
+            cold_numbers = hot_cold_data['cold_numbers']
+            trending_up = hot_cold_data['trending_up']
+            trending_down = hot_cold_data['trending_down']
+            
             sequence_patterns = self.sequence_pattern_analysis()
             clusters = self.cluster_analysis()
-
+    
             # Create DataFrames
             frequency_df = pd.DataFrame(frequency.items(), columns=["Number", "Frequency"])
             
@@ -206,23 +315,53 @@ class DataAnalysis:
             common_pairs_df["Number 1"] = common_pairs_df["Pair"].apply(lambda x: x[0])
             common_pairs_df["Number 2"] = common_pairs_df["Pair"].apply(lambda x: x[1])
             common_pairs_df = common_pairs_df.drop(columns=["Pair"])
-
+    
             consecutive_numbers_df = pd.DataFrame(consecutive_numbers, columns=["Pair", "Frequency"])
             consecutive_numbers_df["Number 1"] = consecutive_numbers_df["Pair"].apply(lambda x: x[0])
             consecutive_numbers_df["Number 2"] = consecutive_numbers_df["Pair"].apply(lambda x: x[1])
             consecutive_numbers_df = consecutive_numbers_df.drop(columns=["Pair"])
-
+    
             range_analysis_df = pd.DataFrame(range_analysis.items(), columns=["Range", "Count"])
-
-            # Create separate DataFrames for hot and cold numbers
+    
+            # Create DataFrames for hot/cold analysis
             hot_numbers_df = pd.DataFrame(hot_numbers, columns=["Number", "Frequency"])
             cold_numbers_df = pd.DataFrame(cold_numbers, columns=["Number", "Frequency"])
-
-            sequence_patterns_df = pd.DataFrame(sequence_patterns, columns=["Sequence", "Frequency"])
-
+            
+            # Add new DataFrames for trending analysis
+            trending_up_df = pd.DataFrame([
+                {"Number": num, "Overall_Freq": data['overall_freq'], 
+                 "Recent_Freq": data['recent_freq'], "Trend": data['trend']} 
+                for num, data in trending_up
+            ])
+            
+            trending_down_df = pd.DataFrame([
+                {"Number": num, "Overall_Freq": data['overall_freq'], 
+                 "Recent_Freq": data['recent_freq'], "Trend": data['trend']} 
+                for num, data in trending_down
+            ])
+    
+            # Create DataFrame for sequence patterns
+            if isinstance(sequence_patterns, dict) and 'overall_sequences' in sequence_patterns:
+                sequence_patterns_df = pd.DataFrame(sequence_patterns['overall_sequences'], 
+                                                 columns=["Sequence", "Frequency"])
+                
+                if 'time_analysis' in sequence_patterns and 'hourly_favorites' in sequence_patterns['time_analysis']:
+                    time_analysis_df = pd.DataFrame([
+                        {
+                            'Hour': hour,
+                            'Most_Common_Sequence': str(data['most_common'][0][0]) if data['most_common'] else 'None',
+                            'Frequency': data['most_common'][0][1] if data['most_common'] else 0,
+                            'Total_Draws': data['total_draws']
+                        }
+                        for hour, data in sequence_patterns['time_analysis']['hourly_favorites'].items()
+                    ])
+            else:
+                sequence_patterns_df = pd.DataFrame(sequence_patterns, columns=["Sequence", "Frequency"])
+                time_analysis_df = pd.DataFrame(columns=['Hour', 'Most_Common_Sequence', 'Frequency', 'Total_Draws'])
+    
             clusters_df = pd.DataFrame([(k, v) for k, vs in clusters.items() for v in vs], 
                                      columns=["Cluster", "Number"])
-
+    
             # Save to Excel with all sheets
             with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
                 frequency_df.to_excel(writer, sheet_name='Frequency', index=False)
@@ -231,9 +370,12 @@ class DataAnalysis:
                 range_analysis_df.to_excel(writer, sheet_name='Number Range', index=False)
                 hot_numbers_df.to_excel(writer, sheet_name='Hot Numbers', index=False)
                 cold_numbers_df.to_excel(writer, sheet_name='Cold Numbers', index=False)
+                trending_up_df.to_excel(writer, sheet_name='Trending Up', index=False)
+                trending_down_df.to_excel(writer, sheet_name='Trending Down', index=False)
                 sequence_patterns_df.to_excel(writer, sheet_name='Sequence Patterns', index=False)
+                time_analysis_df.to_excel(writer, sheet_name='Time Analysis', index=False)
                 clusters_df.to_excel(writer, sheet_name='Clusters', index=False)
-
+    
             print(f"\nAnalysis results saved to {filename}")
             return True
             
@@ -243,14 +385,12 @@ class DataAnalysis:
             return False
 
 if __name__ == "__main__":
-    # Example draws for testing if real data fails to load
     example_draws = [
         ("20:15 26-02-2025", [1, 2, 2, 9, 12, 14, 17, 25, 26, 30, 38, 44, 54, 57, 58, 61, 65, 71, 72, 76, 79]),
         ("20:10 26-02-2025", [4, 5, 7, 7, 9, 18, 24, 27, 29, 34, 40, 45, 48, 52, 55, 57, 70, 71, 72, 74, 77]),
     ]
     
     try:
-        # Try to load real data from the CSV file
         real_draws = []
         csv_file = PATHS['HISTORICAL_DATA']
         
@@ -266,7 +406,6 @@ if __name__ == "__main__":
                     if len(row) >= 21:  # Date/time + 20 numbers
                         draw_date = row[0]
                         try:
-                            # Convert all number strings to integers
                             numbers = [int(num.strip()) for num in row[1:21] if num.strip()]
                             real_draws.append((draw_date, numbers))
                         except ValueError as e:
@@ -283,17 +422,14 @@ if __name__ == "__main__":
             print("Using example draws instead")
             draws_to_analyze = example_draws
             
-        # Initialize analysis with loaded data
         analysis = DataAnalysis(draws_to_analyze)
         
-        # Run analyses
         frequency = analysis.count_frequency()
         print(f"Number of unique numbers: {len(frequency)}")
         
         top_numbers = analysis.get_top_numbers(20)
         print(f"Top 20 numbers: {', '.join(map(str, top_numbers))}")
         
-        # Save results
         analysis.save_to_excel(PATHS['ANALYSIS'])
         print("Analysis complete!")
         
