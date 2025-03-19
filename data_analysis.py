@@ -468,6 +468,17 @@ class DataAnalysis:
                 consistent_hot_numbers_df = pd.DataFrame()
                 consistent_pairs_df = pd.DataFrame()
                 consistent_trends_df = pd.DataFrame()
+            
+            # Add new sheet for focused predictions
+            focused_predictions = self.get_focused_prediction()
+            if focused_predictions:
+                focused_df = pd.DataFrame({
+                    'Predicted Numbers': [str(focused_predictions['numbers'])],
+                    'Confidence Scores': [str(focused_predictions['confidence'])],
+                    'Timestamp': [focused_predictions['timestamp']]
+                })
+            else:
+                focused_df = pd.DataFrame(columns=['Predicted Numbers', 'Confidence Scores', 'Timestamp'])
     
             # Save to Excel with all sheets
             with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
@@ -496,6 +507,7 @@ class DataAnalysis:
                 consistent_hot_numbers_df.to_excel(writer, sheet_name='Consistent Hot Numbers', index=False)
                 consistent_pairs_df.to_excel(writer, sheet_name='Consistent Pairs', index=False)
                 consistent_trends_df.to_excel(writer, sheet_name='Consistent Trends', index=False)
+                focused_df.to_excel(writer, sheet_name='Focused_Predictions', index=False)
     
             print(f"\nAnalysis results saved to {filename}")
             return True
@@ -1165,6 +1177,119 @@ class DataAnalysis:
             traceback.print_exc()
             return False
 
+    def analyze_recent_performance(self, window_size=50):
+        """
+        Analyze recent prediction performance
+        
+        Args:
+            window_size (int): Number of recent draws to analyze
+            
+        Returns:
+            dict: Dictionary containing accuracy metrics
+        """
+        try:
+            recent_draws = self.draws[-window_size:] if len(self.draws) > window_size else self.draws
+            # Calculate performance metrics
+            total_accuracy = 0
+            predictions_count = 0
+            
+            for i in range(len(recent_draws) - 1):
+                prediction = self.get_focused_prediction()
+                if prediction:
+                    actual_draw = recent_draws[i + 1][1]
+                    correct = len(set(prediction['numbers']).intersection(set(actual_draw)))
+                    total_accuracy += correct / len(prediction['numbers'])
+                    predictions_count += 1
+            
+            return {
+                'average_accuracy': round(total_accuracy / predictions_count if predictions_count > 0 else 0, 4),
+                'predictions_analyzed': predictions_count
+            }
+        except Exception as e:
+            print(f"Error in recent performance analysis: {e}")
+            return {'average_accuracy': 0, 'predictions_analyzed': 0}
+
+    def calculate_confidence_correlation(self, predicted_numbers, confidence_scores, actual_numbers):
+        """
+        Calculate correlation between confidence scores and actual hits
+        
+        Args:
+            predicted_numbers (list): List of predicted numbers
+            confidence_scores (list): List of confidence scores for each prediction
+            actual_numbers (list): List of numbers that actually appeared
+            
+        Returns:
+            float: Correlation coefficient between confidence and actual hits
+        """
+        try:
+            hits = [1 if num in actual_numbers else 0 for num in predicted_numbers]
+            if len(hits) != len(confidence_scores):
+                return 0
+                
+            # Calculate correlation coefficient
+            n = len(hits)
+            hits_mean = sum(hits) / n
+            conf_mean = sum(confidence_scores) / n
+            
+            numerator = sum((h - hits_mean) * (c - conf_mean) 
+                           for h, c in zip(hits, confidence_scores))
+            denominator = (sum((h - hits_mean) ** 2 for h in hits) * 
+                          sum((c - conf_mean) ** 2 for c in confidence_scores)) ** 0.5
+            
+            correlation = numerator / denominator if denominator != 0 else 0
+            return round(correlation, 4)
+            
+        except Exception as e:
+            print(f"Error calculating confidence correlation: {e}")
+            return 0
+
+    def check_significant_pattern_changes(self, threshold=0.30):
+        """
+        Check for significant changes in number patterns
+        
+        Args:
+            threshold (float): Threshold for determining significant change
+            
+        Returns:
+            bool: True if significant pattern changes detected, False otherwise
+        """
+        try:
+            # Compare recent vs historical patterns
+            window_size = min(50, len(self.draws) // 2)
+            recent_draws = self.draws[-window_size:]
+            historical_draws = self.draws[:-window_size]
+            
+            if not historical_draws:
+                return False
+                
+            # Analyze both sets
+            recent_analysis = DataAnalysis(recent_draws, debug=False)
+            historical_analysis = DataAnalysis(historical_draws, debug=False)
+            
+            # Compare frequency distributions
+            recent_freq = recent_analysis.count_frequency()
+            historical_freq = historical_analysis.count_frequency()
+            
+            # Calculate pattern change magnitude
+            total_change = 0
+            total_numbers = 0
+            
+            for num in range(1, 81):
+                recent_prob = recent_freq.get(num, 0) / len(recent_draws) if recent_draws else 0
+                hist_prob = historical_freq.get(num, 0) / len(historical_draws) if historical_draws else 0
+                
+                if hist_prob > 0:  # Only consider numbers that appeared in historical data
+                    change = abs(recent_prob - hist_prob) / hist_prob
+                    total_change += change
+                    total_numbers += 1
+            
+            avg_change = total_change / total_numbers if total_numbers > 0 else 0
+            return avg_change > threshold
+            
+        except Exception as e:
+            print(f"Error checking pattern changes: {e}")
+            return False
+
 if __name__ == "__main__":
     example_draws = [
         ("20:15 26-02-2025", [1, 2, 2, 9, 12, 14, 17, 25, 26, 30, 38, 44, 54, 57, 58, 61, 65, 71, 72, 76, 79]),
@@ -1216,6 +1341,14 @@ if __name__ == "__main__":
         print("\nSample gap analysis for first 5 numbers:")
         for num in range(1, 6):
             print(f"Number {num}: {gap_analysis[num]}")
+        
+        # Add focused prediction showcase
+        focused_prediction = analysis.get_focused_prediction()
+        if focused_prediction:
+            print("\nFocused Prediction (Top 15 numbers):")
+            for num, conf in zip(focused_prediction['numbers'], 
+                                focused_prediction['confidence']):
+                print(f"Number {num}: {conf:.3f} confidence")
         
         analysis.save_to_excel(PATHS['ANALYSIS'])
         print("Analysis complete!")
