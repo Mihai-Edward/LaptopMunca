@@ -216,29 +216,32 @@ class PatternPredictionModel:
     def train_ensemble_model(self, n_estimators=100, learning_rate=0.05, max_depth=4):
         """
         Train an ensemble of XGBoost models for predicting number probabilities
-        
+
         Args:
-            n_estimators: Number of estimators for XGBoost
-            learning_rate: Learning rate for XGBoost
-            max_depth: Maximum tree depth for XGBoost
-            
+            n_estimators: Number of estimators for XGBoost (default: 100)
+            learning_rate: Learning rate for XGBoost (default: 0.05) 
+            max_depth: Maximum tree depth for XGBoost (default: 4)
+
         Returns:
             Dictionary of trained models, one for each number
         """
-        print("Preparing training data...")
-        X_train, X_val, y_train, y_val = self.prepare_training_data()
-        
-        # Train a separate model for each number
-        models = {}
-        performances = {}
-        importances = {}
-        
-        print(f"Training {80} models (one per number)...")
-        for num in range(80):  # 0-79 index representing numbers 1-80
-            actual_num = num + 1
-            print(f"\nTraining model for number {actual_num}...")
+        try:
+            print("Preparing training data...")
+            X_train, X_val, y_train, y_val = self.prepare_training_data()
             
-            # Parameters for XGBoost
+            # Initialize containers
+            models = {}
+            performances = {}
+            importances = {}
+            
+            # Progress tracking
+            total_models = 80
+            successful_models = 0
+            failed_models = 0
+            
+            print(f"Training {total_models} models (one per number)...")
+            
+            # Configure XGBoost parameters
             params = {
                 'n_estimators': n_estimators,
                 'learning_rate': learning_rate,
@@ -247,54 +250,82 @@ class PatternPredictionModel:
                 'colsample_bytree': 0.8,
                 'objective': 'binary:logistic',
                 'use_label_encoder': False,
-                'eval_metric': 'logloss'
+                'eval_metric': 'logloss',
+                'tree_method': 'hist',  # Faster training method
+                'callbacks': [
+                    xgb.callback.EarlyStopping(
+                        rounds=10,
+                        save_best=True,
+                        metric='logloss'
+                    )
+                ]
             }
             
-            model = xgb.XGBClassifier(**params)
+            # Train models for each number
+            for num in range(80):
+                actual_num = num + 1
+                try:
+                    print(f"\nTraining model for number {actual_num} ({num + 1}/{total_models})...")
+                    
+                    # Initialize and train model
+                    model = xgb.XGBClassifier(**params)
+                    
+                    # Get class weights to handle imbalanced data
+                    pos_weight = np.sum(y_train[:, num] == 0) / np.sum(y_train[:, num] == 1)
+                    model.set_params(scale_pos_weight=pos_weight)
+                    
+                    # Train with validation set
+                    model.fit(
+                        X_train, y_train[:, num],
+                        eval_set=[(X_val, y_val[:, num])],
+                        verbose=False
+                    )
+                    
+                    # Evaluate performance
+                    train_preds = model.predict(X_train)
+                    val_preds = model.predict(X_val)
+                    
+                    train_acc = np.mean(train_preds == y_train[:, num])
+                    val_acc = np.mean(val_preds == y_val[:, num])
+                    
+                    # Record performance metrics
+                    performances[actual_num] = {
+                        'train_accuracy': train_acc,
+                        'val_accuracy': val_acc,
+                        'val_positive_rate': np.mean(val_preds),
+                        'actual_positive_rate': np.mean(y_val[:, num])
+                    }
+                    
+                    print(f"  Model {actual_num}: Train acc: {train_acc:.4f}, Val acc: {val_acc:.4f}")
+                    
+                    # Save model and feature importance
+                    models[actual_num] = model
+                    importances[actual_num] = {
+                        'importance': model.feature_importances_,
+                        'features': X_train.columns.tolist()
+                    }
+                    
+                    successful_models += 1
+                except Exception as e:
+                    print(f"Error training model for number {actual_num}: {e}")
+                    failed_models += 1
             
-            # Train the model
-            model.fit(
-                X_train, y_train[:, num],
-                eval_set=[(X_val, y_val[:, num])],
-                early_stopping_rounds=10,
-                verbose=False
-            )
+            self.models['xgboost'] = models
+            self.model_performance['xgboost'] = performances
+            self.feature_importances['xgboost'] = importances
             
-            # Evaluate performance
-            train_preds = model.predict(X_train)
-            val_preds = model.predict(X_val)
-            train_acc = np.mean(train_preds == y_train[:, num])
-            val_acc = np.mean(val_preds == y_val[:, num])
+            # Calculate overall model performance
+            avg_val_acc = np.mean([perf['val_accuracy'] for perf in performances.values()])
+            print(f"\nTraining complete. Average validation accuracy: {avg_val_acc:.4f}")
+            print(f"Successfully trained {successful_models} models, failed to train {failed_models} models.")
             
-            # Record performance metrics
-            performances[actual_num] = {
-                'train_accuracy': train_acc,
-                'val_accuracy': val_acc,
-                'val_positive_rate': np.mean(val_preds),
-                'actual_positive_rate': np.mean(y_val[:, num])
-            }
+            # Save the models
+            self.save_models()
             
-            print(f"  Model {actual_num}: Train acc: {train_acc:.4f}, Val acc: {val_acc:.4f}")
-            
-            # Save model and feature importance
-            models[actual_num] = model
-            importances[actual_num] = {
-                'importance': model.feature_importances_,
-                'features': X_train.columns.tolist()
-            }
-            
-        self.models['xgboost'] = models
-        self.model_performance['xgboost'] = performances
-        self.feature_importances['xgboost'] = importances
-        
-        # Calculate overall model performance
-        avg_val_acc = np.mean([perf['val_accuracy'] for perf in performances.values()])
-        print(f"\nTraining complete. Average validation accuracy: {avg_val_acc:.4f}")
-        
-        # Save the models
-        self.save_models()
-        
-        return models
+            return models
+        except Exception as e:
+            print(f"Error during training: {e}")
+            return None
     
     def predict_next_draw(self, num_predictions=15):
         """
