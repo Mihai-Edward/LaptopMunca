@@ -141,3 +141,85 @@ class FocusedPredictor:
             df.to_csv(csv_file, mode='a', header=False, index=False)
         else:
             df.to_csv(csv_file, index=False)
+
+    def train_model(self, historical_data):
+        """
+        Train the model on historical data
+        
+        Args:
+            historical_data (dict): Dictionary containing historical data with features
+            
+        Returns:
+            bool: True if training successful, False otherwise
+        """
+        try:
+            # Prepare features
+            X = self.prepare_features(historical_data)
+            # Prepare labels (1 for numbers that appeared, 0 for those that didn't)
+            y = self.prepare_labels(historical_data)
+            
+            # Train the model
+            self.model.fit(X, y)
+            
+            # Update training metadata
+            self.last_training_date = datetime.now()
+            
+            # Save the trained model
+            self.save_model()
+            
+            return True
+        except Exception as e:
+            print(f"Error training model: {e}")
+            return False
+
+    def evaluate_model(self, test_data):
+        """
+        Evaluate model performance
+        
+        Args:
+            test_data (dict): Dictionary containing test data with features
+            
+        Returns:
+            dict: Dictionary containing evaluation metrics
+        """
+        try:
+            # Prepare test features
+            X_test = self.prepare_features(test_data)
+            # Prepare test labels
+            y_test = self.prepare_labels(test_data)
+            
+            # Get predictions
+            predictions = self.model.predict_proba(X_test)[:, 1]
+            
+            # Calculate metrics
+            accuracy = self.calculate_accuracy(predictions, y_test)
+            
+            return {
+                'accuracy': accuracy,
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+        except Exception as e:
+            print(f"Error evaluating model: {e}")
+            return None
+
+    def analyze_patterns(self, historical_data):
+        """
+        Analyze number patterns
+        
+        Args:
+            historical_data (list): List of historical draw data
+        
+        Returns:
+            dict: Dictionary containing pattern analysis features
+        """
+        try:
+            pattern_features = {
+                'frequency': self.analyze_frequency(historical_data),
+                'gaps': self.analyze_gaps(historical_data),
+                'trends': self.analyze_trends(historical_data),
+                'combinations': self.analyze_combinations(historical_data)
+            }
+            return pattern_features
+        except Exception as e:
+            print(f"Error analyzing patterns: {e}")
+            return None
