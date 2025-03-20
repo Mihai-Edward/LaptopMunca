@@ -140,7 +140,7 @@ class DataAnalysis:
         print(f"DEBUG: Range analysis completed. Distribution: {ranges}")
         return ranges
     
-    def hot_and_cold_numbers(self, top_n=10, window_size=50):
+    def hot_and_cold_numbers(self, top_n=10, window_size=24):
         """Enhanced hot/cold analysis with trending detection"""
         # Overall hot/cold
         frequency = self.count_frequency()
@@ -704,7 +704,7 @@ class DataAnalysis:
                 }
             }
 
-    def analyze_skip_patterns(self, window_size=10):
+    def analyze_skip_patterns(self, window_size=6):
         """
         Analyze patterns in number skips between consecutive draws
         
@@ -1212,7 +1212,7 @@ class DataAnalysis:
             traceback.print_exc()
             return False
 
-    def analyze_recent_performance(self, window_size=50):
+    def analyze_recent_performance(self, window_size=24):
         """
         Analyze recent prediction performance
         

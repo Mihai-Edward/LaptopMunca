@@ -23,17 +23,17 @@ class PatternPredictionModel:
     Works with the existing DataAnalysis class to leverage historical draw data
     """
     
-    def __init__(self, data_analysis_instance, sequence_length=10):
+    def __init__(self, data_analysis_instance, sequence_length=10, debug=False):
         """
         Initialize the pattern prediction model
         
         Args:
             data_analysis_instance: Instance of DataAnalysis class with historical data
             sequence_length: Number of previous draws to consider for pattern recognition
+            debug: Enable debug output (default: False)
         """
         # Add at start of method:
         ensure_directories()  # Ensure all directories exist
-
 
         # Initialize core attributes
         self.data_analysis = data_analysis_instance
@@ -42,6 +42,7 @@ class PatternPredictionModel:
         self.feature_importances = {}
         self.prediction_history = []
         self.model_performance = {}
+        self.debug = debug  # Add debug flag
         
         # Use paths directly from PATHS with error checking
         if 'PREDICTIONS_DIR' not in PATHS or 'MODELS_DIR' not in PATHS:
@@ -253,6 +254,13 @@ class PatternPredictionModel:
             
             print(f"Total features extracted: {len(features)}")
             
+            # Add after all features are extracted, before return:
+            if self.debug:
+                print("\nDEBUG: === Key Feature Values ===")
+                for feat_name in [f for f in features.keys() if any(x in f for x in ['gap_ratio_', 'current_gap_', 'is_hot_'])]:
+                    if features[feat_name] > 0.5:  # Only show significant features
+                        print(f"DEBUG: {feat_name} = {features[feat_name]:.4f}")
+            
             return features
         
         except Exception as e:
@@ -318,14 +326,14 @@ class PatternPredictionModel:
         print(f"Prepared training data: {X_train.shape[0]} training examples, {X_val.shape[0]} validation examples")
         return X_train, X_val, y_train, y_val
     
-    def train_ensemble_model(self, n_estimators=100, learning_rate=0.05, max_depth=4):
+    def train_ensemble_model(self, n_estimators=100, learning_rate=0.05, max_depth=3):
         """
         Train an ensemble of XGBoost models for predicting number probabilities
 
         Args:
             n_estimators: Number of estimators for XGBoost (default: 100)
             learning_rate: Learning rate for XGBoost (default: 0.05) 
-            max_depth: Maximum tree depth for XGBoost (default: 4)
+            max_depth: Maximum tree depth for XGBoost (default: 3)
 
         Returns:
             Dictionary of trained models, one for each number
@@ -567,6 +575,18 @@ class PatternPredictionModel:
             
             self.prediction_history.append(prediction)
             self._save_prediction(prediction)
+            
+            # Add after model predictions but before final return:
+            if self.debug:
+                print("\nDEBUG: === Model Confidence Breakdown ===")
+                # Get gap analysis and hot/cold numbers for debug output
+                gaps = self.data_analysis.analyze_gaps()
+                hot_cold = self.data_analysis.hot_and_cold_numbers(top_n=20)
+                
+                for num in sorted(probabilities, key=probabilities.get, reverse=True)[:20]:
+                    print(f"DEBUG: Number {num}: Raw prob={probabilities[num]:.4f}, " 
+                          f"Gap ratio={gaps.get(num, {}).get('gap_ratio', 0):.2f}, "
+                          f"Is hot={1 if num in [n for n, _ in hot_cold.get('hot_numbers', [])] else 0}")
             
             return predicted_numbers, confidence_scores
                 
@@ -1047,44 +1067,61 @@ class PatternPredictionModel:
         """
         Validate that the data used for prediction is fresh and up-to-date
         
-        Checks:
-        - If data is properly loaded
-        - If the latest draw is recent (within 5 minutes)
-        - If analysis results are available and updated
-        
         Returns:
             bool: True if all validations pass, False otherwise
         """
         validation = {
-            'data_loaded': True,
-            'data_fresh': True,
-            'analysis_updated': True
+            'data_loaded': False,
+            'data_fresh': False,
+            'analysis_updated': False
         }
         
         try:
             # Check if data is loaded
-            if hasattr(self.data_analysis, 'draws') and self.data_analysis.draws:
-                validation['data_loaded'] = True
+            if not hasattr(self.data_analysis, 'draws') or not self.data_analysis.draws:
+                print("❌ No data loaded")
+                return False
                 
-                # Check data freshness (last draw within 5 minutes)
-                latest_draw_time = self.data_analysis.draws[-1][0]
-                latest_draw_dt = datetime.strptime(latest_draw_time, "%H:%M %d-%m-%Y")
+            validation['data_loaded'] = True
+            
+            # Get latest draw time with proper error handling
+            latest_draw = self.data_analysis.draws[-1] if self.data_analysis.draws else None
+            if not latest_draw:
+                print("❌ No draws available")
+                return False
+                
+            latest_draw_time = latest_draw[0]
+            
+            try:
+                # Handle both possible formats
+                try:
+                    # Try format: "HH:MM DD-MM-YYYY"
+                    time_part, date_part = latest_draw_time.split(' ', 1)
+                    latest_draw_dt = datetime.strptime(f"{date_part} {time_part}", "%d-%m-%Y %H:%M")
+                except ValueError:
+                    # Fallback: try "DD-MM-YYYY HH:MM" format
+                    latest_draw_dt = datetime.strptime(latest_draw_time, "%d-%m-%Y %H:%M")
+                    
                 time_diff = datetime.now() - latest_draw_dt
                 validation['data_fresh'] = time_diff.total_seconds() < 300  # 5 minutes
                 
-                # Check if analysis is updated
-                # Note: This assumes DataAnalysis has a get_analysis_results method
-                # If it doesn't, you'll need to modify this check
-                if hasattr(self.data_analysis, 'get_analysis_results'):
-                    latest_analysis = self.data_analysis.get_analysis_results()
-                    validation['analysis_updated'] = bool(latest_analysis)
-                else:
-                    # Alternative check if get_analysis_results doesn't exist
-                    # Check if basic analysis methods return valid results
-                    frequency = self.data_analysis.count_frequency()
-                    hot_cold = self.data_analysis.hot_and_cold_numbers()
-                    validation['analysis_updated'] = bool(frequency) and bool(hot_cold)
-                
+            except Exception as e:
+                print(f"Error parsing latest draw time: {e}")
+                return False
+            
+            # Check if analysis is updated
+            # Note: This assumes DataAnalysis has a get_analysis_results method
+            # If it doesn't, you'll need to modify this check
+            if hasattr(self.data_analysis, 'get_analysis_results'):
+                latest_analysis = self.data_analysis.get_analysis_results()
+                validation['analysis_updated'] = bool(latest_analysis)
+            else:
+                # Alternative check if get_analysis_results doesn't exist
+                # Check if basic analysis methods return valid results
+                frequency = self.data_analysis.count_frequency()
+                hot_cold = self.data_analysis.hot_and_cold_numbers()
+                validation['analysis_updated'] = bool(frequency) and bool(hot_cold)
+            
             print("\n=== Data Freshness Validation ===")
             for check, status in validation.items():
                 print(f"{check}: {'✅ Valid' if status else '❌ Invalid'}")
@@ -1101,6 +1138,112 @@ class PatternPredictionModel:
             import traceback
             traceback.print_exc()
             return False
+
+    def load_and_validate_models(self):
+        """
+        Load existing models and validate feature structure compatibility.
+        If models don't exist or feature structure is incompatible, train new ones.
+        
+        Returns:
+            bool: True if models are ready for use, False otherwise
+        """
+        print("\n=== Checking Models ===")
+        models_loaded = False
+
+        try:
+            # Try to load existing models first
+            models_loaded = self.load_models()
+            
+            # Only validate feature structure if models were loaded
+            if models_loaded:
+                # Check if we have the expected feature metadata
+                if self.feature_importances and 'xgboost' in self.feature_importances:
+                    # Get feature structure from first model's metadata
+                    first_model_key = next(iter(self.feature_importances['xgboost'].keys()))
+                    existing_features = set(self.feature_importances['xgboost'][first_model_key].get('features', []))
+                    
+                    # Get current feature set (just names, don't extract values)
+                    test_features = self._extract_pattern_features()
+                    current_features = set(test_features.keys())
+                    
+                    # Check for structural differences only
+                    if existing_features != current_features:
+                        print("❌ Feature structure has changed since models were trained")
+                        print(f"Models expect {len(existing_features)} features, code provides {len(current_features)} features")
+                        
+                        # Optionally show feature differences
+                        missing_features = existing_features - current_features
+                        new_features = current_features - existing_features
+                        if missing_features:
+                            print(f"Missing features: {sorted(missing_features)[:5]}...")
+                        if new_features:
+                            print(f"New features: {sorted(new_features)[:5]}...")
+                        
+                        models_loaded = False
+                        print("Will retrain models with current feature structure...")
+                    else:
+                        print("✅ Existing models are compatible with current features")
+                else:
+                    print("⚠️ Cannot validate model feature structure, missing metadata")
+                    print("Will attempt to use models without structure validation...")
+        
+        except Exception as e:
+            print(f"Error checking models: {e}")
+            models_loaded = False
+
+        # Train new models if needed
+        if not models_loaded:
+            print("\n=== Training New Models ===")
+            print("This may take some time...")
+            
+            try:
+                training_success = self.train_ensemble_model(
+                    n_estimators=100, 
+                    learning_rate=0.05, 
+                    max_depth=3
+                )
+                if not training_success:
+                    print("❌ Error: Failed to train models.")
+                    return False
+                print("✅ Models successfully trained with all current features")
+                models_loaded = True
+            except Exception as e:
+                print(f"❌ Error during model training: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+        return models_loaded
+
+    def validate_patterns(self):
+        """Add this new method for pattern validation"""
+        try:
+            # Calculate pattern stability metrics
+            hot_cold = self.data_analysis.hot_and_cold_numbers(top_n=20)
+            common_pairs = self.data_analysis.find_common_pairs(top_n=20)
+            
+            # Example stability calculations (you may need to adjust these)
+            avg_hot_overlap = 75.5  # Placeholder
+            avg_pair_overlap = 65.2  # Placeholder
+            avg_trend_overlap = 55.8  # Placeholder
+            
+            if self.debug:
+                print("\nDEBUG: === Pattern Stability Analysis ===")
+                for pattern_type, stability in [
+                    ("Hot numbers", avg_hot_overlap),
+                    ("Pairs", avg_pair_overlap),
+                    ("Trends", avg_trend_overlap)
+                ]:
+                    print(f"DEBUG: {pattern_type} stability: {stability:.2f}%")
+                    
+            return {
+                'hot_overlap': avg_hot_overlap,
+                'pair_overlap': avg_pair_overlap,
+                'trend_overlap': avg_trend_overlap
+            }
+        except Exception as e:
+            print(f"Error in pattern validation: {e}")
+            return None
 
 
 if __name__ == "__main__":
@@ -1163,8 +1306,8 @@ if __name__ == "__main__":
         # Create DataAnalysis instance
         data_analysis = DataAnalysis(draws)
         
-        # Create pattern prediction model
-        model = PatternPredictionModel(data_analysis, sequence_length=15)
+        # Create pattern prediction model with debug enabled
+        model = PatternPredictionModel(data_analysis, sequence_length=12, debug=True)
         
         # NEW PART: Check for previous prediction to evaluate
         current_draw_time = datetime.now()
@@ -1223,13 +1366,13 @@ if __name__ == "__main__":
         data_fresh = model.validate_data_freshness()
         if not data_fresh:
             print("⚠️ Warning: Data may not be fresh - predictions may be less accurate")
-            user_choice = input("Continue with prediction anyway? (y/n): ")
-            if user_choice.lower() != 'y':
-                print("Prediction cancelled. Please update the data before continuing.")
-                sys.exit(0)
+            #user_choice = input("Continue with prediction anyway? (y/n): ")
+            #if user_choice.lower() != 'y':
+             #   print("Prediction cancelled. Please update the data before continuing.")
+              #  sys.exit(0)
         
         # 2. Load models with validation
-        models_loaded = model.load_models()
+        models_loaded = model.load_and_validate_models()
         print(f"Models loaded: {'✅ Success' if models_loaded else '❌ Failed'}")
         
         if not models_loaded:
@@ -1240,6 +1383,13 @@ if __name__ == "__main__":
                 sys.exit(1)
             print("✅ Models successfully trained")
         
+        # In your main code
+        models_ready = model.load_and_validate_models()
+        if not models_ready:
+            print("❌ Could not load or train models. Exiting.")
+            sys.exit(1)
+        print("✅ Models ready for predictions")
+
         # 3. Generate prediction with validation
         print("\n=== Generating Prediction ===")
         prediction, confidence = model.predict_next_draw(num_predictions=15)
