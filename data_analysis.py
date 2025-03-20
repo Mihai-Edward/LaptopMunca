@@ -8,9 +8,14 @@ import os
 import sys
 import traceback
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.paths import PATHS, ensure_directories
+from config.paths import PATHS, ensure_directories, print_system_info
 
 class DataAnalysis:
+    def print_system_info():
+        """Print system information"""
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"Current Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {current_time}")
+    print(f"Current User's Login: {os.getenv('USER', 'Mihai-Edward')}")
     def __init__(self, draws=None, debug=False):
         """Initialize DataAnalysis with proper draw validation"""
         self.debug = debug
@@ -1320,12 +1325,62 @@ class DataAnalysis:
             print(f"Error checking pattern changes: {e}")
             return False
 
+    def analyze_prediction_history_files(self):
+        """Analyze prediction history files to learn from past predictions"""
+        print("\n=== Analyzing Prediction History Files ===")
+        
+        try:
+            # Load prediction history
+            prediction_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_history.pkl')
+            evaluation_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_evaluations.pkl')
+            
+            if not os.path.exists(prediction_file):
+                print("No prediction history file found")
+                return None
+                
+            predictions_df = pd.read_pickle(prediction_file)
+            evaluations_df = pd.read_pickle(evaluation_file) if os.path.exists(evaluation_file) else None
+            
+            print(f"Loaded {len(predictions_df)} previous predictions")
+            
+            # Analyze which methods were most successful
+            method_success = self.analyze_method_success(predictions_df)
+            
+            # Get recent accuracy trends
+            accuracy_trend = self.analyze_accuracy_trend(predictions_df)
+            
+            # Check pattern stability
+            pattern_changes = self.check_significant_pattern_changes()
+            
+            results = {
+                'method_success': method_success,
+                'accuracy_trend': accuracy_trend,
+                'pattern_stability': not pattern_changes,
+                'recommendations': {
+                    'best_method': max(method_success.items(), key=lambda x: x[1])[0] if method_success else None,
+                    'accuracy_improving': accuracy_trend['is_improving'],
+                    'needs_retraining': pattern_changes
+                }
+            }
+            
+            print("\n=== Learning from Previous Predictions ===")
+            print(f"Best performing method: {results['recommendations']['best_method']}")
+            print(f"Accuracy trend: {'Improving' if results['recommendations']['accuracy_improving'] else 'Declining'}")
+            print(f"Retraining needed: {'Yes' if results['recommendations']['needs_retraining'] else 'No'}")
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error analyzing prediction history: {e}")
+            traceback.print_exc()
+            return None
+
 if __name__ == "__main__":
     example_draws = [
         (datetime.now().strftime("%H:%M %d-%m-%Y"), [1, 2, 2, 9, 12, 14, 17, 25, 26, 30, 38, 44, 54, 57, 58, 61, 65, 71, 72, 76, 79]),
         ((datetime.now() - timedelta(minutes=5)).strftime("%H:%M %d-%m-%Y"), [4, 5, 7, 7, 9, 18, 24, 27, 29, 34, 40, 45, 48, 52, 55, 57, 70, 71, 72, 74, 77]),
     ]
-    
+    print_system_info()
     try:
         real_draws = []
         csv_file = PATHS['HISTORICAL_DATA']
@@ -1382,6 +1437,42 @@ if __name__ == "__main__":
         
         analysis.save_to_excel(PATHS['ANALYSIS_RESULTS'])  # Keep using PATHS['ANALYSIS']
         print("Analysis complete!")
+        
+        # Add after "Analysis complete!":
+        print("\n=== Starting Performance Analysis ===")
+        
+        # 1. Analyze Recent Performance
+        print("\nAnalyzing recent performance...")
+        recent_performance = analysis.analyze_recent_performance()
+        if recent_performance:
+            print(f"Average Accuracy: {recent_performance['average_accuracy']*100:.2f}%")
+            print(f"Number of Predictions Analyzed: {recent_performance['predictions_analyzed']}")
+        
+        # 2. Save Focused Prediction
+        print("\nSaving current focused prediction...")
+        if focused_prediction:  # You already have this from earlier in the code
+            saved = analysis.save_focused_predictions(focused_prediction)
+            if saved:
+                print("Successfully saved focused prediction")
+            else:
+                print("Failed to save focused prediction")
+        
+        # 3. Track Performance (if we have actual results)
+        print("\nChecking prediction performance...")
+        # Get most recent actual draw for comparison
+        if draws_to_analyze and len(draws_to_analyze) > 0:
+            latest_actual_draw = draws_to_analyze[-1][1]  # Get numbers from last draw
+            if focused_prediction and latest_actual_draw:
+                performance_data = analysis.track_prediction_performance(
+                    focused_prediction,
+                    latest_actual_draw
+                )
+                if performance_data:
+                    print(f"Latest Prediction Accuracy: {performance_data['accuracy']*100:.2f}%")
+                    print(f"Correct Numbers: {performance_data['correct_count']}")
+                    print(f"Confidence Correlation: {performance_data['confidence_correlation']:.4f}")
+        
+        print("\n=== Analysis and Performance Tracking Complete ===")
         
     except Exception as e:
         print(f"Error in data analysis: {e}")

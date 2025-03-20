@@ -348,7 +348,7 @@ class PatternPredictionModel:
     
     def predict_next_draw(self, num_predictions=15):
         """
-        Predict the next draw using the trained models with detailed logging
+        Predict the next draw using the trained models and data analysis
         
         Args:
             num_predictions: Number of numbers to predict (default 15)
@@ -359,112 +359,51 @@ class PatternPredictionModel:
         print("\n=== Starting Prediction Process ===")
         print(f"Current Date and Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
-        # Call and debug existing methods from data_analysis
-        print("\n=== Calling Analysis Methods ===")
-        
         try:
-            # 1. Sequence Analysis
-            sequence_results = self.data_analysis.sequence_pattern_analysis()
-            print(f"Sequence Analysis performed: {'Success' if sequence_results else 'Failed'}")
+            # Get analysis results from data_analysis instance
+            frequency = self.data_analysis.count_frequency()
+            hot_cold = self.data_analysis.hot_and_cold_numbers(top_n=20)
+            gaps = self.data_analysis.analyze_gaps()
             
-            # 2. Statistical Analysis
-            stats_validation = self.data_analysis.analyze_statistical_significance()
-            print(f"Statistical Analysis performed: {'Success' if stats_validation else 'Failed'}")
-            
-            # 3. Pattern Validation
-            pattern_validation = self.data_analysis.validate_patterns()
-            print(f"Pattern Validation performed: {'Success' if pattern_validation else 'Failed'}")
-            
-            # 4. Focused Prediction
-            focused_results = self.data_analysis.get_focused_prediction()
-            print(f"Focused Prediction performed: {'Success' if focused_results else 'Failed'}")
-            
-            # Extract features and get base probabilities
-            print("\n=== Base Prediction Process ===")
+            # Extract features for model prediction
             features = self._extract_pattern_features()
             print(f"Features extracted: {len(features) if features else 0} features")
             
-            # Get probabilities from model
+            # Get probabilities from trained model
             probabilities = {}
             for num, model in self.models['xgboost'].items():
                 prob = model.predict_proba(pd.DataFrame([features]))[0][1]
                 probabilities[num] = prob
-            
-            print("\n=== Before Additional Analysis ===")
-            top_probs_before = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)[:5]
-            print("Top 5 probabilities before adjustments:")
-            for num, prob in top_probs_before:
-                print(f"Number {num}: {prob:.4f}")
                 
-            # Apply weights with additional analysis results
-            self._apply_prediction_weights(probabilities)
+            # Sort probabilities
+            sorted_probs = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)
+            predicted_numbers = [num for num, _ in sorted_probs[:num_predictions]]
+            confidence_scores = [prob for _, prob in sorted_probs[:num_predictions]]
             
-            print("\n=== After Additional Analysis ===")
-            top_probs_after = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)[:5]
-            print("Top 5 probabilities after adjustments:")
-            for num, prob in top_probs_after:
-                print(f"Number {num}: {prob:.4f}")
+            print("\n=== Final Prediction ===")
+            next_draw_time = self.get_next_draw_time()
+            print(f"Next draw time: {next_draw_time}")
+            print(f"Numbers predicted: {predicted_numbers}")
             
-            # Compare changes
-            changes = set(dict(top_probs_after).keys()) - set(dict(top_probs_before).keys())
-            if changes:
-                print(f"\nNumbers that moved into top 5: {changes}")
-                
+            # Save prediction to history
+            prediction = {
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'draw_time': next_draw_time,
+                'predicted_numbers': predicted_numbers,
+                'confidence_scores': [round(score, 4) for score in confidence_scores],
+                'full_probabilities': {k: round(v, 4) for k, v in sorted_probs}
+            }
+            
+            self.prediction_history.append(prediction)
+            self._save_prediction(prediction)
+            
+            return predicted_numbers, confidence_scores
+            
         except Exception as e:
             print(f"Error during prediction process: {e}")
             import traceback
             traceback.print_exc()
-        
-        sorted_probs = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)
-        predicted_numbers = [num for num, _ in sorted_probs[:num_predictions]]
-        confidence_scores = [prob for _, prob in sorted_probs[:num_predictions]]
-        
-        print("\n=== Final Prediction ===")
-        next_draw_time = self.get_next_draw_time()
-        print(f"Next draw time: {next_draw_time}")
-        print(f"Numbers predicted: {predicted_numbers}")
-        
-        def make_prediction(self):
-            """
-            Generate predictions and analyze historical performance to adjust weights
-            
-            Returns:
-                Tuple of (predicted_numbers, confidence_scores)
-            """
-            # Get existing prediction
-            predicted_numbers, confidence_scores = self.predict_next_draw(num_predictions=15)
-            
-            # Analyze prediction history
-            history_analysis = self.data_analysis.analyze_prediction_history_files()
-            
-            if history_analysis:
-                # Adjust weights based on what worked best
-                best_method = history_analysis['recommendations']['best_method']
-                if best_method == 'hot_cold':
-                    self.weights['hot_cold'] *= 1.1
-                elif best_method == 'gaps':
-                    self.weights['gaps'] *= 1.1
-                    
-                # Check if retraining is needed
-                if history_analysis['recommendations']['needs_retraining']:
-                    print("WARNING: Pattern changes detected, consider retraining models")
-                    
-            return predicted_numbers, confidence_scores
-        # ...existing code...
-        
-        # Save prediction to history
-        prediction = {
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'draw_time': next_draw_time,
-            'predicted_numbers': predicted_numbers,
-            'confidence_scores': [round(score, 4) for score in confidence_scores],
-            'full_probabilities': {k: round(v, 4) for k, v in sorted_probs}
-        }
-        
-        self.prediction_history.append(prediction)
-        self._save_prediction(prediction)
-        
-        return predicted_numbers, confidence_scores
+            return [], []
     
     def _apply_prediction_weights(self, probabilities):
         """
@@ -1000,7 +939,7 @@ if __name__ == "__main__":
             model.train_ensemble_model(n_estimators=100, learning_rate=0.05, max_depth=3)
         
         # Generate prediction for next draw
-        prediction, confidence = model.make_prediction()
+        prediction, confidence = model.predict_next_draw(num_predictions=15)  # Changed from make_prediction()
         
         print("\n==== PATTERN-BASED PREDICTION ====")
         print(f"Top 15 predicted numbers:")
