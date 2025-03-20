@@ -31,6 +31,11 @@ class PatternPredictionModel:
             data_analysis_instance: Instance of DataAnalysis class with historical data
             sequence_length: Number of previous draws to consider for pattern recognition
         """
+        # Add at start of method:
+        ensure_directories()  # Ensure all directories exist
+        if not self._validate_paths():  # Validate paths are accessible
+            raise RuntimeError("Path validation failed")
+
         # Initialize core attributes
         self.data_analysis = data_analysis_instance
         self.sequence_length = sequence_length
@@ -570,7 +575,7 @@ class PatternPredictionModel:
                 pickle.dump(prediction, f)
                 
             # Also update the history file
-            history_file = os.path.join(self.predictions_path, "prediction_history.pkl")
+            history_file = PATHS['MODEL_PREDICTIONS']
             with open(history_file, 'wb') as f:
                 pickle.dump(self.prediction_history[-100:], f)  # Keep last 100 predictions
                 
@@ -584,7 +589,7 @@ class PatternPredictionModel:
         """Save an evaluation to disk"""
         try:
             evaluations = []
-            eval_file = os.path.join(self.predictions_path, "prediction_evaluations.pkl")
+            eval_file = PATHS['EVALUATION_RESULTS']
             
             # Load existing evaluations if available
             if os.path.exists(eval_file):
@@ -635,7 +640,7 @@ class PatternPredictionModel:
             }
             
             # Save metadata
-            metadata_file = os.path.join(self.models_path, "model_metadata.pkl")
+            metadata_file = PATHS['MODEL_METADATA']
             with open(metadata_file, 'wb') as f:
                 pickle.dump(metadata, f)
                 
@@ -804,7 +809,6 @@ class PatternPredictionModel:
             return None
 
 
-# Example usage of the pattern prediction model
 if __name__ == "__main__":
     try:
         # Ensure all directories exist first
@@ -861,8 +865,16 @@ if __name__ == "__main__":
         # Create DataAnalysis instance
         data_analysis = DataAnalysis(draws)
         
-        # Create and train the pattern prediction model
+        # Create pattern prediction model
         model = PatternPredictionModel(data_analysis, sequence_length=15)
+        
+        # Display current time and next draw time
+        current_time = datetime.now()
+        print(f"\nCurrent Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Current User's Login: Mihai-Edward")
+        
+        next_draw_time = model.get_next_draw_time()
+        print(f"Making prediction for draw at: {next_draw_time}")
         
         # Try to load existing models first
         if not model.load_models():
@@ -881,7 +893,7 @@ if __name__ == "__main__":
         model.visualize_predictions(prediction, confidence)
         plt.show()
         
-  # Analyze prediction history if available
+        # Analyze prediction history if available
         performance = model.analyze_prediction_history()
         if 'error' not in performance and 'warning' not in performance:
             print("\n==== PREDICTION PERFORMANCE ====")
@@ -926,12 +938,9 @@ if __name__ == "__main__":
         print("3. To export training data for further analysis:")
         print("   model.export_training_data()")
         
-        # Current prediction timestamp
+        # Final timestamp
         print(f"\nPrediction generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        model = PatternPredictionModel(data_analysis_instance)
-        next_draw_time = model.get_next_draw_time()
-        print(f"Next draw time: {next_draw_time}")  # Example output: "14:35 19-03-2025"
+        print(f"For draw at: {next_draw_time}")
         
     except Exception as e:
         print(f"Error in pattern prediction: {e}")
