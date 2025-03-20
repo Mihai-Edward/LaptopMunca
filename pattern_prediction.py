@@ -300,7 +300,7 @@ class PatternPredictionModel:
                         verbose=False
                     )
                     
-                    # Rest of your existing code...
+                    # ...existing code...
                     train_preds = model.predict(X_train)
                     val_preds = model.predict(X_val)
                     
@@ -346,9 +346,9 @@ class PatternPredictionModel:
             print(f"Error during training: {e}")
             return None
     
-    def predict_next_draw(self, num_predictions=15):  # Keep at 15 numbers
+    def predict_next_draw(self, num_predictions=15):
         """
-        Predict the next draw using the trained models
+        Predict the next draw using the trained models with detailed logging
         
         Args:
             num_predictions: Number of numbers to predict (default 15)
@@ -356,30 +356,106 @@ class PatternPredictionModel:
         Returns:
             List of predicted numbers and confidence scores
         """
-        if 'xgboost' not in self.models or not self.models['xgboost']:
-            raise ValueError("Models not trained yet. Call train_ensemble_model first.")
+        print("\n=== Starting Prediction Process ===")
+        print(f"Current Date and Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
-        next_draw_time = self.get_next_draw_time()  # Get next draw time
-        print(f"Making prediction for draw at: {next_draw_time}")
+        # Call and debug existing methods from data_analysis
+        print("\n=== Calling Analysis Methods ===")
         
-        # Extract features for prediction
-        features = self._extract_pattern_features()
-        features_df = pd.DataFrame([features])
-        probabilities = {}
+        try:
+            # 1. Sequence Analysis
+            sequence_results = self.data_analysis.sequence_pattern_analysis()
+            print(f"Sequence Analysis performed: {'Success' if sequence_results else 'Failed'}")
+            
+            # 2. Statistical Analysis
+            stats_validation = self.data_analysis.analyze_statistical_significance()
+            print(f"Statistical Analysis performed: {'Success' if stats_validation else 'Failed'}")
+            
+            # 3. Pattern Validation
+            pattern_validation = self.data_analysis.validate_patterns()
+            print(f"Pattern Validation performed: {'Success' if pattern_validation else 'Failed'}")
+            
+            # 4. Focused Prediction
+            focused_results = self.data_analysis.get_focused_prediction()
+            print(f"Focused Prediction performed: {'Success' if focused_results else 'Failed'}")
+            
+            # Extract features and get base probabilities
+            print("\n=== Base Prediction Process ===")
+            features = self._extract_pattern_features()
+            print(f"Features extracted: {len(features) if features else 0} features")
+            
+            # Get probabilities from model
+            probabilities = {}
+            for num, model in self.models['xgboost'].items():
+                prob = model.predict_proba(pd.DataFrame([features]))[0][1]
+                probabilities[num] = prob
+            
+            print("\n=== Before Additional Analysis ===")
+            top_probs_before = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)[:5]
+            print("Top 5 probabilities before adjustments:")
+            for num, prob in top_probs_before:
+                print(f"Number {num}: {prob:.4f}")
+                
+            # Apply weights with additional analysis results
+            self._apply_prediction_weights(probabilities)
+            
+            print("\n=== After Additional Analysis ===")
+            top_probs_after = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)[:5]
+            print("Top 5 probabilities after adjustments:")
+            for num, prob in top_probs_after:
+                print(f"Number {num}: {prob:.4f}")
+            
+            # Compare changes
+            changes = set(dict(top_probs_after).keys()) - set(dict(top_probs_before).keys())
+            if changes:
+                print(f"\nNumbers that moved into top 5: {changes}")
+                
+        except Exception as e:
+            print(f"Error during prediction process: {e}")
+            import traceback
+            traceback.print_exc()
         
-        for num, model in self.models['xgboost'].items():
-            prob = model.predict_proba(features_df)[0][1]
-            probabilities[num] = prob
-        
-        self._apply_prediction_weights(probabilities)
         sorted_probs = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)
         predicted_numbers = [num for num, _ in sorted_probs[:num_predictions]]
         confidence_scores = [prob for _, prob in sorted_probs[:num_predictions]]
         
-        # Update prediction record with next draw time
+        print("\n=== Final Prediction ===")
+        next_draw_time = self.get_next_draw_time()
+        print(f"Next draw time: {next_draw_time}")
+        print(f"Numbers predicted: {predicted_numbers}")
+        
+        def make_prediction(self):
+            """
+            Generate predictions and analyze historical performance to adjust weights
+            
+            Returns:
+                Tuple of (predicted_numbers, confidence_scores)
+            """
+            # Get existing prediction
+            predicted_numbers, confidence_scores = self.predict_next_draw(num_predictions=15)
+            
+            # Analyze prediction history
+            history_analysis = self.data_analysis.analyze_prediction_history_files()
+            
+            if history_analysis:
+                # Adjust weights based on what worked best
+                best_method = history_analysis['recommendations']['best_method']
+                if best_method == 'hot_cold':
+                    self.weights['hot_cold'] *= 1.1
+                elif best_method == 'gaps':
+                    self.weights['gaps'] *= 1.1
+                    
+                # Check if retraining is needed
+                if history_analysis['recommendations']['needs_retraining']:
+                    print("WARNING: Pattern changes detected, consider retraining models")
+                    
+            return predicted_numbers, confidence_scores
+        # ...existing code...
+        
+        # Save prediction to history
         prediction = {
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'draw_time': next_draw_time,  # Add the next draw time
+            'draw_time': next_draw_time,
             'predicted_numbers': predicted_numbers,
             'confidence_scores': [round(score, 4) for score in confidence_scores],
             'full_probabilities': {k: round(v, 4) for k, v in sorted_probs}
@@ -392,68 +468,119 @@ class PatternPredictionModel:
     
     def _apply_prediction_weights(self, probabilities):
         """
-        Apply additional weighting to probabilities based on analysis insights
+        Apply advanced weighting to probabilities based on multiple analysis methods
         
         Args:
-            probabilities: Dictionary of number->probability mappings to adjust
+            probabilities: Dictionary of number -> probability mappings
+            
+        Returns:
+            Updated probabilities dictionary
         """
-        # Get insights from data analysis
-        gap_analysis = self.data_analysis.analyze_gaps()
-        hot_cold = self.data_analysis.hot_and_cold_numbers(top_n=20)
+        print("\n=== Applying Fresh Analysis Weights ===")
         
-        # Numbers that haven't appeared for longer than their average gap
-        # have increased probability of appearing (due for appearance)
-        for num in range(1, 81):
-            if num in gap_analysis:
-                gap_stats = gap_analysis[num]
-                current_gap = gap_stats['current_gap']
-                avg_gap = gap_stats['avg_gap']
-                
-                # If number is "due" (current gap > average gap)
-                if current_gap > avg_gap * 1.2:  # 20% above average
-                    # Boost probability by up to 20% based on how overdue it is
-                    boost = min(0.2, (current_gap - avg_gap) / (avg_gap * 5))
-                    probabilities[num] = probabilities[num] * (1 + boost)
-        
-               # Apply weights based on hot/cold analysis
-        hot_numbers = [num for num, _ in hot_cold['hot_numbers']]
-        trending_up = [num for num, _ in hot_cold['trending_up']]
-        
-        # Boost hot numbers slightly
-        for num in hot_numbers:
-            probabilities[num] = probabilities[num] * 1.05  
-                    # Boost trending up numbers
-        for num in trending_up:
-            probabilities[num] = probabilities[num] * 1.08
-            
-        # Analyze skip patterns from recent draws
         try:
-            skip_analysis = self.data_analysis.analyze_skip_patterns(window_size=5)
-            recent_patterns = skip_analysis.get('recent_patterns', [])
+            # Get fresh analysis results
+            recent_analysis = self.data_analysis.sequence_pattern_analysis()
+            recent_hot_cold = self.data_analysis.hot_and_cold_numbers(top_n=20)
+            recent_gaps = self.data_analysis.analyze_gaps()
+            pattern_validation = self.data_analysis.validate_patterns()
             
-            # Look for numbers that frequently return after being skipped
-            if recent_patterns:
-                skipped_last_draw = set()
-                for pattern in recent_patterns[-2:-1]:  # Get second-to-last pattern
-                    skipped_last_draw.update(pattern.get('skipped_numbers', []))
+            # Store original probabilities for comparison
+            original_probs = probabilities.copy()
+            changes = {}
+
+            # Get latest draw for reference
+            latest_draw = self.data_analysis.draws[-1][1] if self.data_analysis.draws else []
+            
+            for num in range(1, 81):
+                try:
+                    original_prob = probabilities[num]
                     
-                # Boost numbers that were recently skipped
-                for num in skipped_last_draw:
-                    probabilities[num] = probabilities[num] * 1.03
+                    # 1. Hot/Cold Number Analysis
+                    if num in [n for n, _ in recent_hot_cold.get('hot_numbers', [])]:
+                        probabilities[num] *= 1.25  # 25% boost
+                        print(f"Number {num}: Hot number boost +25%")
+                    elif num in [n for n, _ in recent_hot_cold.get('cold_numbers', [])]:
+                        probabilities[num] *= 0.9  # 10% reduction
+                        print(f"Number {num}: Cold number penalty -10%")
+                    
+                    # 2. Gap Analysis with Dynamic Boost
+                    gap_info = recent_gaps.get(num, {})
+                    if gap_info:
+                        current_gap = gap_info.get('current_gap', 0)
+                        avg_gap = gap_info.get('avg_gap', 1)  # Prevent division by zero
+                        
+                        if current_gap > avg_gap:
+                            # Calculate dynamic boost based on how overdue the number is
+                            gap_ratio = current_gap / avg_gap
+                            boost = min(1.3, 1 + (gap_ratio * 0.1))  # Cap at 30% boost
+                            probabilities[num] *= boost
+                            print(f"Number {num}: Gap boost +{(boost-1)*100:.1f}%")
+                    
+                    # 3. Time Pattern Analysis
+                    current_hour = datetime.now().hour
+                    if recent_analysis and 'time_patterns' in recent_analysis:
+                        if num in recent_analysis['time_patterns'].get(current_hour, []):
+                            probabilities[num] *= 1.2
+                            print(f"Number {num}: Time pattern boost +20%")
+                    
+                    # 4. Pattern Consistency
+                    if pattern_validation:
+                        if num in pattern_validation.get('consistent_numbers', []):
+                            probabilities[num] *= 1.15
+                            print(f"Number {num}: Pattern consistency boost +15%")
+                            
+                        if num in pattern_validation.get('trending_numbers', []):
+                            probabilities[num] *= 1.1
+                            print(f"Number {num}: Trending pattern boost +10%")
+                    
+                    # 5. Recent Appearance Analysis
+                    if latest_draw and num in latest_draw:
+                        probabilities[num] *= 0.85  # 15% penalty
+                        print(f"Number {num}: Recent appearance penalty -15%")
+                    
+                    # 6. Trend Analysis
+                    if num in [n for n, _ in recent_hot_cold.get('trending_up', [])]:
+                        probabilities[num] *= 1.1
+                        print(f"Number {num}: Upward trend boost +10%")
+                    elif num in [n for n, _ in recent_hot_cold.get('trending_down', [])]:
+                        probabilities[num] *= 0.95
+                        print(f"Number {num}: Downward trend penalty -5%")
+                    
+                    # Track significant changes
+                    if probabilities[num] != original_prob:
+                        change = ((probabilities[num] - original_prob) / original_prob) * 100
+                        changes[num] = change
+                        
+                except Exception as e:
+                    print(f"Error processing number {num}: {e}")
+                    probabilities[num] = original_probs[num]  # Restore original probability
+                    continue
+            
+            # Normalize probabilities to prevent extremes
+            total_prob = sum(probabilities.values())
+            if total_prob > 0:
+                avg_prob = total_prob / 80
+                for num in probabilities:
+                    # Cap at 3x average to prevent extreme values
+                    if probabilities[num] > 3 * avg_prob:
+                        probabilities[num] = 3 * avg_prob
+            
+            # Show impact summary
+            print("\n=== Analysis Impact Summary ===")
+            significant_changes = {k: v for k, v in changes.items() if abs(v) > 5}  # Changes > 5%
+            if significant_changes:
+                print("\nNumbers significantly affected by analysis:")
+                for num, change in sorted(significant_changes.items(), key=lambda x: abs(x[1]), reverse=True)[:10]:
+                    print(f"Number {num}: {change:+.1f}% total change")
+            else:
+                print("No significant probability changes from analysis")
+                
+            return probabilities
+            
         except Exception as e:
-            print(f"Error applying skip pattern weights: {e}")
-            
-        # Normalize probabilities to ensure they sum to a reasonable value
-        # This prevents extreme values from dominating
-        total_prob = sum(probabilities.values())
-        if total_prob > 0:
-            avg_prob = total_prob / 80
-            for num in probabilities:
-                # Cap extreme probabilities at 3x average
-                if probabilities[num] > 3 * avg_prob:
-                    probabilities[num] = 3 * avg_prob
-                    
-        return probabilities
+            print(f"Error in prediction weights application: {e}")
+            return original_probs  # Return original probabilities if error occurs
     
     def evaluate_prediction(self, prediction, actual_draw):
         """
@@ -873,7 +1000,7 @@ if __name__ == "__main__":
             model.train_ensemble_model(n_estimators=100, learning_rate=0.05, max_depth=3)
         
         # Generate prediction for next draw
-        prediction, confidence = model.predict_next_draw(num_predictions=15)
+        prediction, confidence = model.make_prediction()
         
         print("\n==== PATTERN-BASED PREDICTION ====")
         print(f"Top 15 predicted numbers:")
