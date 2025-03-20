@@ -11,7 +11,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 import xgboost as xgb
 from joblib import dump, load
-
+from datetime import datetime
 # Import your existing DataAnalysis class
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_analysis import DataAnalysis
@@ -860,9 +860,9 @@ if __name__ == "__main__":
         model = PatternPredictionModel(data_analysis, sequence_length=15)
         
         # Display current time and next draw time
-        current_time = datetime.now()
-        print(f"\nCurrent Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Current User's Login: Mihai-Edward")
+        current_time = datetime.now() 
+        print(f"\nCurrent Date and Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
         
         next_draw_time = model.get_next_draw_time()
         print(f"Making prediction for draw at: {next_draw_time}")
