@@ -33,8 +33,7 @@ class PatternPredictionModel:
         """
         # Add at start of method:
         ensure_directories()  # Ensure all directories exist
-        if not self._validate_paths():  # Validate paths are accessible
-            raise RuntimeError("Path validation failed")
+
 
         # Initialize core attributes
         self.data_analysis = data_analysis_instance
@@ -45,18 +44,11 @@ class PatternPredictionModel:
         self.model_performance = {}
         
         # Use paths directly from PATHS with error checking
-        if 'PREDICTIONS' not in PATHS or 'MODELS' not in PATHS:
-            raise ValueError("PREDICTIONS and MODELS paths must be configured in PATHS")
+        if 'PREDICTIONS_DIR' not in PATHS or 'MODELS_DIR' not in PATHS:
+             raise ValueError("PREDICTIONS_DIR and MODELS_DIR paths must be configured in PATHS")
             
-        self.predictions_path = PATHS['PREDICTIONS']
-        self.models_path = PATHS['MODELS']
-        
-        # Ensure directories exist
-        ensure_directories()
-        
-        # Verify directories are accessible
-        if not os.path.exists(self.predictions_path) or not os.path.exists(self.models_path):
-            raise RuntimeError(f"Required directories could not be created or accessed")
+        self.predictions_path = PATHS['PREDICTIONS_DIR']
+        self.models_path = PATHS['MODELS_DIR']
         
     def get_next_draw_time(self):
         """
@@ -811,9 +803,8 @@ class PatternPredictionModel:
 
 if __name__ == "__main__":
     try:
-        # Ensure all directories exist first
-        ensure_directories()
-        
+     
+ 
         # Get historical data path with proper error handling
         historical_data_path = PATHS.get('HISTORICAL_DATA')
         if not historical_data_path:
