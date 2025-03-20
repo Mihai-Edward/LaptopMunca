@@ -95,7 +95,8 @@ class PatternPredictionModel:
             'frequency_analysis': False,
             'hot_cold_analysis': False,
             'gap_analysis': False,
-            'recent_patterns': False
+            'recent_patterns': False,
+            'statistical_significance': False  # Added as requested
         }
         
         try:
@@ -199,6 +200,46 @@ class PatternPredictionModel:
             range_analysis = sequence_analysis.number_range_analysis()
             for range_key, count in range_analysis.items():
                 features[f'range_{range_key}'] = count / (len(sequence) * 20)  # Normalize by total numbers
+            
+            # NEW: Add statistical significance features
+            try:
+                significance_results = sequence_analysis.analyze_statistical_significance()
+                feature_validation['statistical_significance'] = bool(significance_results) and 'frequency_tests' in significance_results
+                
+                # Extract statistically significant numbers
+                if significance_results and 'frequency_tests' in significance_results:
+                    significant_numbers = []
+                    for test in significance_results['frequency_tests']:
+                        if test.get('significant', False):
+                            significant_numbers.append(test['number'])
+                    
+                    # Add features for statistically significant numbers
+                    for num in range(1, 81):
+                        features[f'significant_{num}'] = 1 if num in significant_numbers else 0
+                        
+                        # Also add p-value as a feature (if available)
+                        p_value = 0.5  # Default value if not found
+                        for test in significance_results['frequency_tests']:
+                            if test['number'] == num:
+                                p_value = test.get('p_value', 0.5)
+                                break
+                        features[f'p_value_{num}'] = p_value
+                    
+                    # Add features for non-random patterns (if available)
+                    if 'pattern_tests' in significance_results:
+                        non_random_patterns = []
+                        for test in significance_results['pattern_tests']:
+                            if test.get('significant', False):
+                                non_random_patterns.append(test['number'])
+                        
+                        for num in range(1, 81):
+                            features[f'non_random_pattern_{num}'] = 1 if num in non_random_patterns else 0
+                
+                print(f"Added statistical significance features for {len(significant_numbers) if 'significant_numbers' in locals() else 0} numbers")
+                    
+            except Exception as e:
+                print(f"Error extracting statistical significance features: {e}")
+                # Continue without these features
             
             # 8. Number of times a number appeared in the sequence
             for num in range(1, 81):
@@ -401,7 +442,8 @@ class PatternPredictionModel:
             'fresh_analysis': False,
             'feature_extraction': False,
             'model_prediction': False,
-            'probability_calculation': False
+            'probability_calculation': False,
+            'combination_analysis': False  # Added combination analysis check
         }
 
         try:
@@ -419,6 +461,21 @@ class PatternPredictionModel:
             # 3. Advanced Analysis Methods
             focused_prediction = self.data_analysis.get_focused_prediction()
             recent_performance = self.data_analysis.analyze_recent_performance()
+            
+            # NEW: Add combination analysis - THIS WAS MISSING
+            print("\nRunning combination analysis...")
+            combinations_analysis = self.data_analysis.analyze_combinations(group_size=3, top_n=10)
+            combination_numbers = set()  # Initialize the set here
+
+            if combinations_analysis and 'most_common' in combinations_analysis:
+                # Extract numbers that appear in the most common combinations
+                for combo_data in combinations_analysis['most_common']:
+                    if 'combination' in combo_data:
+                        for num in combo_data['combination']:
+                            combination_numbers.add(num)
+                
+                validation_checks['combination_analysis'] = True
+                print(f"Found {len(combination_numbers)} numbers in top combinations")
             
             validation_checks['fresh_analysis'] = True
             
@@ -468,6 +525,12 @@ class PatternPredictionModel:
                 # Focused Prediction Adjustments
                 if focused_prediction and num in focused_prediction.get('numbers', []):
                     probabilities[num] *= 1.15
+
+                # NEW: Add combination-based adjustment
+                if num in combination_numbers:  # Now this variable is defined
+                    combo_boost = 1.12  # 12% boost for numbers in strong combinations
+                    probabilities[num] *= combo_boost
+                    print(f"Number {num}: Strong combination boost +12%")
             
             validation_checks['probability_calculation'] = True
                 
@@ -496,7 +559,8 @@ class PatternPredictionModel:
                     'sequence_patterns': sequence_patterns.get('pattern_count', 0) if sequence_patterns else 0,
                     'skip_patterns': skip_patterns.get('pattern_count', 0) if skip_patterns else 0,
                     'pattern_validation': pattern_validation.get('validation_score', 0) if pattern_validation else 0,
-                    'recent_performance': recent_performance.get('average_accuracy', 0) if recent_performance else 0
+                    'recent_performance': recent_performance.get('average_accuracy', 0) if recent_performance else 0,
+                    'combination_patterns': len(combination_numbers)  # Add the combination data
                 },
                 'validation_status': validation_checks
             }
