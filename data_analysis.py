@@ -1382,6 +1382,7 @@ if __name__ == "__main__":
     ]
     print_system_info()
     try:
+        # Initialize real draws list and get the path to historical data
         real_draws = []
         csv_file = PATHS['HISTORICAL_DATA']
         
@@ -1413,21 +1414,24 @@ if __name__ == "__main__":
             print("Using example draws instead")
             draws_to_analyze = example_draws
             
+        # Create analysis instance with our data
         analysis = DataAnalysis(draws_to_analyze)
         
+        # Basic frequency analysis
         frequency = analysis.count_frequency()
         print(f"Number of unique numbers: {len(frequency)}")
         
+        # Top numbers analysis
         top_numbers = analysis.get_top_numbers(20)
         print(f"Top 20 numbers: {', '.join(map(str, top_numbers))}")
         
-        # Add gap analysis showcase
+        # Gap analysis showcase
         gap_analysis = analysis.analyze_gaps()
         print("\nSample gap analysis for first 5 numbers:")
         for num in range(1, 6):
             print(f"Number {num}: {gap_analysis[num]}")
         
-        # Add focused prediction showcase
+        # Focused prediction showcase
         focused_prediction = analysis.get_focused_prediction()
         if focused_prediction:
             print("\nFocused Prediction (Top 15 numbers):")
@@ -1435,29 +1439,62 @@ if __name__ == "__main__":
                                 focused_prediction['confidence']):
                 print(f"Number {num}: {conf:.3f} confidence")
         
-        analysis.save_to_excel(PATHS['ANALYSIS_RESULTS'])  # Keep using PATHS['ANALYSIS']
+        # Save results to Excel
+        analysis.save_to_excel(PATHS['ANALYSIS_RESULTS'])
         print("Analysis complete!")
         
-        # Add after "Analysis complete!":
+        # Deep Pattern Analysis Section
+        print("\n=== Starting Deep Pattern Analysis ===")
+        
+        print("\n1. Analyzing Sequence Patterns...")
+        sequence_analysis = analysis.sequence_pattern_analysis()
+        if sequence_analysis and 'overall_sequences' in sequence_analysis:
+            print(f"Found patterns in {len(sequence_analysis['overall_sequences'])} sequences")
+            if 'statistics' in sequence_analysis and 'most_active_time_slot' in sequence_analysis['statistics']:
+                print(f"Most active time: {sequence_analysis['statistics']['most_active_time_slot']}")
+        
+        print("\n2. Analyzing Skip Patterns...")
+        skip_patterns = analysis.analyze_skip_patterns()
+        if skip_patterns and 'statistics' in skip_patterns:
+            print(f"Average skipped numbers: {skip_patterns['statistics'].get('avg_skipped', 0):.2f}")
+            print(f"Average new numbers: {skip_patterns['statistics'].get('avg_new', 0):.2f}")
+        
+        print("\n3. Checking System Health...")
+        health_status = analysis.check_prediction_health()
+        if health_status:
+            if health_status.get('needs_attention'):
+                print("System needs attention:")
+                for reason in health_status.get('reasons', []):
+                    print(f"- {reason}")
+            else:
+                print("System health: Good")
+        
+        print("\n4. Validating Patterns...")
+        pattern_validation = analysis.validate_patterns()
+        if pattern_validation and 'validation_summary' in pattern_validation:
+            summary = pattern_validation['validation_summary']
+            print(f"Pattern Stability: {summary.get('predictive_power', 'N/A')}")
+            print(f"Hit Rate vs Random: {summary.get('hit_rate_advantage', 0):.2f}")
+        
+        print("\n=== Deep Analysis Complete ===")
+        
+        # Performance Analysis Section
         print("\n=== Starting Performance Analysis ===")
         
-        # 1. Analyze Recent Performance
         print("\nAnalyzing recent performance...")
         recent_performance = analysis.analyze_recent_performance()
         if recent_performance:
             print(f"Average Accuracy: {recent_performance['average_accuracy']*100:.2f}%")
             print(f"Number of Predictions Analyzed: {recent_performance['predictions_analyzed']}")
         
-        # 2. Save Focused Prediction
         print("\nSaving current focused prediction...")
-        if focused_prediction:  # You already have this from earlier in the code
+        if focused_prediction:
             saved = analysis.save_focused_predictions(focused_prediction)
             if saved:
                 print("Successfully saved focused prediction")
             else:
                 print("Failed to save focused prediction")
         
-        # 3. Track Performance (if we have actual results)
         print("\nChecking prediction performance...")
         # Get most recent actual draw for comparison
         if draws_to_analyze and len(draws_to_analyze) > 0:

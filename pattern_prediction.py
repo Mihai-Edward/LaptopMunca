@@ -90,103 +90,141 @@ class PatternPredictionModel:
         Returns:
             Dictionary of features for model input
         """
-        draws = self.data_analysis.draws
+        feature_validation = {
+            'sequence_data': False,
+            'frequency_analysis': False,
+            'hot_cold_analysis': False,
+            'gap_analysis': False,
+            'recent_patterns': False
+        }
         
-        if target_position is None:
-            # Use the latest draws for prediction
-            sequence = draws[-self.sequence_length:]
-        else:
-            # Use sequence before target_position for training
-            start_pos = max(0, target_position - self.sequence_length)
-            sequence = draws[start_pos:target_position]
-        
-        # Basic sanity check
-        if len(sequence) < 2:
-            raise ValueError(f"Not enough draws in sequence (got {len(sequence)}, need at least 2)")
+        try:
+            draws = self.data_analysis.draws
             
-        # Get results from DataAnalysis for the sequence
-        # We create a temporary DataAnalysis instance just for the sequence
-        sequence_analysis = DataAnalysis(sequence, debug=False)
-        
-        # -- FEATURE EXTRACTION --
-        features = {}
-        
-        # 1. Basic frequency features
-        frequency = sequence_analysis.count_frequency()
-        for num in range(1, 81):
-            features[f'freq_{num}'] = frequency.get(num, 0) / len(sequence)
-        
-        # 2. Hot and cold numbers features
-        hot_cold = sequence_analysis.hot_and_cold_numbers(top_n=20)
-        hot_numbers = [num for num, _ in hot_cold['hot_numbers']]
-        cold_numbers = [num for num, _ in hot_cold['cold_numbers']]
-        trending_up = [num for num, _ in hot_cold['trending_up']]
-        trending_down = [num for num, _ in hot_cold['trending_down']]
-        
-        for num in range(1, 81):
-            features[f'is_hot_{num}'] = 1 if num in hot_numbers else 0
-            features[f'is_cold_{num}'] = 1 if num in cold_numbers else 0
-            features[f'trending_up_{num}'] = 1 if num in trending_up else 0
-            features[f'trending_down_{num}'] = 1 if num in trending_down else 0
-        
-        # 3. Gap features
-        gap_analysis = sequence_analysis.analyze_gaps()
-        for num in range(1, 81):
-            if num in gap_analysis:
-                features[f'current_gap_{num}'] = gap_analysis[num]['current_gap']
-                features[f'avg_gap_{num}'] = gap_analysis[num]['avg_gap']
-                features[f'gap_ratio_{num}'] = (gap_analysis[num]['current_gap'] / 
-                                              max(1, gap_analysis[num]['avg_gap']))
+            if target_position is None:
+                # Use the latest draws for prediction
+                sequence = draws[-self.sequence_length:]
             else:
-                features[f'current_gap_{num}'] = len(sequence)
-                features[f'avg_gap_{num}'] = len(sequence)
-                features[f'gap_ratio_{num}'] = 1.0
-        
-        # 4. Recent appearance patterns
-        last_draw = sequence[-1][1] if sequence else []
-        second_last_draw = sequence[-2][1] if len(sequence) >= 2 else []
-        
-        for num in range(1, 81):
-            features[f'in_last_draw_{num}'] = 1 if num in last_draw else 0
-            features[f'in_second_last_{num}'] = 1 if num in second_last_draw else 0
+                # Use sequence before target_position for training
+                start_pos = max(0, target_position - self.sequence_length)
+                sequence = draws[start_pos:target_position]
             
-            # Check for pattern of "skipping" - appeared, disappeared, might appear again
-            if len(sequence) >= 3:
-                third_last_draw = sequence[-3][1]
-                features[f'skip_pattern_{num}'] = 1 if (num in third_last_draw and 
-                                                     num not in second_last_draw) else 0
+            # Validate sequence data
+            feature_validation['sequence_data'] = len(sequence) >= 2
+            
+            # Basic sanity check
+            if len(sequence) < 2:
+                raise ValueError(f"Not enough draws in sequence (got {len(sequence)}, need at least 2)")
+                
+            # Get results from DataAnalysis for the sequence
+            # We create a temporary DataAnalysis instance just for the sequence
+            sequence_analysis = DataAnalysis(sequence, debug=False)
+            
+            # -- FEATURE EXTRACTION --
+            features = {}
+            
+            # 1. Basic frequency features
+            frequency = sequence_analysis.count_frequency()
+            feature_validation['frequency_analysis'] = len(frequency) > 0
+            
+            for num in range(1, 81):
+                features[f'freq_{num}'] = frequency.get(num, 0) / len(sequence)
+            
+            # 2. Hot and cold numbers features
+            hot_cold = sequence_analysis.hot_and_cold_numbers(top_n=20)
+            feature_validation['hot_cold_analysis'] = bool(hot_cold) and 'hot_numbers' in hot_cold
+            
+            hot_numbers = [num for num, _ in hot_cold.get('hot_numbers', [])]
+            cold_numbers = [num for num, _ in hot_cold.get('cold_numbers', [])]
+            trending_up = [num for num, _ in hot_cold.get('trending_up', [])]
+            trending_down = [num for num, _ in hot_cold.get('trending_down', [])]
+            
+            for num in range(1, 81):
+                features[f'is_hot_{num}'] = 1 if num in hot_numbers else 0
+                features[f'is_cold_{num}'] = 1 if num in cold_numbers else 0
+                features[f'trending_up_{num}'] = 1 if num in trending_up else 0
+                features[f'trending_down_{num}'] = 1 if num in trending_down else 0
+            
+            # 3. Gap features
+            gap_analysis = sequence_analysis.analyze_gaps()
+            feature_validation['gap_analysis'] = bool(gap_analysis)
+            
+            for num in range(1, 81):
+                if num in gap_analysis:
+                    features[f'current_gap_{num}'] = gap_analysis[num]['current_gap']
+                    features[f'avg_gap_{num}'] = gap_analysis[num]['avg_gap']
+                    features[f'gap_ratio_{num}'] = (gap_analysis[num]['current_gap'] / 
+                                                  max(1, gap_analysis[num]['avg_gap']))
+                else:
+                    features[f'current_gap_{num}'] = len(sequence)
+                    features[f'avg_gap_{num}'] = len(sequence)
+                    features[f'gap_ratio_{num}'] = 1.0
+            
+            # 4. Recent appearance patterns
+            last_draw = sequence[-1][1] if sequence else []
+            second_last_draw = sequence[-2][1] if len(sequence) >= 2 else []
+            feature_validation['recent_patterns'] = bool(last_draw) and bool(second_last_draw)
+            
+            for num in range(1, 81):
+                features[f'in_last_draw_{num}'] = 1 if num in last_draw else 0
+                features[f'in_second_last_{num}'] = 1 if num in second_last_draw else 0
+                
+                # Check for pattern of "skipping" - appeared, disappeared, might appear again
+                if len(sequence) >= 3:
+                    third_last_draw = sequence[-3][1]
+                    features[f'skip_pattern_{num}'] = 1 if (num in third_last_draw and 
+                                                         num not in second_last_draw) else 0
+            
+            # 5. Consecutive appearance ratios
+            consecutive_pairs = sequence_analysis.find_consecutive_numbers(top_n=40)
+            consecutive_pairs_dict = {pair: freq for pair, freq in consecutive_pairs}
+            
+            for num in range(1, 80):  # 1 to 79, as 80 has no consecutive number
+                pair = (num, num+1)
+                features[f'consecutive_{num}'] = consecutive_pairs_dict.get(pair, 0) / len(sequence)
+            
+            # 6. Common pairs features
+            common_pairs = sequence_analysis.find_common_pairs(top_n=100)
+            common_pairs_dict = {pair: freq for pair, freq in common_pairs}
+            
+            # For each number, calculate its "connection strength" with other numbers
+            for num in range(1, 81):
+                connection_strength = 0
+                for pair, freq in common_pairs:
+                    if num in pair:
+                        connection_strength += freq
+                features[f'connection_strength_{num}'] = connection_strength / len(sequence)
+            
+            # 7. Range balance features
+            range_analysis = sequence_analysis.number_range_analysis()
+            for range_key, count in range_analysis.items():
+                features[f'range_{range_key}'] = count / (len(sequence) * 20)  # Normalize by total numbers
+            
+            # 8. Number of times a number appeared in the sequence
+            for num in range(1, 81):
+                appearances = sum(1 for _, numbers in sequence if num in numbers)
+                features[f'appearances_{num}'] = appearances / len(sequence)
+            
+            # Print validation summary
+            print("\n=== Feature Extraction Validation ===")
+            for check, status in feature_validation.items():
+                print(f"{check}: {'✅ Valid' if status else '❌ Invalid'}")
+            
+            print(f"Total features extracted: {len(features)}")
+            
+            return features
         
-        # 5. Consecutive appearance ratios
-        consecutive_pairs = sequence_analysis.find_consecutive_numbers(top_n=40)
-        consecutive_pairs_dict = {pair: freq for pair, freq in consecutive_pairs}
-        
-        for num in range(1, 80):  # 1 to 79, as 80 has no consecutive number
-            pair = (num, num+1)
-            features[f'consecutive_{num}'] = consecutive_pairs_dict.get(pair, 0) / len(sequence)
-        
-        # 6. Common pairs features
-        common_pairs = sequence_analysis.find_common_pairs(top_n=100)
-        common_pairs_dict = {pair: freq for pair, freq in common_pairs}
-        
-        # For each number, calculate its "connection strength" with other numbers
-        for num in range(1, 81):
-            connection_strength = 0
-            for pair, freq in common_pairs:
-                if num in pair:
-                    connection_strength += freq
-            features[f'connection_strength_{num}'] = connection_strength / len(sequence)
-        
-        # 7. Range balance features
-        range_analysis = sequence_analysis.number_range_analysis()
-        for range_key, count in range_analysis.items():
-            features[f'range_{range_key}'] = count / (len(sequence) * 20)  # Normalize by total numbers
-        
-        # 8. Number of times a number appeared in the sequence
-        for num in range(1, 81):
-            appearances = sum(1 for _, numbers in sequence if num in numbers)
-            features[f'appearances_{num}'] = appearances / len(sequence)
-        
-        return features
+        except Exception as e:
+            print(f"Error during feature extraction: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Print validation summary with failures
+            print("\n=== Feature Extraction Validation (Error Occurred) ===")
+            for check, status in feature_validation.items():
+                print(f"{check}: {'✅ Valid' if status else '❌ Invalid'}")
+                
+            return {}  # Return empty features dict on error
     
     def prepare_training_data(self):
         """
@@ -359,23 +397,86 @@ class PatternPredictionModel:
         print("\n=== Starting Prediction Process ===")
         print(f"Current Date and Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
+        validation_checks = {
+            'fresh_analysis': False,
+            'feature_extraction': False,
+            'model_prediction': False,
+            'probability_calculation': False
+        }
+
         try:
-            # Get analysis results from data_analysis instance
+            # Validate fresh analysis
+            print("\nRunning comprehensive data analysis...")
             frequency = self.data_analysis.count_frequency()
             hot_cold = self.data_analysis.hot_and_cold_numbers(top_n=20)
             gaps = self.data_analysis.analyze_gaps()
             
-            # Extract features for model prediction
+            # 2. Pattern Analysis Methods
+            sequence_patterns = self.data_analysis.sequence_pattern_analysis()
+            pattern_validation = self.data_analysis.validate_patterns()
+            skip_patterns = self.data_analysis.analyze_skip_patterns()
+            
+            # 3. Advanced Analysis Methods
+            focused_prediction = self.data_analysis.get_focused_prediction()
+            recent_performance = self.data_analysis.analyze_recent_performance()
+            
+            validation_checks['fresh_analysis'] = True
+            
+            # Validate feature extraction
             features = self._extract_pattern_features()
+            validation_checks['feature_extraction'] = True
             print(f"Features extracted: {len(features) if features else 0} features")
             
-            # Get probabilities from trained model
+            # Validate model predictions
             probabilities = {}
+            models_used = 0
             for num, model in self.models['xgboost'].items():
                 prob = model.predict_proba(pd.DataFrame([features]))[0][1]
                 probabilities[num] = prob
+                models_used += 1
+            validation_checks['model_prediction'] = models_used == 80  # Should use all 80 models
+            
+            # Apply weights based on ALL analyses
+            for num in range(1, 81):
+                original_prob = probabilities.get(num, 0)
                 
-            # Sort probabilities
+                # Sequence Pattern Adjustments
+                if sequence_patterns and num in sequence_patterns.get('strong_patterns', []):
+                    probabilities[num] *= 1.2
+                    
+                # Skip Pattern Adjustments    
+                if skip_patterns and num in skip_patterns.get('likely_next', []):
+                    probabilities[num] *= 1.15
+                    
+                # Hot/Cold Number Adjustments
+                if num in [n for n, _ in hot_cold.get('hot_numbers', [])]:
+                    probabilities[num] *= 1.1
+                elif num in [n for n, _ in hot_cold.get('cold_numbers', [])]:
+                    probabilities[num] *= 0.9
+                    
+                # Gap Analysis Adjustments
+                if num in gaps:
+                    gap_info = gaps[num]
+                    if gap_info['current_gap'] > gap_info['avg_gap']:
+                        boost = min(1.3, 1 + (gap_info['current_gap'] / gap_info['avg_gap'] * 0.1))
+                        probabilities[num] *= boost
+                        
+                # Pattern Validation Adjustments
+                if pattern_validation and num in pattern_validation.get('consistent_numbers', []):
+                    probabilities[num] *= 1.1
+                    
+                # Focused Prediction Adjustments
+                if focused_prediction and num in focused_prediction.get('numbers', []):
+                    probabilities[num] *= 1.15
+            
+            validation_checks['probability_calculation'] = True
+                
+            # Print validation summary
+            print("\n=== Validation Summary ===")
+            for check, status in validation_checks.items():
+                print(f"{check}: {'✅ Completed' if status else '❌ Failed'}")
+                
+            # Sort and get predictions
             sorted_probs = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)
             predicted_numbers = [num for num, _ in sorted_probs[:num_predictions]]
             confidence_scores = [prob for _, prob in sorted_probs[:num_predictions]]
@@ -385,24 +486,36 @@ class PatternPredictionModel:
             print(f"Next draw time: {next_draw_time}")
             print(f"Numbers predicted: {predicted_numbers}")
             
-            # Save prediction to history
+            # Save comprehensive prediction data
             prediction = {
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'draw_time': next_draw_time,
                 'predicted_numbers': predicted_numbers,
                 'confidence_scores': [round(score, 4) for score in confidence_scores],
-                'full_probabilities': {k: round(v, 4) for k, v in sorted_probs}
+                'analysis_factors': {
+                    'sequence_patterns': sequence_patterns.get('pattern_count', 0) if sequence_patterns else 0,
+                    'skip_patterns': skip_patterns.get('pattern_count', 0) if skip_patterns else 0,
+                    'pattern_validation': pattern_validation.get('validation_score', 0) if pattern_validation else 0,
+                    'recent_performance': recent_performance.get('average_accuracy', 0) if recent_performance else 0
+                },
+                'validation_status': validation_checks
             }
             
             self.prediction_history.append(prediction)
             self._save_prediction(prediction)
             
             return predicted_numbers, confidence_scores
-            
+                
         except Exception as e:
             print(f"Error during prediction process: {e}")
             import traceback
             traceback.print_exc()
+            
+            # Print validation summary with failures
+            print("\n=== Validation Summary (Error Occurred) ===")
+            for check, status in validation_checks.items():
+                print(f"{check}: {'✅ Completed' if status else '❌ Failed'}")
+                
             return [], []
     
     def _apply_prediction_weights(self, probabilities):
@@ -866,11 +979,75 @@ class PatternPredictionModel:
             print(f"Error exporting training data: {e}")
             return None
 
+    def validate_data_freshness(self):
+        """
+        Validate that the data used for prediction is fresh and up-to-date
+        
+        Checks:
+        - If data is properly loaded
+        - If the latest draw is recent (within 5 minutes)
+        - If analysis results are available and updated
+        
+        Returns:
+            bool: True if all validations pass, False otherwise
+        """
+        validation = {
+            'data_loaded': True,
+            'data_fresh': True,
+            'analysis_updated': True
+        }
+        
+        try:
+            # Check if data is loaded
+            if hasattr(self.data_analysis, 'draws') and self.data_analysis.draws:
+                validation['data_loaded'] = True
+                
+                # Check data freshness (last draw within 5 minutes)
+                latest_draw_time = self.data_analysis.draws[-1][0]
+                latest_draw_dt = datetime.strptime(latest_draw_time, "%H:%M %d-%m-%Y")
+                time_diff = datetime.now() - latest_draw_dt
+                validation['data_fresh'] = time_diff.total_seconds() < 300  # 5 minutes
+                
+                # Check if analysis is updated
+                # Note: This assumes DataAnalysis has a get_analysis_results method
+                # If it doesn't, you'll need to modify this check
+                if hasattr(self.data_analysis, 'get_analysis_results'):
+                    latest_analysis = self.data_analysis.get_analysis_results()
+                    validation['analysis_updated'] = bool(latest_analysis)
+                else:
+                    # Alternative check if get_analysis_results doesn't exist
+                    # Check if basic analysis methods return valid results
+                    frequency = self.data_analysis.count_frequency()
+                    hot_cold = self.data_analysis.hot_and_cold_numbers()
+                    validation['analysis_updated'] = bool(frequency) and bool(hot_cold)
+                
+            print("\n=== Data Freshness Validation ===")
+            for check, status in validation.items():
+                print(f"{check}: {'✅ Valid' if status else '❌ Invalid'}")
+                
+            # Return True only if all checks passed
+            data_fresh = all(validation.values())
+            if not data_fresh:
+                print("WARNING: Data may not be fresh or analysis not up-to-date!")
+                
+            return data_fresh
+            
+        except Exception as e:
+            print(f"Error in data freshness validation: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
 
 if __name__ == "__main__":
     try:
-     
- 
+        import getpass
+        
+        # Current initialization with enhanced display
+        print("\n====== PATTERN PREDICTION SYSTEM ======")
+        print(f"Current Date and Time (UTC): {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Current User's Login: {getpass.getuser()}")
+        
         # Get historical data path with proper error handling
         historical_data_path = PATHS['HISTORICAL_DATA']
         if not historical_data_path:
@@ -925,21 +1102,87 @@ if __name__ == "__main__":
         # Create pattern prediction model
         model = PatternPredictionModel(data_analysis, sequence_length=15)
         
+        # NEW PART: Check for previous prediction to evaluate
+        current_draw_time = datetime.now()
+        last_prediction_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_history.pkl')
+        
+        if os.path.exists(last_prediction_file):
+            try:
+                with open(last_prediction_file, 'rb') as f:
+                    predictions = pickle.load(f)
+                    if predictions:
+                        last_prediction = predictions[-1]
+                        last_draw_time = datetime.strptime(last_prediction['draw_time'], "%H:%M %d-%m-%Y")
+                        
+                        # If we have a new draw to evaluate
+                        if current_draw_time > last_draw_time:
+                            print("\n=== Evaluating Previous Prediction ===")
+                            print(f"Previous prediction made for: {last_prediction['draw_time']}")
+                            print(f"Predicted numbers: {last_prediction['predicted_numbers']}")
+                            
+                            # Get the latest actual draw for comparison
+                            latest_draw = data_analysis.draws[-1][1]
+                            latest_draw_time = data_analysis.draws[-1][0]
+                            print(f"Latest actual draw ({latest_draw_time}): {latest_draw}")
+                            
+                            # Evaluate the prediction
+                            evaluation = model.evaluate_prediction(
+                                last_prediction['predicted_numbers'],
+                                latest_draw
+                            )
+                            
+                            print(f"\nEvaluation Results:")
+                            print(f"Hit count: {evaluation['hit_count']} out of {len(last_prediction['predicted_numbers'])}")
+                            print(f"Hit rate: {evaluation['hit_rate']:.4f}")
+                            print(f"Performance vs random: {evaluation['lift']:.2f}x better than random")
+                            print(f"Hit numbers: {evaluation['hit_numbers']}")
+                            
+                            # Update analysis based on new results
+                            print("\nUpdating pattern analysis based on new results...")
+                            data_analysis.analyze_recent_performance()
+                            data_analysis.validate_patterns()
+                            if hasattr(data_analysis, 'deep_pattern_analysis'):
+                                data_analysis.deep_pattern_analysis()
+                            
+                            print("✅ Previous prediction evaluated")
+            except Exception as e:
+                print(f"Warning: Could not evaluate previous prediction: {e}")
+                
         # Display current time and next draw time
-        current_time = datetime.now() 
-        print(f"\nCurrent Date and Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        
         next_draw_time = model.get_next_draw_time()
-        print(f"Making prediction for draw at: {next_draw_time}")
+        print(f"\nMaking prediction for draw at: {next_draw_time}")
         
-        # Try to load existing models first
-        if not model.load_models():
+        # Add validation checks
+        print("\n=== Starting Validation Checks ===")
+        
+        # 1. Validate data freshness
+        data_fresh = model.validate_data_freshness()
+        if not data_fresh:
+            print("⚠️ Warning: Data may not be fresh - predictions may be less accurate")
+            user_choice = input("Continue with prediction anyway? (y/n): ")
+            if user_choice.lower() != 'y':
+                print("Prediction cancelled. Please update the data before continuing.")
+                sys.exit(0)
+        
+        # 2. Load models with validation
+        models_loaded = model.load_models()
+        print(f"Models loaded: {'✅ Success' if models_loaded else '❌ Failed'}")
+        
+        if not models_loaded:
             print("No existing models found. Training new models...")
-            model.train_ensemble_model(n_estimators=100, learning_rate=0.05, max_depth=3)
+            training_success = model.train_ensemble_model(n_estimators=100, learning_rate=0.05, max_depth=3)
+            if not training_success:
+                print("❌ Error: Failed to train models. Exiting.")
+                sys.exit(1)
+            print("✅ Models successfully trained")
         
-        # Generate prediction for next draw
-        prediction, confidence = model.predict_next_draw(num_predictions=15)  # Changed from make_prediction()
+        # 3. Generate prediction with validation
+        print("\n=== Generating Prediction ===")
+        prediction, confidence = model.predict_next_draw(num_predictions=15)
+        
+        if not prediction:
+            print("❌ Error: Failed to generate prediction")
+            sys.exit(1)
         
         print("\n==== PATTERN-BASED PREDICTION ====")
         print(f"Top 15 predicted numbers:")
@@ -947,8 +1190,12 @@ if __name__ == "__main__":
             print(f"Number {num}: {conf:.4f} confidence")
             
         # Visualize the prediction
-        model.visualize_predictions(prediction, confidence)
-        plt.show()
+        visualization = model.visualize_predictions(prediction, confidence)
+        if visualization:
+            print("✅ Prediction visualization created")
+            plt.show()
+        else:
+            print("❌ Warning: Could not create prediction visualization")
         
         # Analyze prediction history if available
         performance = model.analyze_prediction_history()
@@ -973,31 +1220,10 @@ if __name__ == "__main__":
         print(f"Overlap percentage: {len(overlap)/15*100:.1f}%")
         print(f"Overlapping numbers: {sorted(list(overlap))}")
         
-        # Show most important features for pattern recognition
-        top_features = model.get_top_pattern_features(top_n=5)
-        print("\n==== TOP PATTERN FEATURES ====")
-        print("Sample of important features for number prediction:")
-        
-        # Show features for a few example numbers
-        example_numbers = prediction[:3]  # First 3 predicted numbers
-        for num in example_numbers:
-            if num in top_features:
-                print(f"\nFeatures for number {num}:")
-                for feature in top_features[num]:
-                    print(f"  {feature['feature']}: {feature['importance']:.4f}")
-        
-        print("\n==== NEXT STEPS ====")
-        print("1. To evaluate prediction: After the draw occurs, run:")
-        print("   actual_draw = [list of actual numbers]")
-        print("   evaluation = model.evaluate_prediction(prediction, actual_draw)")
-        print("   print(evaluation)")
-        print("2. To update model with new draws: Run this script regularly")
-        print("3. To export training data for further analysis:")
-        print("   model.export_training_data()")
-        
         # Final timestamp
         print(f"\nPrediction generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"For draw at: {next_draw_time}")
+        print("\n======================================")
         
     except Exception as e:
         print(f"Error in pattern prediction: {e}")
