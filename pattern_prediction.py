@@ -45,7 +45,7 @@ class PatternPredictionModel:
         
         # Use paths directly from PATHS with error checking
         if 'PREDICTIONS_DIR' not in PATHS or 'MODELS_DIR' not in PATHS:
-             raise ValueError("PREDICTIONS_DIR and MODELS_DIR paths must be configured in PATHS")
+            raise ValueError("PREDICTIONS_DIR and MODELS_DIR paths must be configured in PATHS")
             
         self.predictions_path = PATHS['PREDICTIONS_DIR']
         self.models_path = PATHS['MODELS_DIR']
@@ -806,7 +806,7 @@ if __name__ == "__main__":
      
  
         # Get historical data path with proper error handling
-        historical_data_path = PATHS.get('HISTORICAL_DATA')
+        historical_data_path = PATHS['HISTORICAL_DATA']
         if not historical_data_path:
             print("Error: HISTORICAL_DATA path not configured in config/paths.py")
             sys.exit(1)
