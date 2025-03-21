@@ -1093,7 +1093,10 @@ class PatternPredictionModel:
             latest_draw_time = latest_draw[0]
             
             try:
-                # Handle both possible formats
+                # Normalize spaces in the date string first
+                latest_draw_time = ' '.join(latest_draw_time.split())
+                
+                # Then handle both possible formats
                 try:
                     # Try format: "HH:MM DD-MM-YYYY"
                     time_part, date_part = latest_draw_time.split(' ', 1)
