@@ -255,11 +255,11 @@ class PatternPredictionModel:
             print(f"Total features extracted: {len(features)}")
             
             # Add after all features are extracted, before return:
-            if self.debug:
-                print("\nDEBUG: === Key Feature Values ===")
-                for feat_name in [f for f in features.keys() if any(x in f for x in ['gap_ratio_', 'current_gap_', 'is_hot_'])]:
-                    if features[feat_name] > 0.5:  # Only show significant features
-                        print(f"DEBUG: {feat_name} = {features[feat_name]:.4f}")
+           # if self.debug:
+                #print("\nDEBUG: === Key Feature Values ===")
+                #for feat_name in [f for f in features.keys() if any(x in f for x in ['gap_ratio_', 'current_gap_', 'is_hot_'])]:
+                   # if features[feat_name] > 0.5:  # Only show significant features
+                      #  print(f"DEBUG: {feat_name} = {features[feat_name]:.4f}")
             
             return features
         
@@ -1330,23 +1330,33 @@ if __name__ == "__main__":
                     predictions = pickle.load(f)
                     if predictions:
                         last_prediction = predictions[-1]
-                        last_draw_time = datetime.strptime(last_prediction['draw_time'], "%H:%M %d-%m-%Y")
+                        prediction_time = last_prediction['draw_time']
                         
-                        # If we have a new draw to evaluate
-                        if current_draw_time > last_draw_time:
-                            print("\n=== Evaluating Previous Prediction ===")
-                            print(f"Previous prediction made for: {last_prediction['draw_time']}")
+                        print("\nDEBUG: Checking draw times")
+                        print(f"Prediction time: {prediction_time}")
+                        print("Last 5 available draws:")
+                        for dt, nums in data_analysis.draws[-5:]:
+                            print(f"  {dt}: {nums[:5]}...")
+                        
+                        # Find exact matching draw
+                        matching_draw = None
+                        matching_time = None
+                        for draw_time, numbers in data_analysis.draws:
+                            if draw_time.strip() == prediction_time.strip():
+                                matching_draw = numbers
+                                matching_time = draw_time
+                                print(f"\nDEBUG: Found matching draw at {draw_time}")
+                                break
+                        
+                        if matching_draw:
+                            print(f"\n=== Evaluating Previous Prediction ===")
+                            print(f"Previous prediction made for: {prediction_time}")
                             print(f"Predicted numbers: {last_prediction['predicted_numbers']}")
+                            print(f"Actual draw ({matching_time}): {matching_draw}")
                             
-                            # Get the latest actual draw for comparison
-                            latest_draw = data_analysis.draws[-1][1]
-                            latest_draw_time = data_analysis.draws[-1][0]
-                            print(f"Latest actual draw ({latest_draw_time}): {latest_draw}")
-                            
-                            # Evaluate the prediction
                             evaluation = model.evaluate_prediction(
                                 last_prediction['predicted_numbers'],
-                                latest_draw
+                                matching_draw
                             )
                             
                             print(f"\nEvaluation Results:")
@@ -1354,17 +1364,40 @@ if __name__ == "__main__":
                             print(f"Hit rate: {evaluation['hit_rate']:.4f}")
                             print(f"Performance vs random: {evaluation['lift']:.2f}x better than random")
                             print(f"Hit numbers: {evaluation['hit_numbers']}")
+                        else:
+                            print(f"\nWARNING: Could not find matching draw for {prediction_time}")
                             
-                            # Update analysis based on new results
-                            print("\nUpdating pattern analysis based on new results...")
-                            data_analysis.analyze_recent_performance()
-                            data_analysis.validate_patterns()
-                            if hasattr(data_analysis, 'deep_pattern_analysis'):
-                                data_analysis.deep_pattern_analysis()
+                            # If no exact match, check if we have a new draw to evaluate (time-based)
+                            last_draw_time = datetime.strptime(last_prediction['draw_time'], "%H:%M %d-%m-%Y")
                             
-                            print("✅ Previous prediction evaluated")
+                            # If we have a new draw to evaluate
+                            if current_draw_time > last_draw_time:
+                                print("\n=== Evaluating Previous Prediction Using Latest Draw ===")
+                                print(f"Previous prediction made for: {last_prediction['draw_time']}")
+                                print(f"Predicted numbers: {last_prediction['predicted_numbers']}")
+                                
+                                # Get the latest actual draw for comparison
+                                latest_draw = data_analysis.draws[-1][1]
+                                latest_draw_time = data_analysis.draws[-1][0]
+                                print(f"Latest actual draw ({latest_draw_time}): {latest_draw}")
+                                
+                                # Evaluate the prediction
+                                evaluation = model.evaluate_prediction(
+                                    last_prediction['predicted_numbers'],
+                                    latest_draw
+                                )
+                                
+                                print(f"\nEvaluation Results:")
+                                print(f"Hit count: {evaluation['hit_count']} out of {len(last_prediction['predicted_numbers'])}")
+                                print(f"Hit rate: {evaluation['hit_rate']:.4f}")
+                                print(f"Performance vs random: {evaluation['lift']:.2f}x better than random")
+                                print(f"Hit numbers: {evaluation['hit_numbers']}")
+                    else:
+                        print("\nNo previous predictions found to evaluate")
             except Exception as e:
                 print(f"Warning: Could not evaluate previous prediction: {e}")
+                import traceback
+                traceback.print_exc()
                 
         # Display current time and next draw time
         next_draw_time = model.get_next_draw_time()

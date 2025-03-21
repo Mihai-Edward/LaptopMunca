@@ -13,9 +13,58 @@ from config.paths import PATHS, ensure_directories, print_system_info
 class DataAnalysis:
     def print_system_info():
         """Print system information"""
-    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"Current Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {current_time}")
-    print(f"Current User's Login: {os.getenv('USER', 'Mihai-Edward')}")
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(f"Current Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {current_time}")
+        print(f"Current User's Login: {os.getenv('USER', 'Mihai-Edward')}")
+
+    def safe_parse_date(self, draw_info):
+        """
+        Parse draw dates in various formats
+        
+        Args:
+            draw_info (tuple): Tuple containing draw date and numbers
+            
+        Returns:
+            datetime: Parsed datetime object
+        """
+        try:
+            draw_date = draw_info[0].strip()
+            # First normalize the date string - combine multiple spaces
+            draw_date = ' '.join(draw_date.split())
+            
+            try:
+                # Try standard format "HH:MM DD-MM-YYYY"
+                parts = draw_date.split(' ', 1)
+                if len(parts) == 2:
+                    time_part, date_part = parts
+                    # Parse date in correct order: day, month, year
+                    dt = datetime.strptime(f"{date_part} {time_part}", "%d-%m-%Y %H:%M")
+                    return dt
+            except ValueError:
+                try:
+                    # Try direct parsing with the expected format
+                    dt = datetime.strptime(draw_date, "%H:%M %d-%m-%Y")
+                    return dt
+                except ValueError:
+                    # Try alternative date formats
+                    formats = [
+                        "%d-%m-%Y %H:%M",  # Day-Month-Year Hour:Minute
+                        "%m-%d-%Y %H:%M",  # Month-Day-Year Hour:Minute
+                        "%Y-%m-%d %H:%M"   # Year-Month-Day Hour:Minute
+                    ]
+                    for fmt in formats:
+                        try:
+                            dt = datetime.strptime(draw_date, fmt)
+                            return dt
+                        except ValueError:
+                            continue
+            
+            # If we get here, no formats worked
+            print(f"WARNING: Could not parse date '{draw_date}', using minimum date")
+            return datetime.min
+        except Exception as e:
+            print(f"ERROR parsing date '{draw_info[0]}': {e}")
+            return datetime.min
 
     def __init__(self, draws=None, debug=False):
         """Initialize DataAnalysis with proper draw validation"""
@@ -53,11 +102,30 @@ class DataAnalysis:
                 except Exception as e:
                     print(f"DEBUG: Error processing draw {draw_date}: {e}")
         
-        # Sort draws by date in chronological order
-        self.draws.sort(key=lambda x: datetime.strptime(' '.join(x[0].split()), "%H:%M %d-%m-%Y"))
-        print(f"DEBUG: Sorted {len(self.draws)} draws by date")
-        print(f"DEBUG: First draw: {self.draws[0][0]}")
-        print(f"DEBUG: Last draw: {self.draws[-1][0]}")
+        # Print sample of dates before sorting
+        if self.debug and self.draws:
+            print("\nDEBUG: Sample of dates before sorting:")
+            for i in range(min(3, len(self.draws))):
+                print(f"  {self.draws[i][0]}")
+        
+        # Sort draws by date in chronological order with robust parsing
+        try:
+            self.draws.sort(key=self.safe_parse_date)
+            
+            if self.debug:
+                print(f"\nDEBUG: Sorted {len(self.draws)} draws by date")
+                print(f"DEBUG: First draw (oldest): {self.draws[0][0] if self.draws else 'None'}")
+                print(f"DEBUG: Last draw (newest): {self.draws[-1][0] if self.draws else 'None'}")
+                
+                # Print the last few draws to verify sorting
+                if len(self.draws) > 5:
+                    print("\nDEBUG: Last 5 draws (most recent):")
+                    for i in range(1, 6):
+                        if i <= len(self.draws):
+                            print(f"  {self.draws[-i][0]}")
+        except Exception as e:
+            print(f"ERROR during draw sorting: {e}")
+            traceback.print_exc()
 
         if not self.draws:
             raise ValueError("No valid draws were processed!")
