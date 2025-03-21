@@ -75,8 +75,7 @@ class PatternPredictionModel:
             next_draw = next_draw + timedelta(days=1)
             next_draw = next_draw.replace(hour=0, minute=0)
         
-        # Format in your exact format: "HH:MM %d-%m-%Y"
-        formatted_time = next_draw.strftime("%H:%M %d-%m-%Y")
+        formatted_time = next_draw.strftime("%H:%M  %d-%m-%Y")
         
         return formatted_time
 
