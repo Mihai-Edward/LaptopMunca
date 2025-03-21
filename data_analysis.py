@@ -16,6 +16,7 @@ class DataAnalysis:
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f"Current Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {current_time}")
     print(f"Current User's Login: {os.getenv('USER', 'Mihai-Edward')}")
+
     def __init__(self, draws=None, debug=False):
         """Initialize DataAnalysis with proper draw validation"""
         self.debug = debug
@@ -52,6 +53,12 @@ class DataAnalysis:
                 except Exception as e:
                     print(f"DEBUG: Error processing draw {draw_date}: {e}")
         
+        # Sort draws by date in chronological order
+        self.draws.sort(key=lambda x: datetime.strptime(' '.join(x[0].split()), "%H:%M %d-%m-%Y"))
+        print(f"DEBUG: Sorted {len(self.draws)} draws by date")
+        print(f"DEBUG: First draw: {self.draws[0][0]}")
+        print(f"DEBUG: Last draw: {self.draws[-1][0]}")
+
         if not self.draws:
             raise ValueError("No valid draws were processed!")
 
@@ -1375,6 +1382,76 @@ class DataAnalysis:
             traceback.print_exc()
             return None
 
+    def update_prediction_tracker(self, predicted_numbers, actual_numbers, correct_count, accuracy):
+        """
+        Export prediction results to Excel without modifying core functionality
+        This function only exports data that's already calculated by the system
+        
+        Args:
+            predicted_numbers (list): List of predicted numbers
+            actual_numbers (list): List of actual draw numbers  
+            correct_count (int): Number of correct predictions
+            accuracy (float): Hit rate (correct_count / len(predicted_numbers))
+        
+        Returns:
+            bool: True if export successful, False otherwise
+        """
+        try:
+            import pandas as pd
+            from datetime import datetime
+            
+            # Path to tracker file
+            tracker_file = r"C:\Users\MihaiNita\OneDrive - Prime Batteries\Desktop\versiuni_de_care_nu_ma_ating\Versiune1.4\data\processed\prediction_tracker.xlsx"
+            
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            current_time = datetime.now().strftime('%H:%M')
+            
+            # Create or load existing tracker
+            if os.path.exists(tracker_file):
+                try:
+                    df = pd.read_excel(tracker_file)
+                except Exception as e:
+                    print(f"Could not read existing tracker file: {e}")
+                    df = pd.DataFrame(columns=[
+                        'Date', 'Time', 'Predicted_Numbers', 'Actual_Numbers',
+                        'Hits', 'Hit_Rate', 'Notes'
+                    ])
+            else:
+                df = pd.DataFrame(columns=[
+                    'Date', 'Time', 'Predicted_Numbers', 'Actual_Numbers',
+                    'Hits', 'Hit_Rate', 'Notes'
+                ])
+            
+            # Create new entry
+            new_entry = {
+                'Date': current_date,
+                'Time': current_time,
+                'Predicted_Numbers': str(predicted_numbers),
+                'Actual_Numbers': str(actual_numbers),
+                'Hits': correct_count,
+                'Hit_Rate': accuracy,
+                'Notes': f"Auto-tracked on {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            }
+            
+            # Add to dataframe
+            df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
+            
+            # Save to Excel
+            try:
+                df.to_excel(tracker_file, index=False)
+                print(f"✅ Prediction tracker updated: {tracker_file}")
+                if self.debug:
+                    print(f"DEBUG: Added prediction entry with {correct_count} hits and {accuracy:.2%} accuracy")
+                return True
+            except Exception as e:
+                print(f"❌ Could not update prediction tracker: {e}")
+                return False
+                
+        except Exception as e:
+            print(f"Error in prediction tracker: {e}")
+            traceback.print_exc()
+            return False
+
 if __name__ == "__main__":
     example_draws = [
         (datetime.now().strftime("%H:%M %d-%m-%Y"), [1, 2, 2, 9, 12, 14, 17, 25, 26, 30, 38, 44, 54, 57, 58, 61, 65, 71, 72, 76, 79]),
@@ -1508,7 +1585,12 @@ if __name__ == "__main__":
                     print(f"Latest Prediction Accuracy: {performance_data['accuracy']*100:.2f}%")
                     print(f"Correct Numbers: {performance_data['correct_count']}")
                     print(f"Confidence Correlation: {performance_data['confidence_correlation']:.4f}")
-        
+                    analysis.update_prediction_tracker(
+                    predicted_numbers=focused_prediction['numbers'],
+                    actual_numbers=latest_actual_draw,
+                    correct_count=performance_data['correct_count'],
+                    accuracy=performance_data['accuracy'] 
+                    )   
         print("\n=== Analysis and Performance Tracking Complete ===")
         
     except Exception as e:

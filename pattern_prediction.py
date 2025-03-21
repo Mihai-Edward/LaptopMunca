@@ -445,7 +445,15 @@ class PatternPredictionModel:
         """
         print("\n=== Starting Prediction Process ===")
         print(f"Current Date and Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
+         # ADD THIS DEBUG BLOCK - Show the latest draws being considered
+        if self.debug:
+            print("\n=== DEBUG: Latest Historical Draws Used ===")
+            latest_draws = self.data_analysis.draws[-self.sequence_length:]
+            print(f"Using {len(latest_draws)} latest draws out of {len(self.data_analysis.draws)} total draws")
+            for i, (draw_date, numbers) in enumerate(latest_draws):
+                print(f"Draw #{i+1}: {draw_date} - Numbers: {numbers[:5]}...")
+            print("=== End Debug ===\n")
+        # END DEBUG BLOCK
         validation_checks = {
             'fresh_analysis': False,
             'feature_extraction': False,
