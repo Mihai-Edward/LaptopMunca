@@ -254,11 +254,11 @@ class PatternPredictionModel:
             print(f"Total features extracted: {len(features)}")
             
             # Add after all features are extracted, before return:
-           # if self.debug:
-                #print("\nDEBUG: === Key Feature Values ===")
-                #for feat_name in [f for f in features.keys() if any(x in f for x in ['gap_ratio_', 'current_gap_', 'is_hot_'])]:
-                   # if features[feat_name] > 0.5:  # Only show significant features
-                      #  print(f"DEBUG: {feat_name} = {features[feat_name]:.4f}")
+            if self.debug:
+                print("\nDEBUG: === Key Feature Values ===")
+                for feat_name in [f for f in features.keys() if any(x in f for x in ['gap_ratio_', 'current_gap_', 'is_hot_'])]:
+                    if features[feat_name] > 0.5:  # Only show significant features
+                        print(f"DEBUG: {feat_name} = {features[feat_name]:.4f}")
             
             return features
         
@@ -444,7 +444,8 @@ class PatternPredictionModel:
         """
         print("\n=== Starting Prediction Process ===")
         print(f"Current Date and Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-         # ADD THIS DEBUG BLOCK - Show the latest draws being considered
+        
+        # ADD THIS DEBUG BLOCK - Show the latest draws being considered
         if self.debug:
             print("\n=== DEBUG: Latest Historical Draws Used ===")
             latest_draws = self.data_analysis.draws[-self.sequence_length:]
@@ -453,6 +454,7 @@ class PatternPredictionModel:
                 print(f"Draw #{i+1}: {draw_date} - Numbers: {numbers[:5]}...")
             print("=== End Debug ===\n")
         # END DEBUG BLOCK
+        
         validation_checks = {
             'fresh_analysis': False,
             'feature_extraction': False,
@@ -477,7 +479,7 @@ class PatternPredictionModel:
             focused_prediction = self.data_analysis.get_focused_prediction()
             recent_performance = self.data_analysis.analyze_recent_performance()
             
-            # NEW: Add combination analysis - THIS WAS MISSING
+            # NEW: Add combination analysis
             print("\nRunning combination analysis...")
             combinations_analysis = self.data_analysis.analyze_combinations(group_size=3, top_n=10)
             combination_numbers = set()  # Initialize the set here
@@ -508,7 +510,7 @@ class PatternPredictionModel:
                 models_used += 1
             validation_checks['model_prediction'] = models_used == 80  # Should use all 80 models
             
-            # Apply weights based on ALL analyses
+            # Apply weights based on ALL analyses EXCEPT gap analysis (which is now handled separately)
             for num in range(1, 81):
                 original_prob = probabilities.get(num, 0)
                 
@@ -526,13 +528,6 @@ class PatternPredictionModel:
                 elif num in [n for n, _ in hot_cold.get('cold_numbers', [])]:
                     probabilities[num] *= 0.9
                     
-                # Gap Analysis Adjustments
-                if num in gaps:
-                    gap_info = gaps[num]
-                    if gap_info['current_gap'] > gap_info['avg_gap']:
-                        boost = min(1.3, 1 + (gap_info['current_gap'] / gap_info['avg_gap'] * 0.1))
-                        probabilities[num] *= boost
-                        
                 # Pattern Validation Adjustments
                 if pattern_validation and num in pattern_validation.get('consistent_numbers', []):
                     probabilities[num] *= 1.1
@@ -541,19 +536,57 @@ class PatternPredictionModel:
                 if focused_prediction and num in focused_prediction.get('numbers', []):
                     probabilities[num] *= 1.15
 
-                # NEW: Add combination-based adjustment
-                if num in combination_numbers:  # Now this variable is defined
+                # Combination-based adjustment
+                if num in combination_numbers:
                     combo_boost = 1.12  # 12% boost for numbers in strong combinations
                     probabilities[num] *= combo_boost
                     print(f"Number {num}: Strong combination boost +12%")
             
             validation_checks['probability_calculation'] = True
+            
+            # 1. FIRST apply refined gap analysis (replaces original gap analysis)
+            print("\nApplying refined gap analysis...")
+            probabilities = self.refine_gap_weights(probabilities)
+            
+            # 2. THEN apply transition pattern analysis
+            print("\nApplying transition pattern analysis...")
+            transition_patterns = self.analyze_draw_transitions()
+            latest_draw = self.data_analysis.draws[-1][1] if self.data_analysis.draws else []
+
+            # Track adjustments for logging
+            transition_adjustments = {}
+
+            # Boost numbers likely to follow those in the latest draw
+            for num in latest_draw:
+                if num in transition_patterns:
+                    for follower_num, probability in transition_patterns[num]:
+                        if follower_num in probabilities:
+                            # Scale boost by probability strength
+                            boost = 1.0 + min(0.25, probability)  # Cap at 25% boost
+                            original = probabilities[follower_num]
+                            probabilities[follower_num] *= boost
+                            
+                            # Track adjustment for logging
+                            adjustment_pct = round((boost - 1) * 100)
+                            msg = f"Follows {num} ({probability:.2f})"
+                            transition_adjustments[follower_num] = (adjustment_pct, msg)
+
+            # Log the transition adjustments
+            if transition_adjustments:
+                print("\n=== Transition Pattern Adjustments ===")
+                for num, (pct, msg) in sorted(transition_adjustments.items(), 
+                                            key=lambda x: x[1][0], reverse=True)[:8]:
+                    print(f"Number {num}: +{pct}% ({msg})")
                 
             # Print validation summary
             print("\n=== Validation Summary ===")
             for check, status in validation_checks.items():
                 print(f"{check}: {'✅ Completed' if status else '❌ Failed'}")
                 
+            # 3. FINALLY apply range balancing
+            print("\nChecking range distribution balance...")
+            probabilities = self.apply_range_balancing(probabilities, num_predictions)
+
             # Sort and get predictions
             sorted_probs = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)
             predicted_numbers = [num for num, _ in sorted_probs[:num_predictions]]
@@ -575,7 +608,8 @@ class PatternPredictionModel:
                     'skip_patterns': skip_patterns.get('pattern_count', 0) if skip_patterns else 0,
                     'pattern_validation': pattern_validation.get('validation_score', 0) if pattern_validation else 0,
                     'recent_performance': recent_performance.get('average_accuracy', 0) if recent_performance else 0,
-                    'combination_patterns': len(combination_numbers)  # Add the combination data
+                    'combination_patterns': len(combination_numbers),
+                    'transition_patterns': len(transition_adjustments)
                 },
                 'validation_status': validation_checks
             }
@@ -583,20 +617,18 @@ class PatternPredictionModel:
             self.prediction_history.append(prediction)
             self._save_prediction(prediction)
             
-            # Add after model predictions but before final return:
-            if self.debug:
-                print("\nDEBUG: === Model Confidence Breakdown ===")
-                # Get gap analysis and hot/cold numbers for debug output
-                gaps = self.data_analysis.analyze_gaps()
-                hot_cold = self.data_analysis.hot_and_cold_numbers(top_n=20)
-                
-                for num in sorted(probabilities, key=probabilities.get, reverse=True)[:20]:
-                    print(f"DEBUG: Number {num}: Raw prob={probabilities[num]:.4f}, " 
-                          f"Gap ratio={gaps.get(num, {}).get('gap_ratio', 0):.2f}, "
-                          f"Is hot={1 if num in [n for n, _ in hot_cold.get('hot_numbers', [])] else 0}")
+            # Add validation for prediction balance
+            validation_issues = self.validate_prediction_balance(predicted_numbers)
+            if validation_issues:
+                print("\n⚠️ Validation Issues Detected:")
+                for issue in validation_issues:
+                    print(f"  - {issue}")
+            else:
+                print("\n✅ Prediction passed all validation checks")
             
+            # Return the final predictions and confidence scores
             return predicted_numbers, confidence_scores
-                
+
         except Exception as e:
             print(f"Error during prediction process: {e}")
             import traceback
@@ -724,7 +756,237 @@ class PatternPredictionModel:
         except Exception as e:
             print(f"Error in prediction weights application: {e}")
             return original_probs  # Return original probabilities if error occurs
+
+    def analyze_draw_transitions(self, window_size=100):
+        """
+        Analyze which numbers tend to follow other numbers in consecutive draws
+        
+        Args:
+            window_size: Number of recent draws to analyze
+            
+        Returns:
+            Dictionary of follower probabilities for each number
+        """
+        try:
+            draws = self.data_analysis.draws
+            if len(draws) < 10:
+                print("Not enough draws for transition analysis")
+                return {}
+                
+            # Use most recent draws for analysis
+            recent_draws = draws[-min(window_size, len(draws)):]
+            
+            # Initialize transition matrix (number i followed by number j)
+            transition_counts = np.zeros((81, 81))
+            appearance_counts = np.zeros(81)
+            
+            # Count transitions between consecutive draws
+            for i in range(len(recent_draws) - 1):
+                current_draw = set(recent_draws[i][1])
+                next_draw = set(recent_draws[i+1][1])
+                
+                # For each number in current_draw, track what follows in the next draw
+                for num in current_draw:
+                    appearance_counts[num] += 1
+                    for next_num in next_draw:
+                        transition_counts[num, next_num] += 1
+            
+            # Calculate transition probabilities and organize results
+            transitions = {}
+            for num in range(1, 81):
+                if appearance_counts[num] >= 5:  # Need sufficient data for reliable patterns
+                    # Get top follower numbers
+                    followers = []
+                    for next_num in range(1, 81):
+                        if transition_counts[num, next_num] > 0:
+                            probability = transition_counts[num, next_num] / appearance_counts[num]
+                            followers.append((next_num, probability))
+                    
+                    # Sort by probability and keep strong followers (>=25% follow rate)
+                    strong_followers = [(n, p) for n, p in sorted(followers, key=lambda x: x[1], reverse=True) 
+                                       if p >= 0.25]
+                    
+                    if strong_followers:
+                        transitions[num] = strong_followers
+                        
+            if self.debug:
+                # Print some sample transitions for debugging
+                sample_nums = list(transitions.keys())[:5] if transitions else []
+                print(f"\nDEBUG: Found transition patterns for {len(transitions)} numbers")
+                for num in sample_nums:
+                    followers_str = ", ".join([f"{n}({p:.2f})" for n, p in transitions[num][:3]])
+                    print(f"DEBUG: Number {num} is followed by: {followers_str}")
+            
+            return transitions
+            
+        except Exception as e:
+            print(f"Error in transition analysis: {e}")
+            return {}
     
+    def apply_range_balancing(self, probabilities, top_n=15):
+        """
+        Balance probability distributions across number ranges
+        
+        Args:
+            probabilities: Dictionary of number probabilities
+            top_n: Number of top predictions to consider
+            
+        Returns:
+            Dictionary of adjusted probabilities
+        """
+        try:
+            # First, check if range balancing is needed by analyzing top N numbers
+            sorted_nums = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)
+            top_numbers = [num for num, _ in sorted_nums[:top_n]]
+            
+            # Count numbers in each range
+            ranges = {'1-20': 0, '21-40': 0, '41-60': 0, '61-80': 0}
+            for num in top_numbers:
+                if 1 <= num <= 20:
+                    ranges['1-20'] += 1
+                elif 21 <= num <= 40:
+                    ranges['21-40'] += 1
+                elif 41 <= num <= 60:
+                    ranges['41-60'] += 1
+                elif 61 <= num <= 80:
+                    ranges['61-80'] += 1
+                    
+            # Calculate ideal distribution (equal numbers per range)
+            ideal_per_range = top_n / 4  # Equal distribution across 4 ranges
+            
+            print("\n=== Range Distribution ===")
+            for range_key, count in ranges.items():
+                print(f"Range {range_key}: {count} numbers (ideal: {ideal_per_range:.1f})")
+            
+            # Check if balancing is needed
+            max_count = max(ranges.values())
+            min_count = min(ranges.values())
+            if max_count <= min_count * 2:
+                print("Range distribution is acceptable - no balancing needed")
+                return probabilities
+                
+            # Range balancing is needed - adjust probabilities
+            print("\nApplying range balancing adjustments...")
+            
+            # Copy probabilities to avoid modifying the original
+            adjusted_probs = probabilities.copy()
+            
+            # Apply adjustments to over/under-represented ranges
+            for range_key, count in ranges.items():
+                if count > ideal_per_range * 1.5:  # More than 50% over ideal
+                    # Range is over-represented - apply penalty
+                    start, end = map(int, range_key.split('-'))
+                    penalty = 0.85  # 15% reduction
+                    
+                    # Apply penalty to all numbers in this range
+                    for num in range(start, end + 1):
+                        if num in adjusted_probs:
+                            adjusted_probs[num] *= penalty
+                    
+                    print(f"Range {range_key} penalty: -15% (over-represented with {count} numbers)")
+                    
+                elif count < ideal_per_range * 0.5:  # Less than 50% of ideal
+                    # Range is under-represented - apply boost
+                    start, end = map(int, range_key.split('-'))
+                    boost = 1.20  # 20% boost
+                    
+                    # Apply boost to all numbers in this range
+                    for num in range(start, end + 1):
+                        if num in adjusted_probs:
+                            adjusted_probs[num] *= boost
+                    
+                    print(f"Range {range_key} boost: +20% (under-represented with {count} numbers)")
+            
+            return adjusted_probs
+            
+        except Exception as e:
+            print(f"Error in range balancing: {e}")
+            return probabilities  # Return original probabilities on error
+
+    def refine_gap_weights(self, probabilities):
+        """
+        Apply refined gap-based probability adjustments
+        
+        Args:
+            probabilities: Dictionary of number -> probability mappings
+            
+        Returns:
+            Updated probabilities dictionary
+        """
+        try:
+            # Get gap analysis data
+            gap_analysis = self.data_analysis.analyze_gaps()
+            total_draws = len(self.data_analysis.draws)
+            
+            # Track significant adjustments for logging
+            significant_adjustments = {}
+            
+            # For each number, apply adjusted gap weighting
+            for num in range(1, 81):
+                # Skip if number not in probabilities
+                if num not in probabilities:
+                    continue
+                    
+                gap_info = gap_analysis.get(num, {})
+                if not gap_info:
+                    continue
+                    
+                current_gap = gap_info.get('current_gap', 0)
+                avg_gap = gap_info.get('avg_gap', 0)
+                max_gap = gap_info.get('max_gap', 0)
+                
+                # Only boost if current gap exceeds average gap
+                if current_gap <= avg_gap:
+                    continue
+                    
+                # Calculate gap ratio for reference
+                gap_ratio = current_gap / max(1, avg_gap)
+                
+                # Very small boost for numbers just above average gap
+                if gap_ratio < 1.5:
+                    boost = 1.05  # 5% boost
+                    
+                # Moderate boost for significantly overdue numbers
+                elif gap_ratio < 2.5:
+                    boost = 1.12  # 12% boost
+                    
+                # Larger boost for very overdue numbers
+                elif gap_ratio < 4.0:
+                    boost = 1.20  # 20% boost
+                    
+                # Cap boost for extremely overdue numbers
+                else:
+                    boost = 1.25  # Maximum 25% boost
+                
+                # If the gap exceeds the historical maximum, limit the boost 
+                if max_gap > 0 and current_gap > max_gap:
+                    boost = min(boost, 1.10)  # Limit to 10% if beyond historical maximum
+                
+                # Apply the boost
+                original_prob = probabilities[num]
+                probabilities[num] *= boost
+                
+                # Track significant adjustments for logging
+                if boost >= 1.10:  # Only track boosts of 10% or more
+                    pct_increase = round((boost - 1) * 100)
+                    significant_adjustments[num] = (pct_increase, gap_ratio, current_gap, avg_gap)
+                    
+            # Log significant adjustments
+            if significant_adjustments:
+                print("\n=== Significant Gap Adjustments ===")
+                for num, (pct, ratio, current, avg) in sorted(
+                    significant_adjustments.items(), 
+                    key=lambda x: x[1][0], 
+                    reverse=True
+                )[:8]:  # Show top 8 most significant adjustments
+                    print(f"Number {num}: +{pct}% boost (gap: {current} vs avg: {avg:.1f}, ratio: {ratio:.1f})")
+                    
+            return probabilities
+            
+        except Exception as e:
+            print(f"Error in gap weight refinement: {e}")
+            return probabilities  # Return original probabilities on error
+
     def evaluate_prediction(self, prediction, actual_draw):
         """
         Evaluate a prediction against actual draw results
@@ -765,7 +1027,43 @@ class PatternPredictionModel:
         self._save_evaluation(evaluation)
         
         return evaluation
-    
+
+    def process_prediction_results(self, prediction, actual_draw):
+        """Process prediction results and update analysis"""
+        try:
+            # 1. Evaluate the prediction
+            evaluation = self.evaluate_prediction(prediction, actual_draw)
+            
+            # 2. Update prediction history
+            self._save_prediction({
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'predicted_numbers': prediction,
+                'actual_numbers': actual_draw,
+                'evaluation': evaluation
+            })
+            
+            # 3. Get method performance analysis
+            analysis_results = self.data_analysis.analyze_prediction_history_files()
+            
+            if analysis_results:
+                # Use the results to adjust future predictions
+                if analysis_results['recommendations']['best_method'] == 'pattern_based':
+                    self.boost_pattern_weights()
+                elif analysis_results['recommendations']['best_method'] == 'combination_based':
+                    self.boost_combination_weights()
+                    
+                # Log the analysis
+                print("\n=== Method Performance Analysis ===")
+                print(f"Best Method: {analysis_results['recommendations']['best_method']}")
+                print(f"Accuracy Trend: {analysis_results['accuracy_trend']['overall_trend']:.4f}")
+                print(f"Pattern Stability: {'Stable' if analysis_results['pattern_stability'] else 'Unstable'}")
+                
+            return analysis_results
+            
+        except Exception as e:
+            print(f"Error in process_prediction_results: {e}")
+            return None
+
     def analyze_prediction_history(self):
         """
         Analyze historical prediction performance
@@ -1255,6 +1553,79 @@ class PatternPredictionModel:
             print(f"Error in pattern validation: {e}")
             return None
 
+    def validate_prediction_balance(self, numbers):
+        """
+        Validate that the prediction has balanced statistical properties
+        
+        Args:
+            numbers: List of predicted numbers
+            
+        Returns:
+            List of validation issues or empty list if no issues found
+        """
+        try:
+            issues = []
+            
+            # Skip validation if insufficient numbers
+            if not numbers or len(numbers) < 10:
+                return ["Insufficient numbers for validation"]
+            
+            # 1. Check range distribution
+            ranges = {'1-20': 0, '21-40': 0, '41-60': 0, '61-80': 0}
+            for num in numbers:
+                if 1 <= num <= 20:
+                    ranges['1-20'] += 1
+                elif 21 <= num <= 40:
+                    ranges['21-40'] += 1
+                elif 41 <= num <= 60:
+                    ranges['41-60'] += 1
+                elif 61 <= num <= 80:
+                    ranges['61-80'] += 1
+            
+            # Check for severe range imbalance
+            max_range = max(ranges.values())
+            min_range = min(ranges.values())
+            if max_range >= 2.5 * min_range:  # One range has 2.5x more numbers than another
+                issues.append(f"Severe range imbalance: {ranges}")
+            
+            # 2. Check overlap with previous draw (typically ~5-7 numbers repeat in Kino)
+            latest_draw = self.data_analysis.draws[-1][1] if self.data_analysis.draws else []
+            overlap = set(numbers).intersection(set(latest_draw))
+            overlap_pct = (len(overlap) / len(numbers)) * 100 if numbers else 0
+            
+            if overlap_pct < 10:  # Less than 10% overlap is unusual
+                issues.append(f"Unusually low overlap with previous draw: {len(overlap)} numbers ({overlap_pct:.1f}%)")
+            elif overlap_pct > 50:  # More than 50% overlap is also unusual
+                issues.append(f"Unusually high overlap with previous draw: {len(overlap)} numbers ({overlap_pct:.1f}%)")
+            
+            # 3. Check for clusters of consecutive numbers
+            consecutive_count = 0
+            for i in range(len(sorted(numbers)) - 1):
+                if sorted(numbers)[i + 1] - sorted(numbers)[i] == 1:
+                    consecutive_count += 1
+            
+            if consecutive_count > len(numbers) // 3:  # More than 1/3 of numbers are consecutive
+                issues.append(f"High number of consecutive pairs: {consecutive_count}")
+            
+            # 4. Check for balanced odd/even distribution
+            odd_count = sum(1 for num in numbers if num % 2 == 1)
+            even_count = len(numbers) - odd_count
+            if min(odd_count, even_count) < len(numbers) // 4:  # Less than 25% odd or even
+                issues.append(f"Imbalanced odd/even distribution: {odd_count} odd, {even_count} even")
+            
+            # Log validation results
+            if issues:
+                print("\n⚠️ PREDICTION VALIDATION WARNINGS:")
+                for issue in issues:
+                    print(f"  - {issue}")
+            else:
+                print("\n✅ Prediction passed statistical validation checks")
+            
+            return issues
+            
+        except Exception as e:
+            print(f"Error in prediction validation: {e}")
+            return [f"Validation error: {str(e)}"]
 
 if __name__ == "__main__":
     try:
@@ -1341,7 +1712,7 @@ if __name__ == "__main__":
                         matching_draw = None
                         matching_time = None
                         for draw_time, numbers in data_analysis.draws:
-                            if draw_time.strip() == prediction_time.strip():
+                            if (draw_time.strip() == prediction_time.strip()):
                                 matching_draw = numbers
                                 matching_time = draw_time
                                 print(f"\nDEBUG: Found matching draw at {draw_time}")

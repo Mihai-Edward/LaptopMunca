@@ -1400,6 +1400,97 @@ class DataAnalysis:
             print(f"Error checking pattern changes: {e}")
             return False
 
+    def analyze_method_success(self, predictions_df):
+        """Analyze success rates of different prediction methods"""
+        method_success = {
+            'pattern_based': 0.0,
+            'frequency_based': 0.0,
+            'gap_based': 0.0,
+            'combination_based': 0.0
+        }
+        
+        try:
+            # Calculate each method's success rate from predictions_df
+            for _, prediction in predictions_df.iterrows():
+                predicted = prediction['predicted_numbers']
+                actual = prediction['actual_numbers']
+                
+                # Calculate hit rates for each method
+                pattern_hits = len(set(predicted) & set(actual)) / len(predicted)
+                method_success['pattern_based'] += pattern_hits
+                
+                # Get frequency-based hits
+                freq_numbers = self.get_top_numbers(15)  # Same length as predictions
+                freq_hits = len(set(freq_numbers) & set(actual)) / len(freq_numbers)
+                method_success['frequency_based'] += freq_hits
+                
+                # Get gap-based hits
+                gaps = self.analyze_gaps()
+                gap_numbers = sorted(gaps.items(), key=lambda x: x[1]['current_gap'], reverse=True)[:15]
+                gap_hits = len(set(n[0] for n in gap_numbers) & set(actual)) / 15
+                method_success['gap_based'] += gap_hits
+                
+                # Get combination-based hits
+                combos = self.analyze_combinations()['most_common'][:5]
+                combo_numbers = {num for combo in combos for num in combo['combination']}
+                combo_numbers = list(combo_numbers)[:15]  # Take top 15
+                combo_hits = len(set(combo_numbers) & set(actual)) / len(combo_numbers)
+                method_success['combination_based'] += combo_hits
+                
+            # Average the success rates
+            num_predictions = len(predictions_df)
+            for method in method_success:
+                method_success[method] /= num_predictions
+                
+            return method_success
+            
+        except Exception as e:
+            print(f"Error in analyze_method_success: {e}")
+            return method_success
+
+    def analyze_accuracy_trend(self, predictions_df):
+        """Analyze prediction accuracy trends over time"""
+        try:
+            trend_data = {
+                'is_improving': False,
+                'window_accuracy': [],
+                'overall_trend': 0.0
+            }
+            
+            # Calculate rolling accuracy
+            window_size = 5
+            accuracies = []
+            
+            for i in range(len(predictions_df)):
+                if i < window_size:
+                    continue
+                    
+                window = predictions_df.iloc[i-window_size:i]
+                window_hits = 0
+                window_total = 0
+                
+                for _, prediction in window.iterrows():
+                    predicted = prediction['predicted_numbers']
+                    actual = prediction['actual_numbers']
+                    hits = len(set(predicted) & set(actual))
+                    window_hits += hits
+                    window_total += len(predicted)
+                
+                window_accuracy = window_hits / window_total if window_total > 0 else 0
+                accuracies.append(window_accuracy)
+                
+            if accuracies:
+                # Calculate trend
+                trend_data['is_improving'] = accuracies[-1] > accuracies[0]
+                trend_data['window_accuracy'] = accuracies
+                trend_data['overall_trend'] = (accuracies[-1] - accuracies[0]) / len(accuracies)
+                
+            return trend_data
+            
+        except Exception as e:
+            print(f"Error in analyze_accuracy_trend: {e}")
+            return {'is_improving': False, 'window_accuracy': [], 'overall_trend': 0.0}
+
     def analyze_prediction_history_files(self):
         """Analyze prediction history files to learn from past predictions"""
         print("\n=== Analyzing Prediction History Files ===")

@@ -145,10 +145,21 @@ class KinoDataCollector:
             self.collection_status['last_error'] = str(e)
             return False
 
-    def fetch_latest_draws(self, num_draws=2, delay=1):
+    def fetch_latest_draws(self, num_draws=2, delay=1, max_pages=5):
+        """
+        Fetch latest lottery draws by navigating through paginated results tables.
+        
+        Args:
+            num_draws: Maximum number of draws to collect (default 100)
+            delay: Time delay between processing each draw in seconds (default 1)
+            max_pages: Maximum number of pages to navigate through (default 3)
+        
+        Returns:
+            List of tuples containing (draw_date, numbers)
+        """
         driver = None
         try:
-            print(f"\nFetching {num_draws} latest draws...")
+            print(f"\nFetching up to {num_draws} latest draws (up to {max_pages} pages)...")
             self.collection_status['draws_collected'] = 0
             self.update_timestamps()
 
@@ -172,54 +183,133 @@ class KinoDataCollector:
             })
             print("Browser initialized")
 
-            # Load the page with explicit wait
+            # Load the initial page
             driver.get(self.base_url)
             time.sleep(5)
-            print("Page loaded")
-
-            # Wait for the table with increased timeout
-            wait = WebDriverWait(driver, 60)
-            table = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#all_results")))
-            print("Results table found")
-
-            # Additional wait for JavaScript
-            time.sleep(15)
+            print("Initial page loaded")
 
             draws = []
+            current_page = 1
+            total_draws_collected = 0
 
-            # Find all draw rows in the results table
-            rows = table.find_elements(By.CSS_SELECTOR, "tbody > tr")
-            print(f"Found {len(rows)} rows in the results table")
+            # Process pages until we have enough draws or reach max_pages
+            while current_page <= max_pages and total_draws_collected < num_draws:
+                print(f"Processing page {current_page}...")
+                
+                # Wait for the table with appropriate timeout 
+                wait = WebDriverWait(driver, 30)
+                table = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#all_results")))
+                print(f"Results table found on page {current_page}")
 
-            for row in rows:
-                try:
-                    # Get the date cell and parse it with BeautifulSoup
-                    date_cell_html = row.find_element(By.CSS_SELECTOR, "td:first-child").get_attribute('innerHTML')
-                    soup = BeautifulSoup(date_cell_html, 'html.parser')
-                    draw_date = soup.get_text().strip()
+                # Wait for JavaScript to complete rendering
+                time.sleep(5)
 
-                    # Get all number cells in the row
-                    number_cells = row.find_elements(By.CSS_SELECTOR, "td:nth-child(2) > div.nrr")
-                    numbers = self.extract_numbers(number_cells)
+                # Find all draw rows in the results table
+                rows = table.find_elements(By.CSS_SELECTOR, "tbody > tr")
+                print(f"Found {len(rows)} rows in the results table on page {current_page}")
 
-                    if len(numbers) >= 20:
-                        draws.append((draw_date, sorted(numbers)))
-                        # Save each draw as it's collected
-                        self.save_draw(draw_date, numbers)
-                        if len(draws) >= num_draws:
+                # Process rows on current page
+                page_draws_collected = 0
+                for row in rows:
+                    try:
+                        # Get the date cell and parse it with BeautifulSoup
+                        date_cell_html = row.find_element(By.CSS_SELECTOR, "td:first-child").get_attribute('innerHTML')
+                        soup = BeautifulSoup(date_cell_html, 'html.parser')
+                        draw_date = soup.get_text().strip()
+
+                        # Get all number cells in the row
+                        number_cells = row.find_elements(By.CSS_SELECTOR, "td:nth-child(2) > div.nrr")
+                        numbers = self.extract_numbers(number_cells)
+
+                        if len(numbers) >= 20:
+                            draws.append((draw_date, sorted(numbers)))
+                            # Save each draw as it's collected
+                            self.save_draw(draw_date, numbers)
+                            total_draws_collected += 1
+                            page_draws_collected += 1
+                            
+                            # Break if we've collected enough draws
+                            if total_draws_collected >= num_draws:
+                                break
+
+                        # Introduce a delay between processing each draw
+                        time.sleep(delay)
+
+                    except Exception as e:
+                        print(f"Error processing row: {str(e)}")
+                        self.collection_status['last_error'] = str(e)
+                        continue
+                
+                print(f"Collected {page_draws_collected} draws from page {current_page}")
+                
+                # If we haven't collected enough draws, try to go to the next page
+                if total_draws_collected < num_draws and current_page < max_pages:
+                    try:
+                        # Calculate the next page number
+                        next_page_number = current_page + 1
+                        
+                        # First make sure we scroll down to make the pagination visible
+                        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                        time.sleep(2)
+                        
+                        # Direct targeting of the next page button
+                        next_page_selector = f"a.fg-button[aria-controls='all_results'][data-dt-idx='{next_page_number}']"
+                        print(f"Looking for pagination button with selector: {next_page_selector}")
+                        
+                        # Try to find the element
+                        next_page_button = WebDriverWait(driver, 10).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, next_page_selector))
+                        )
+                        
+                        # Log button status
+                        if next_page_button.is_displayed():
+                            print("Pagination button is visible")
+                        else:
+                            print("Pagination button is not visible - scrolling to make it visible")
+                            # Try to scroll directly to the button
+                            driver.execute_script("arguments[0].scrollIntoView(true);", next_page_button)
+                            time.sleep(2)
+                        
+                        # Click using JavaScript which works even if the element isn't fully visible
+                        print(f"Clicking on pagination button {next_page_number} using JavaScript")
+                        driver.execute_script("arguments[0].click();", next_page_button)
+                        
+                        # Wait for page to update
+                        time.sleep(5)
+                        
+                        # Verify that we're on the new page by checking the active pagination button
+                        active_page = driver.find_element(By.CSS_SELECTOR, "a.fg-button.ui-state-disabled:not(.previous):not(.next)")
+                        if active_page.text.strip() == str(next_page_number):
+                            print(f"Successfully navigated to page {next_page_number}")
+                            current_page = next_page_number
+                        else:
+                            print(f"Navigation to page {next_page_number} failed - URL navigation fallback")
+                            # Fallback to URL navigation if the click didn't work
+                            new_url = f"{self.base_url}?page={next_page_number}"
+                            driver.get(new_url)
+                            time.sleep(5)
+                            current_page = next_page_number
+                    
+                    except Exception as e:
+                        print(f"Error navigating to next page: {str(e)}")
+                        # Try URL navigation as a last resort
+                        try:
+                            new_url = f"{self.base_url}?page={next_page_number}"
+                            print(f"Attempting direct navigation to: {new_url}")
+                            driver.get(new_url)
+                            time.sleep(5)
+                            current_page = next_page_number
+                            print(f"Successfully navigated to page {next_page_number} via URL")
+                        except:
+                            print(f"Failed to navigate to page {next_page_number}")
                             break
-
-                    # Introduce a delay between processing each draw
-                    time.sleep(delay)
-
-                except Exception as e:
-                    print(f"Error processing row: {str(e)}")
-                    self.collection_status['last_error'] = str(e)
-                    continue
+                else:
+                    break
 
             if draws:
-                print(f"\nSuccessfully collected {len(draws)} draws")
+                print(f"\nSuccessfully collected {len(draws)} draws across {current_page} pages")
                 self.collection_status['success'] = True
+                self.collection_status['draws_collected'] = total_draws_collected
                 return draws
             else:
                 print("\nNo draws found.")
