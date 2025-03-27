@@ -1145,31 +1145,51 @@ class PatternPredictionModel:
     def _save_prediction(self, prediction):
         """Save a prediction to disk"""
         try:
-            # Ensure prediction has all required fields
+            # Ensure prediction has all required fields in a flat structure
             prediction_data = {
                 'timestamp': prediction.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
                 'draw_time': prediction.get('draw_time', ''),
                 'predicted_numbers': prediction.get('predicted_numbers', []),
                 'actual_numbers': prediction.get('actual_numbers', []),
-                'method': prediction.get('method', 'pattern_based'),  # Set default method
+                'method': prediction.get('method', 'pattern_based'),
                 'confidence_scores': prediction.get('confidence_scores', []),
-                'evaluation': prediction.get('evaluation', {}),
+                'hit_rate': prediction.get('evaluation', {}).get('hit_rate', 0),
+                'hit_count': prediction.get('evaluation', {}).get('hit_count', 0)
             }
             
-            # Create a unique filename for this prediction
-            timestamp = prediction_data['timestamp'].replace(':', '-').replace(' ', '_')
-            filename = os.path.join(self.predictions_path, f"prediction_{timestamp}.pkl")
+            # Load existing history
+            history_file = PATHS['MODEL_PREDICTIONS']
+            if os.path.exists(history_file):
+                try:
+                    with open(history_file, 'rb') as f:
+                        history = pickle.load(f)
+                        if isinstance(history, list):
+                            history_df = pd.DataFrame(history)
+                        elif isinstance(history, pd.DataFrame):
+                            history_df = history
+                        else:
+                            history_df = pd.DataFrame()
+                except:
+                    history_df = pd.DataFrame()
+            else:
+                history_df = pd.DataFrame()
+            
+            # Append new prediction as a DataFrame row
+            new_row = pd.DataFrame([prediction_data])
+            history_df = pd.concat([history_df, new_row], ignore_index=True)
+            
+            # Keep last 100 predictions
+            history_df = history_df.tail(100)
+            
+            # Save both individual prediction and history
+            filename = os.path.join(self.predictions_path, 
+                                  f"prediction_{prediction_data['timestamp'].replace(':', '-').replace(' ', '_')}.pkl")
             
             with open(filename, 'wb') as f:
                 pickle.dump(prediction_data, f)
                 
-            # Update prediction history
-            self.prediction_history.append(prediction_data)
-            
-            # Save history file (last 100 predictions)
-            history_file = PATHS['MODEL_PREDICTIONS']
             with open(history_file, 'wb') as f:
-                pickle.dump(self.prediction_history[-100:], f)
+                pickle.dump(history_df, f)
                 
             print(f"Prediction saved to {filename}")
             return True
