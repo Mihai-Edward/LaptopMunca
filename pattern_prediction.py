@@ -1145,17 +1145,31 @@ class PatternPredictionModel:
     def _save_prediction(self, prediction):
         """Save a prediction to disk"""
         try:
+            # Ensure prediction has all required fields
+            prediction_data = {
+                'timestamp': prediction.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                'draw_time': prediction.get('draw_time', ''),
+                'predicted_numbers': prediction.get('predicted_numbers', []),
+                'actual_numbers': prediction.get('actual_numbers', []),
+                'method': prediction.get('method', 'pattern_based'),  # Set default method
+                'confidence_scores': prediction.get('confidence_scores', []),
+                'evaluation': prediction.get('evaluation', {}),
+            }
+            
             # Create a unique filename for this prediction
-            timestamp = prediction['timestamp'].replace(':', '-').replace(' ', '_')
+            timestamp = prediction_data['timestamp'].replace(':', '-').replace(' ', '_')
             filename = os.path.join(self.predictions_path, f"prediction_{timestamp}.pkl")
             
             with open(filename, 'wb') as f:
-                pickle.dump(prediction, f)
+                pickle.dump(prediction_data, f)
                 
-            # Also update the history file
+            # Update prediction history
+            self.prediction_history.append(prediction_data)
+            
+            # Save history file (last 100 predictions)
             history_file = PATHS['MODEL_PREDICTIONS']
             with open(history_file, 'wb') as f:
-                pickle.dump(self.prediction_history[-100:], f)  # Keep last 100 predictions
+                pickle.dump(self.prediction_history[-100:], f)
                 
             print(f"Prediction saved to {filename}")
             return True
@@ -1703,7 +1717,20 @@ class PatternPredictionModel:
             
             # Load and convert predictions to DataFrame
             with open(prediction_file, 'rb') as f:
-                predictions = pickle.load(f)
+                try:
+                    predictions = pickle.load(f)
+                except Exception as e:
+                    print(f"Error loading prediction history: {e}")
+                    return {
+                        'method_success': {},
+                        'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
+                        'pattern_stability': True,
+                        'recommendations': {
+                            'best_method': 'pattern_based',
+                            'accuracy_improving': False,
+                            'needs_retraining': False
+                        }
+                    }
                 
             if isinstance(predictions, list):
                 predictions_df = pd.DataFrame(predictions)
