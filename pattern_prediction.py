@@ -904,7 +904,94 @@ class PatternPredictionModel:
         except Exception as e:
             print(f"Error in gap weight refinement: {e}")
             return probabilities  # Return original probabilities on error
-
+    def adjust_model_weights_based_on_evaluations(self):
+        """Adjust XGBoost model parameters based on historical evaluation performance"""
+        try:
+            # Load existing evaluations
+            evaluations = []
+            eval_file = PATHS['EVALUATION_RESULTS']
+            
+            if not os.path.exists(eval_file):
+                print("No evaluation history found for model adjustment")
+                return False
+                
+            with open(eval_file, 'rb') as f:
+                evaluations = pickle.load(f)
+                
+            # Need sufficient history for meaningful adjustments
+            if len(evaluations) < 3:
+                print("Insufficient evaluation history for model adjustment")
+                return False
+                
+            # Calculate performance metrics over time
+            recent_evals = evaluations[-10:] if len(evaluations) >= 10 else evaluations
+            hit_rates = [eval.get('hit_rate', 0) for eval in recent_evals]
+            avg_hit_rate = sum(hit_rates) / len(hit_rates) if hit_rates else 0
+            
+            # Determine trend - improving or declining
+            trend = "stable"
+            if len(hit_rates) >= 5:
+                recent_avg = sum(hit_rates[-5:]) / 5
+                earlier_avg = sum(hit_rates[:5]) / 5 if len(hit_rates) >= 10 else sum(hit_rates[:len(hit_rates)//2]) / (len(hit_rates)//2)
+                if recent_avg > earlier_avg * 1.1:  # 10% improvement
+                    trend = "improving"
+                elif recent_avg < earlier_avg * 0.9:  # 10% decline
+                    trend = "declining"
+            
+            print(f"\n=== Model Adjustment Based on Evaluation History ===")
+            print(f"Average hit rate: {avg_hit_rate:.4f}")
+            print(f"Performance trend: {trend}")
+            
+            # Apply model parameter adjustments based on performance
+            adjustments_made = False
+            
+            if 'xgboost' in self.models:
+                for num, model in self.models['xgboost'].items():
+                    current_params = model.get_params()
+                    
+                    # Get current learning rate and subsample
+                    current_lr = current_params.get('learning_rate', 0.05)
+                    current_subsample = current_params.get('subsample', 0.8)
+                    
+                    # Base adjustments on trend
+                    if trend == "declining":
+                        # If performance is declining, increase learning rate to adapt faster
+                        new_lr = min(0.2, current_lr * 1.1)  # Cap at 0.2, increase by 10%
+                        new_subsample = max(0.7, current_subsample * 0.95)  # Reduce to min 0.7
+                        
+                        # Apply changes only if significant
+                        if abs(new_lr - current_lr) > 0.005 or abs(new_subsample - current_subsample) > 0.01:
+                            model.set_params(learning_rate=new_lr, subsample=new_subsample)
+                            adjustments_made = True
+                            
+                    elif trend == "improving":
+                        # If performance is improving, slightly reduce learning rate for stability
+                        new_lr = max(0.01, current_lr * 0.95)  # Floor at 0.01
+                        new_subsample = min(0.9, current_subsample * 1.05)  # Increase to max 0.9
+                        
+                        # Apply changes only if significant
+                        if abs(new_lr - current_lr) > 0.005 or abs(new_subsample - current_subsample) > 0.01:
+                            model.set_params(learning_rate=new_lr, subsample=new_subsample)
+                            adjustments_made = True
+                
+                if adjustments_made:
+                    # Save the adjusted models
+                    self.save_models()
+                    print(f"✅ Model parameters adjusted based on evaluation history")
+                    return True
+                else:
+                    print(f"ℹ️ No significant adjustments needed based on current performance")
+                    return False
+                    
+            else:
+                print("No XGBoost models available for adjustment")
+                return False
+                
+        except Exception as e:
+            print(f"Error adjusting model weights: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     def evaluate_prediction(self, prediction, actual_draw):
         """
         Evaluate a prediction against actual draw results
@@ -930,6 +1017,10 @@ class PatternPredictionModel:
         # Calculate lift over random
         lift = hit_rate / expected_hit_rate if expected_hit_rate > 0 else 0
         
+        # NEW: Position-based accuracy
+        top_5_hits = len(set(prediction[:5]).intersection(set(actual_draw)))
+        top_10_hits = len(set(prediction[:10]).intersection(set(actual_draw)))
+        
         evaluation = {
             'hit_count': hit_count,
             'hit_rate': hit_rate,
@@ -938,7 +1029,10 @@ class PatternPredictionModel:
             'hit_numbers': list(hits),
             'missed_numbers': list(set(actual_draw) - hits),
             'false_positives': list(set(prediction) - set(actual_draw)),
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            # New fields
+            'top_5_hits': top_5_hits,
+            'top_10_hits': top_10_hits
         }
         
         # Save evaluation
@@ -960,21 +1054,27 @@ class PatternPredictionModel:
                 'evaluation': evaluation
             })
             
-            # 3. Get method performance analysis
+            # 3. NEW: Apply model adjustments based on evaluation history
+            adjustment_made = self.adjust_model_weights_based_on_evaluations()
+            
+            # 4. Get method performance analysis (your existing code)
             analysis_results = self.data_analysis.analyze_prediction_history_files()
             
             if analysis_results:
-                # Use the results to adjust future predictions
+                # Use the results to adjust future predictions (your existing code)
                 if analysis_results['recommendations']['best_method'] == 'pattern_based':
-                    self.boost_pattern_weights()
+                    if hasattr(self, 'boost_pattern_weights'):
+                        self.boost_pattern_weights()
                 elif analysis_results['recommendations']['best_method'] == 'combination_based':
-                    self.boost_combination_weights()
-                    
+                    if hasattr(self, 'boost_combination_weights'):
+                        self.boost_combination_weights()
+                        
                 # Log the analysis
                 print("\n=== Method Performance Analysis ===")
                 print(f"Best Method: {analysis_results['recommendations']['best_method']}")
                 print(f"Accuracy Trend: {analysis_results['accuracy_trend']['overall_trend']:.4f}")
                 print(f"Pattern Stability: {'Stable' if analysis_results['pattern_stability'] else 'Unstable'}")
+                print(f"Model adjustments applied: {'Yes' if adjustment_made else 'No'}")
                 
             return analysis_results
             
@@ -1634,6 +1734,16 @@ if __name__ == "__main__":
                             print(f"Hit rate: {evaluation['hit_rate']:.4f}")
                             print(f"Performance vs random: {evaluation['lift']:.2f}x better than random")
                             print(f"Hit numbers: {evaluation['hit_numbers']}")
+                            
+                            # After evaluating the previous prediction
+                            if matching_draw:
+                                print("\n=== Processing Evaluation Results to Adjust Models ===")
+                                processing_result = model.process_prediction_results(
+                                    last_prediction['predicted_numbers'], 
+                                    matching_draw
+                                )
+                                if processing_result:
+                                    print("✅ Previous prediction results processed for learning")
                         else:
                             print(f"\nWARNING: Could not find matching draw for {prediction_time}")
                             
@@ -1752,6 +1862,32 @@ if __name__ == "__main__":
         print(f"\nPrediction generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"For draw at: {next_draw_time}")
         print("\n======================================")
+        
+        # Check if models have been adjusted from evaluation learning
+        if os.path.exists(PATHS['EVALUATION_RESULTS']):
+            print("\n=== Checking Evaluation-Based Model Adaptation ===")
+            with open(PATHS['EVALUATION_RESULTS'], 'rb') as f:
+                try:
+                    evaluations = pickle.load(f)
+                    if len(evaluations) > 1:
+                        # Get evaluation trend
+                        recent_evals = evaluations[-min(5, len(evaluations)):]
+                        hit_rates = [e.get('hit_rate', 0) for e in recent_evals]
+                        avg_hit_rate = sum(hit_rates) / len(hit_rates) if hit_rates else 0
+                        print(f"Evaluation history: {len(evaluations)} past predictions")
+                        print(f"Recent average hit rate: {avg_hit_rate:.4f}")
+                        
+                        # Show model adaptation status
+                        if 'xgboost' in model.models:
+                            # Check learning rate distribution
+                            lr_values = [m.get_params().get('learning_rate', 0.05) for m in model.models['xgboost'].values()]
+                            avg_lr = sum(lr_values) / len(lr_values) if lr_values else 0
+                            min_lr = min(lr_values) if lr_values else 0
+                            max_lr = max(lr_values) if lr_values else 0
+                            print(f"Model adaptation: Active")
+                            print(f"Learning rate range: {min_lr:.4f} - {max_lr:.4f} (avg: {avg_lr:.4f})")
+                except Exception as e:
+                    print(f"Error checking evaluation history: {e}")
         
     except Exception as e:
         print(f"Error in pattern prediction: {e}")
