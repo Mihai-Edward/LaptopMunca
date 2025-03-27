@@ -1235,7 +1235,6 @@ class PatternPredictionModel:
             models = {}
             metadata_file = os.path.join(self.models_path, "model_metadata.pkl")
             
-            # Check if models exist
             if not os.path.exists(metadata_file):
                 print("No saved models found.")
                 return False
@@ -1244,19 +1243,29 @@ class PatternPredictionModel:
             with open(metadata_file, 'rb') as f:
                 metadata = pickle.load(f)
                 
+            # Initialize models dict with xgboost key first
+            self.models = {'xgboost': {}}
+            
+            # Load each model
+            loaded_count = 0
+            for num in range(1, 81):
+                model_file = os.path.join(self.models_path, f"xgb_model_{num}.joblib")
+                if os.path.exists(model_file):
+                    model = load(model_file)
+                    # Verify it's an XGBoost model
+                    if hasattr(model, 'get_params') and isinstance(model, xgb.XGBClassifier):
+                        self.models['xgboost'][num] = model
+                        loaded_count += 1
+                        
+            print(f"Loaded {loaded_count} models as XGBoost classifiers")
+            
+            # Load additional metadata
             self.feature_importances = metadata.get('feature_importances', {})
             self.model_performance = metadata.get('model_performance', {})
             self.sequence_length = metadata.get('sequence_length', 10)
             
-            # Load each model
-            for num in range(1, 81):
-                model_file = os.path.join(self.models_path, f"xgb_model_{num}.joblib")
-                if os.path.exists(model_file):
-                    models[num] = load(model_file)
+            return loaded_count > 0
             
-            self.models['xgboost'] = models
-            print(f"Loaded {len(models)} models from {self.models_path}")
-            return True
         except Exception as e:
             print(f"Error loading models: {e}")
             return False
@@ -1677,7 +1686,6 @@ class PatternPredictionModel:
         print("\n=== Analyzing Prediction History Files ===")
         
         try:
-            # Load prediction history
             prediction_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_history.pkl')
             
             if not os.path.exists(prediction_file):
@@ -1687,13 +1695,33 @@ class PatternPredictionModel:
                     'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
                     'pattern_stability': True,
                     'recommendations': {
-                        'best_method': None,
+                        'best_method': 'pattern_based',
                         'accuracy_improving': False,
                         'needs_retraining': False
                     }
                 }
             
-            predictions_df = pd.read_pickle(prediction_file)
+            # Load and convert predictions to DataFrame
+            with open(prediction_file, 'rb') as f:
+                predictions = pickle.load(f)
+                
+            if isinstance(predictions, list):
+                predictions_df = pd.DataFrame(predictions)
+            elif isinstance(predictions, pd.DataFrame):
+                predictions_df = predictions
+            else:
+                print(f"Invalid predictions type: {type(predictions)}")
+                return {
+                    'method_success': {},
+                    'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
+                    'pattern_stability': True,
+                    'recommendations': {
+                        'best_method': 'pattern_based',
+                        'accuracy_improving': False,
+                        'needs_retraining': False
+                    }
+                }
+                
             print(f"Loaded {len(predictions_df)} previous predictions")
             
             if predictions_df.empty:
@@ -1703,7 +1731,7 @@ class PatternPredictionModel:
                     'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
                     'pattern_stability': True,
                     'recommendations': {
-                        'best_method': None,
+                        'best_method': 'pattern_based',
                         'accuracy_improving': False,
                         'needs_retraining': False
                     }
@@ -1724,7 +1752,7 @@ class PatternPredictionModel:
                 overall_trend = 0.0
             
             # Determine best method based on success rates
-            best_method = max(method_success, key=method_success.get, default=None)
+            best_method = max(method_success, key=method_success.get, default='pattern_based')
             
             # Check if retraining is needed
             needs_retraining = overall_trend < -0.1  # Example threshold for declining performance
@@ -1748,7 +1776,7 @@ class PatternPredictionModel:
                 'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
                 'pattern_stability': True,
                 'recommendations': {
-                    'best_method': None,
+                    'best_method': 'pattern_based',
                     'accuracy_improving': False,
                     'needs_retraining': False
                 }

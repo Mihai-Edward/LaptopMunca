@@ -89,8 +89,9 @@ def print_system_info():
     print(f"Python Version: {sys.version}")
     print(f"Working Directory: {os.getcwd()}")
     print(f"Base Directory: {BASE_DIR}")
-    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"Current Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {current_time}")
+    # Use actual current time
+    current_time = datetime.now().strftime('%H:%M  %d-%m-%Y')
+    print(f"Current Date and Time: {current_time}")  # Add this line to print the time
     print(f"Current User's Login: {os.getenv('USER', 'Mihai-Edward')}")
 
 if __name__ == "__main__":
