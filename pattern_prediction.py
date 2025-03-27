@@ -1481,7 +1481,7 @@ class PatternPredictionModel:
             models_loaded = self.load_models()
             
             # Only validate feature structure if models were loaded
-            if models_loaded:
+            if (models_loaded):
                 # Check if we have the expected feature metadata
                 if self.feature_importances and 'xgboost' in self.feature_importances:
                     # Get feature structure from first model's metadata
@@ -1626,6 +1626,133 @@ class PatternPredictionModel:
         except Exception as e:
             print(f"Error in prediction validation: {e}")
             return [f"Validation error: {str(e)}"]
+
+    def analyze_method_success(self, predictions_df):
+        """Analyze success rates of different prediction methods"""
+        method_success = {
+            'pattern_based': 0.0,
+            'frequency_based': 0.0,
+            'gap_based': 0.0,
+            'combination_based': 0.0
+        }
+        
+        try:
+            # Convert to DataFrame if it's a list
+            if isinstance(predictions_df, list):
+                predictions_df = pd.DataFrame(predictions_df)
+            
+            # Ensure the DataFrame has the required columns
+            required_columns = {'predicted_numbers', 'actual_numbers', 'method'}
+            if not required_columns.issubset(predictions_df.columns):
+                raise ValueError(f"Missing required columns in predictions_df. Expected: {required_columns}")
+            
+            # Iterate through predictions
+            for _, prediction in predictions_df.iterrows():
+                predicted = prediction['predicted_numbers']
+                actual = prediction['actual_numbers']
+                method = prediction['method']
+                
+                # Calculate hit rate
+                hits = set(predicted).intersection(set(actual))
+                hit_rate = len(hits) / len(predicted) if predicted else 0
+                
+                # Update method success
+                if method in method_success:
+                    method_success[method] += hit_rate
+            
+            # Normalize success rates by the number of predictions per method
+            method_counts = predictions_df['method'].value_counts()
+            for method in method_success:
+                if method in method_counts:
+                    method_success[method] /= method_counts[method]
+            
+            return method_success
+                
+        except Exception as e:
+            print(f"Error in analyze_method_success: {e}")
+            return method_success
+
+    def analyze_prediction_history_files(self):
+        """Analyze prediction history files to learn from past predictions"""
+        print("\n=== Analyzing Prediction History Files ===")
+        
+        try:
+            # Load prediction history
+            prediction_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_history.pkl')
+            
+            if not os.path.exists(prediction_file):
+                print("No prediction history file found")
+                return {
+                    'method_success': {},
+                    'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
+                    'pattern_stability': True,
+                    'recommendations': {
+                        'best_method': None,
+                        'accuracy_improving': False,
+                        'needs_retraining': False
+                    }
+                }
+            
+            predictions_df = pd.read_pickle(prediction_file)
+            print(f"Loaded {len(predictions_df)} previous predictions")
+            
+            if predictions_df.empty:
+                print("No predictions found in history file")
+                return {
+                    'method_success': {},
+                    'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
+                    'pattern_stability': True,
+                    'recommendations': {
+                        'best_method': None,
+                        'accuracy_improving': False,
+                        'needs_retraining': False
+                    }
+                }
+            
+            # Perform analysis on the prediction history
+            method_success = self.analyze_method_success(predictions_df)
+            hit_rates = predictions_df['evaluation'].apply(lambda x: x.get('hit_rate', 0)).tolist()
+            
+            # Calculate accuracy trend
+            if len(hit_rates) >= 5:
+                recent_avg = sum(hit_rates[-5:]) / 5
+                overall_avg = sum(hit_rates) / len(hit_rates)
+                is_improving = recent_avg > overall_avg
+                overall_trend = (recent_avg - overall_avg) / overall_avg if overall_avg > 0 else 0.0
+            else:
+                is_improving = False
+                overall_trend = 0.0
+            
+            # Determine best method based on success rates
+            best_method = max(method_success, key=method_success.get, default=None)
+            
+            # Check if retraining is needed
+            needs_retraining = overall_trend < -0.1  # Example threshold for declining performance
+            
+            # Return analysis results
+            return {
+                'method_success': method_success,
+                'accuracy_trend': {'is_improving': is_improving, 'overall_trend': overall_trend},
+                'pattern_stability': True,  # Placeholder for additional stability checks
+                'recommendations': {
+                    'best_method': best_method,
+                    'accuracy_improving': is_improving,
+                    'needs_retraining': needs_retraining
+                }
+            }
+            
+        except Exception as e:
+            print(f"Error analyzing prediction history: {e}")
+            return {
+                'method_success': {},
+                'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
+                'pattern_stability': True,
+                'recommendations': {
+                    'best_method': None,
+                    'accuracy_improving': False,
+                    'needs_retraining': False
+                }
+            }
 
 if __name__ == "__main__":
     try:
