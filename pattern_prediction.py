@@ -583,9 +583,6 @@ class PatternPredictionModel:
             for check, status in validation_checks.items():
                 print(f"{check}: {'✅ Completed' if status else '❌ Failed'}")
                 
-            # 3. FINALLY apply range balancing
-            print("\nChecking range distribution balance...")
-            probabilities = self.apply_range_balancing(probabilities, num_predictions)
 
             # Sort and get predictions
             sorted_probs = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)
@@ -823,85 +820,6 @@ class PatternPredictionModel:
             print(f"Error in transition analysis: {e}")
             return {}
     
-    def apply_range_balancing(self, probabilities, top_n=15):
-        """
-        Balance probability distributions across number ranges
-        
-        Args:
-            probabilities: Dictionary of number probabilities
-            top_n: Number of top predictions to consider
-            
-        Returns:
-            Dictionary of adjusted probabilities
-        """
-        try:
-            # First, check if range balancing is needed by analyzing top N numbers
-            sorted_nums = sorted(probabilities.items(), key=lambda x: x[1], reverse=True)
-            top_numbers = [num for num, _ in sorted_nums[:top_n]]
-            
-            # Count numbers in each range
-            ranges = {'1-20': 0, '21-40': 0, '41-60': 0, '61-80': 0}
-            for num in top_numbers:
-                if 1 <= num <= 20:
-                    ranges['1-20'] += 1
-                elif 21 <= num <= 40:
-                    ranges['21-40'] += 1
-                elif 41 <= num <= 60:
-                    ranges['41-60'] += 1
-                elif 61 <= num <= 80:
-                    ranges['61-80'] += 1
-                    
-            # Calculate ideal distribution (equal numbers per range)
-            ideal_per_range = top_n / 4  # Equal distribution across 4 ranges
-            
-            print("\n=== Range Distribution ===")
-            for range_key, count in ranges.items():
-                print(f"Range {range_key}: {count} numbers (ideal: {ideal_per_range:.1f})")
-            
-            # Check if balancing is needed
-            max_count = max(ranges.values())
-            min_count = min(ranges.values())
-            if max_count <= min_count * 2:
-                print("Range distribution is acceptable - no balancing needed")
-                return probabilities
-                
-            # Range balancing is needed - adjust probabilities
-            print("\nApplying range balancing adjustments...")
-            
-            # Copy probabilities to avoid modifying the original
-            adjusted_probs = probabilities.copy()
-            
-            # Apply adjustments to over/under-represented ranges
-            for range_key, count in ranges.items():
-                if count > ideal_per_range * 1.5:  # More than 50% over ideal
-                    # Range is over-represented - apply penalty
-                    start, end = map(int, range_key.split('-'))
-                    penalty = 0.85  # 15% reduction
-                    
-                    # Apply penalty to all numbers in this range
-                    for num in range(start, end + 1):
-                        if num in adjusted_probs:
-                            adjusted_probs[num] *= penalty
-                    
-                    print(f"Range {range_key} penalty: -15% (over-represented with {count} numbers)")
-                    
-                elif count < ideal_per_range * 0.5:  # Less than 50% of ideal
-                    # Range is under-represented - apply boost
-                    start, end = map(int, range_key.split('-'))
-                    boost = 1.20  # 20% boost
-                    
-                    # Apply boost to all numbers in this range
-                    for num in range(start, end + 1):
-                        if num in adjusted_probs:
-                            adjusted_probs[num] *= boost
-                    
-                    print(f"Range {range_key} boost: +20% (under-represented with {count} numbers)")
-            
-            return adjusted_probs
-            
-        except Exception as e:
-            print(f"Error in range balancing: {e}")
-            return probabilities  # Return original probabilities on error
 
     def refine_gap_weights(self, probabilities):
         """
@@ -1569,24 +1487,6 @@ class PatternPredictionModel:
             # Skip validation if insufficient numbers
             if not numbers or len(numbers) < 10:
                 return ["Insufficient numbers for validation"]
-            
-            # 1. Check range distribution
-            ranges = {'1-20': 0, '21-40': 0, '41-60': 0, '61-80': 0}
-            for num in numbers:
-                if 1 <= num <= 20:
-                    ranges['1-20'] += 1
-                elif 21 <= num <= 40:
-                    ranges['21-40'] += 1
-                elif 41 <= num <= 60:
-                    ranges['41-60'] += 1
-                elif 61 <= num <= 80:
-                    ranges['61-80'] += 1
-            
-            # Check for severe range imbalance
-            max_range = max(ranges.values())
-            min_range = min(ranges.values())
-            if max_range >= 2.5 * min_range:  # One range has 2.5x more numbers than another
-                issues.append(f"Severe range imbalance: {ranges}")
             
             # 2. Check overlap with previous draw (typically ~5-7 numbers repeat in Kino)
             latest_draw = self.data_analysis.draws[-1][1] if self.data_analysis.draws else []
