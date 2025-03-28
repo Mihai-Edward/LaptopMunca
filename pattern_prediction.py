@@ -1,6 +1,7 @@
 import csv
 import os
 import sys
+import traceback
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
@@ -904,244 +905,7 @@ class PatternPredictionModel:
         except Exception as e:
             print(f"Error in gap weight refinement: {e}")
             return probabilities  # Return original probabilities on error
-    def adjust_model_weights_based_on_evaluations(self):
-        """Adjust XGBoost model parameters based on historical evaluation performance"""
-        try:
-            # Load existing evaluations
-            evaluations = []
-            eval_file = PATHS['EVALUATION_RESULTS']
-            
-            if not os.path.exists(eval_file):
-                print("No evaluation history found for model adjustment")
-                return False
-                
-            with open(eval_file, 'rb') as f:
-                evaluations = pickle.load(f)
-                
-            # Need sufficient history for meaningful adjustments
-            if len(evaluations) < 3:
-                print("Insufficient evaluation history for model adjustment")
-                return False
-                
-            # Calculate performance metrics over time
-            recent_evals = evaluations[-10:] if len(evaluations) >= 10 else evaluations
-            hit_rates = [eval.get('hit_rate', 0) for eval in recent_evals]
-            avg_hit_rate = sum(hit_rates) / len(hit_rates) if hit_rates else 0
-            
-            # Determine trend - improving or declining
-            trend = "stable"
-            if len(hit_rates) >= 5:
-                recent_avg = sum(hit_rates[-5:]) / 5
-                earlier_avg = sum(hit_rates[:5]) / 5 if len(hit_rates) >= 10 else sum(hit_rates[:len(hit_rates)//2]) / (len(hit_rates)//2)
-                if recent_avg > earlier_avg * 1.1:  # 10% improvement
-                    trend = "improving"
-                elif recent_avg < earlier_avg * 0.9:  # 10% decline
-                    trend = "declining"
-            
-            print(f"\n=== Model Adjustment Based on Evaluation History ===")
-            print(f"Average hit rate: {avg_hit_rate:.4f}")
-            print(f"Performance trend: {trend}")
-            
-            # Apply model parameter adjustments based on performance
-            adjustments_made = False
-            
-            if 'xgboost' in self.models:
-                for num, model in self.models['xgboost'].items():
-                    current_params = model.get_params()
-                    
-                    # Get current learning rate and subsample
-                    current_lr = current_params.get('learning_rate', 0.05)
-                    current_subsample = current_params.get('subsample', 0.8)
-                    
-                    # Base adjustments on trend
-                    if trend == "declining":
-                        # If performance is declining, increase learning rate to adapt faster
-                        new_lr = min(0.2, current_lr * 1.1)  # Cap at 0.2, increase by 10%
-                        new_subsample = max(0.7, current_subsample * 0.95)  # Reduce to min 0.7
-                        
-                        # Apply changes only if significant
-                        if abs(new_lr - current_lr) > 0.005 or abs(new_subsample - current_subsample) > 0.01:
-                            model.set_params(learning_rate=new_lr, subsample=new_subsample)
-                            adjustments_made = True
-                            
-                    elif trend == "improving":
-                        # If performance is improving, slightly reduce learning rate for stability
-                        new_lr = max(0.01, current_lr * 0.95)  # Floor at 0.01
-                        new_subsample = min(0.9, current_subsample * 1.05)  # Increase to max 0.9
-                        
-                        # Apply changes only if significant
-                        if abs(new_lr - current_lr) > 0.005 or abs(new_subsample - current_subsample) > 0.01:
-                            model.set_params(learning_rate=new_lr, subsample=new_subsample)
-                            adjustments_made = True
-                
-                if adjustments_made:
-                    # Save the adjusted models
-                    self.save_models()
-                    print(f"✅ Model parameters adjusted based on evaluation history")
-                    return True
-                else:
-                    print(f"ℹ️ No significant adjustments needed based on current performance")
-                    return False
-                    
-            else:
-                print("No XGBoost models available for adjustment")
-                return False
-                
-        except Exception as e:
-            print(f"Error adjusting model weights: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
-    def evaluate_prediction(self, prediction, actual_draw):
-        """
-        Evaluate a prediction against actual draw results
-        
-        Args:
-            prediction: List of predicted numbers
-            actual_draw: List of actual drawn numbers
-            
-        Returns:
-            Dictionary with evaluation metrics
-        """
-        if not prediction or not actual_draw:
-            return {"error": "Empty prediction or actual draw"}
-            
-        # Calculate hit rate
-        hits = set(prediction).intersection(set(actual_draw))
-        hit_count = len(hits)
-        hit_rate = hit_count / len(prediction) if prediction else 0
-        
-        # Calculate expected hit rate (random)
-        expected_hit_rate = len(prediction) * (len(actual_draw) / 80)
-        
-        # Calculate lift over random
-        lift = hit_rate / expected_hit_rate if expected_hit_rate > 0 else 0
-        
-        # NEW: Position-based accuracy
-        top_5_hits = len(set(prediction[:5]).intersection(set(actual_draw)))
-        top_10_hits = len(set(prediction[:10]).intersection(set(actual_draw)))
-        
-        evaluation = {
-            'hit_count': hit_count,
-            'hit_rate': hit_rate,
-            'expected_hit_rate': expected_hit_rate,
-            'lift': lift,
-            'hit_numbers': list(hits),
-            'missed_numbers': list(set(actual_draw) - hits),
-            'false_positives': list(set(prediction) - set(actual_draw)),
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            # New fields
-            'top_5_hits': top_5_hits,
-            'top_10_hits': top_10_hits
-        }
-        
-        # Save evaluation
-        self._save_evaluation(evaluation)
-        
-        return evaluation
 
-    def process_prediction_results(self, prediction, actual_draw):
-        """Process prediction results and update analysis"""
-        try:
-            # 1. Evaluate the prediction
-            evaluation = self.evaluate_prediction(prediction, actual_draw)
-            
-            # 2. Update prediction history
-            self._save_prediction({
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'predicted_numbers': prediction,
-                'actual_numbers': actual_draw,
-                'evaluation': evaluation
-            })
-            
-            # 3. NEW: Apply model adjustments based on evaluation history
-            adjustment_made = self.adjust_model_weights_based_on_evaluations()
-            
-            # 4. Get method performance analysis (your existing code)
-            analysis_results = self.data_analysis.analyze_prediction_history_files()
-            
-            if analysis_results:
-                # Use the results to adjust future predictions (your existing code)
-                if analysis_results['recommendations']['best_method'] == 'pattern_based':
-                    if hasattr(self, 'boost_pattern_weights'):
-                        self.boost_pattern_weights()
-                elif analysis_results['recommendations']['best_method'] == 'combination_based':
-                    if hasattr(self, 'boost_combination_weights'):
-                        self.boost_combination_weights()
-                        
-                # Log the analysis
-                print("\n=== Method Performance Analysis ===")
-                print(f"Best Method: {analysis_results['recommendations']['best_method']}")
-                print(f"Accuracy Trend: {analysis_results['accuracy_trend']['overall_trend']:.4f}")
-                print(f"Pattern Stability: {'Stable' if analysis_results['pattern_stability'] else 'Unstable'}")
-                print(f"Model adjustments applied: {'Yes' if adjustment_made else 'No'}")
-                
-            return analysis_results
-            
-        except Exception as e:
-            print(f"Error in process_prediction_results: {e}")
-            return None
-
-    def analyze_prediction_history(self):
-        """
-        Analyze historical prediction performance
-        
-        Returns:
-            Dictionary with performance metrics
-        """
-        if not self.prediction_history:
-            return {"error": "No prediction history available"}
-            
-        # Calculate average hit rate if we have actual results
-        evaluations = []
-        eval_file = os.path.join(self.predictions_path, "prediction_evaluations.pkl")
-        
-        if os.path.exists(eval_file):
-            try:
-                with open(eval_file, 'rb') as f:
-                    evaluations = pickle.load(f)
-            except Exception as e:
-                print(f"Error loading evaluations: {e}")
-                
-        if not evaluations:
-            return {"warning": "No evaluations available yet"}
-            
-        # Calculate metrics
-        hit_rates = [e['hit_rate'] for e in evaluations]
-        lifts = [e['lift'] for e in evaluations]
-        
-        # Calculate average performance
-        avg_hit_rate = sum(hit_rates) / len(hit_rates)
-        avg_lift = sum(lifts) / len(lifts)
-        
-        # Find most successful numbers (appeared most often in hits)
-        all_hits = [num for e in evaluations for num in e.get('hit_numbers', [])]
-        hit_counter = Counter(all_hits)
-        most_successful = hit_counter.most_common(10)
-        
-        # Calculate success trend
-        if len(hit_rates) >= 5:
-            recent_hit_rate = sum(hit_rates[-5:]) / 5
-            recent_lift = sum(lifts[-5:]) / 5
-            trend = "Improving" if recent_hit_rate > avg_hit_rate else "Declining" 
-        else:
-            recent_hit_rate = avg_hit_rate
-            recent_lift = avg_lift
-            trend = "Insufficient data"
-            
-        performance = {
-            'average_hit_rate': avg_hit_rate,
-            'average_lift': avg_lift,
-            'recent_hit_rate': recent_hit_rate,
-            'recent_lift': recent_lift,
-            'trend': trend,
-            'most_successful_numbers': most_successful,
-            'total_evaluations': len(evaluations),
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        return performance
-    
     def _save_prediction(self, prediction):
         """Save a prediction to disk"""
         try:
@@ -1157,46 +921,79 @@ class PatternPredictionModel:
                 'hit_count': prediction.get('evaluation', {}).get('hit_count', 0)
             }
             
-            # Load existing history
+            # Load existing history with proper error handling
             history_file = PATHS['MODEL_PREDICTIONS']
-            if os.path.exists(history_file):
-                try:
+            try:
+                if os.path.exists(history_file):
                     with open(history_file, 'rb') as f:
-                        history = pickle.load(f)
-                        if isinstance(history, list):
-                            history_df = pd.DataFrame(history)
-                        elif isinstance(history, pd.DataFrame):
-                            history_df = history
-                        else:
+                        try:
+                            history = pickle.load(f)
+                            # Convert history to DataFrame if it's a list
+                            if isinstance(history, list):
+                                history_df = pd.DataFrame(history)
+                            # Use existing DataFrame
+                            elif isinstance(history, pd.DataFrame):
+                                history_df = history.copy()
+                            # Create new DataFrame if invalid format
+                            else:
+                                history_df = pd.DataFrame()
+                        except (pickle.UnpicklingError, EOFError):
                             history_df = pd.DataFrame()
-                except:
+                else:
                     history_df = pd.DataFrame()
-            else:
+            except Exception as e:
+                print(f"Warning: Could not load history file: {e}")
                 history_df = pd.DataFrame()
+
+            # Ensure DataFrame has required columns
+            required_columns = [
+                'timestamp', 'draw_time', 'predicted_numbers', 'actual_numbers',
+                'method', 'confidence_scores', 'hit_rate', 'hit_count'
+            ]
             
-            # Append new prediction as a DataFrame row
+            for col in required_columns:
+                if col not in history_df.columns:
+                    history_df[col] = None
+
+            # Convert prediction_data to DataFrame row and append
             new_row = pd.DataFrame([prediction_data])
             history_df = pd.concat([history_df, new_row], ignore_index=True)
             
             # Keep last 100 predictions
             history_df = history_df.tail(100)
             
-            # Save both individual prediction and history
-            filename = os.path.join(self.predictions_path, 
-                                  f"prediction_{prediction_data['timestamp'].replace(':', '-').replace(' ', '_')}.pkl")
+            # Create predictions directory if it doesn't exist
+            os.makedirs(self.predictions_path, exist_ok=True)
             
-            with open(filename, 'wb') as f:
-                pickle.dump(prediction_data, f)
+            # Save individual prediction file
+            filename = os.path.join(
+                self.predictions_path,
+                f"prediction_{prediction_data['timestamp'].replace(':', '-').replace(' ', '_')}.pkl"
+            )
+            
+            # Save files with error handling
+            try:
+                # Save individual prediction
+                with open(filename, 'wb') as f:
+                    pickle.dump(prediction_data, f)
                 
-            with open(history_file, 'wb') as f:
-                pickle.dump(history_df, f)
+                # Save history DataFrame
+                with open(history_file, 'wb') as f:
+                    pickle.dump(history_df, f)
+                    
+                print(f"Prediction saved to {filename}")
+                self.prediction_history = history_df  # Update instance variable
+                return True
+            except Exception as e:
+                print(f"Error saving files: {e}")
+                return False
                 
-            print(f"Prediction saved to {filename}")
-            return True
         except Exception as e:
-            print(f"Error saving prediction: {e}")
+            print(f"Error in _save_prediction: {e}")
+            import traceback
+            traceback.print_exc()
             return False
-    
+
     def _save_evaluation(self, evaluation):
         """Save an evaluation to disk"""
         try:
@@ -1719,115 +1516,132 @@ class PatternPredictionModel:
         """Analyze prediction history files to learn from past predictions"""
         print("\n=== Analyzing Prediction History Files ===")
         
+        default_response = {
+            'method_success': {},
+            'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
+            'pattern_stability': True,
+            'recommendations': {
+                'best_method': 'pattern_based',
+                'accuracy_improving': False,
+                'needs_retraining': False
+            }
+        }
+        
         try:
             prediction_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_history.pkl')
             
             if not os.path.exists(prediction_file):
                 print("No prediction history file found")
-                return {
-                    'method_success': {},
-                    'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
-                    'pattern_stability': True,
-                    'recommendations': {
-                        'best_method': 'pattern_based',
-                        'accuracy_improving': False,
-                        'needs_retraining': False
-                    }
-                }
+                return default_response
             
-            # Load and convert predictions to DataFrame
-            with open(prediction_file, 'rb') as f:
-                try:
+            # Load predictions with proper error handling
+            try:
+                with open(prediction_file, 'rb') as f:
                     predictions = pickle.load(f)
+                    
+                # Convert to DataFrame if needed
+                if isinstance(predictions, list):
+                    predictions_df = pd.DataFrame(predictions)
+                elif isinstance(predictions, pd.DataFrame):
+                    predictions_df = predictions.copy()  # Make a copy to avoid modifications
+                else:
+                    print(f"Invalid predictions type: {type(predictions)}")
+                    return default_response
+                    
+                # Verify DataFrame is not empty
+                if predictions_df.empty:
+                    print("No predictions found in history file")
+                    return default_response
+                    
+                print(f"Loaded {len(predictions_df)} previous predictions")
+                
+                # Ensure required columns exist
+                required_columns = ['predicted_numbers', 'actual_numbers', 'method', 'hit_rate']
+                missing_columns = [col for col in required_columns if col not in predictions_df.columns]
+                if missing_columns:
+                    print(f"Missing required columns: {missing_columns}")
+                    return default_response
+                
+                # Calculate hit rates properly
+                try:
+                    # First try to get hit_rate directly
+                    if 'hit_rate' in predictions_df.columns:
+                        hit_rates = predictions_df['hit_rate'].fillna(0).tolist()
+                    # Fallback to evaluation dictionary if needed
+                    elif 'evaluation' in predictions_df.columns:
+                        hit_rates = predictions_df['evaluation'].apply(
+                            lambda x: x.get('hit_rate', 0) if isinstance(x, dict) else 0
+                        ).tolist()
+                    else:
+                        hit_rates = []
                 except Exception as e:
-                    print(f"Error loading prediction history: {e}")
-                    return {
-                        'method_success': {},
-                        'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
-                        'pattern_stability': True,
-                        'recommendations': {
-                            'best_method': 'pattern_based',
-                            'accuracy_improving': False,
-                            'needs_retraining': False
-                        }
-                    }
+                    print(f"Error calculating hit rates: {e}")
+                    hit_rates = []
                 
-            if isinstance(predictions, list):
-                predictions_df = pd.DataFrame(predictions)
-            elif isinstance(predictions, pd.DataFrame):
-                predictions_df = predictions
-            else:
-                print(f"Invalid predictions type: {type(predictions)}")
+                # Analyze method success
+                method_success = self.analyze_method_success(predictions_df)
+                
+                # Calculate accuracy trend with proper error handling
+                if len(hit_rates) >= 5:
+                    recent_hit_rates = hit_rates[-5:]
+                    recent_avg = sum(recent_hit_rates) / len(recent_hit_rates)
+                    overall_avg = sum(hit_rates) / len(hit_rates)
+                    is_improving = recent_avg > overall_avg
+                    
+                    # Avoid division by zero
+                    if overall_avg > 0:
+                        overall_trend = (recent_avg - overall_avg) / overall_avg
+                    else:
+                        overall_trend = 0.0
+                else:
+                    is_improving = False
+                    overall_trend = 0.0
+                
+                # Determine best method with error handling
+                try:
+                    best_method = max(method_success.items(), key=lambda x: x[1])[0] if method_success else 'pattern_based'
+                except Exception:
+                    best_method = 'pattern_based'
+                
+                # Check if retraining is needed
+                needs_retraining = overall_trend < -0.1
+                
+                # Calculate additional stability metrics
+                stability_metrics = {
+                    'mean_hit_rate': np.mean(hit_rates) if hit_rates else 0,
+                    'std_hit_rate': np.std(hit_rates) if hit_rates else 0,
+                    'total_predictions': len(predictions_df),
+                    'recent_window_size': min(5, len(predictions_df))
+                }
+                
+                # Return enhanced analysis results
                 return {
-                    'method_success': {},
-                    'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
-                    'pattern_stability': True,
+                    'method_success': method_success,
+                    'accuracy_trend': {
+                        'is_improving': is_improving,
+                        'overall_trend': overall_trend,
+                        'recent_average': recent_avg if len(hit_rates) >= 5 else 0,
+                        'overall_average': overall_avg if hit_rates else 0
+                    },
+                    'pattern_stability': stability_metrics['std_hit_rate'] < 0.1,  # Consider stable if std dev < 0.1
+                    'stability_metrics': stability_metrics,
                     'recommendations': {
-                        'best_method': 'pattern_based',
-                        'accuracy_improving': False,
-                        'needs_retraining': False
+                        'best_method': best_method,
+                        'accuracy_improving': is_improving,
+                        'needs_retraining': needs_retraining,
+                        'confidence': 'high' if len(predictions_df) > 20 else 'low'
                     }
                 }
                 
-            print(f"Loaded {len(predictions_df)} previous predictions")
-            
-            if predictions_df.empty:
-                print("No predictions found in history file")
-                return {
-                    'method_success': {},
-                    'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
-                    'pattern_stability': True,
-                    'recommendations': {
-                        'best_method': 'pattern_based',
-                        'accuracy_improving': False,
-                        'needs_retraining': False
-                    }
-                }
-            
-            # Perform analysis on the prediction history
-            method_success = self.analyze_method_success(predictions_df)
-            hit_rates = predictions_df['evaluation'].apply(lambda x: x.get('hit_rate', 0)).tolist()
-            
-            # Calculate accuracy trend
-            if len(hit_rates) >= 5:
-                recent_avg = sum(hit_rates[-5:]) / 5
-                overall_avg = sum(hit_rates) / len(hit_rates)
-                is_improving = recent_avg > overall_avg
-                overall_trend = (recent_avg - overall_avg) / overall_avg if overall_avg > 0 else 0.0
-            else:
-                is_improving = False
-                overall_trend = 0.0
-            
-            # Determine best method based on success rates
-            best_method = max(method_success, key=method_success.get, default='pattern_based')
-            
-            # Check if retraining is needed
-            needs_retraining = overall_trend < -0.1  # Example threshold for declining performance
-            
-            # Return analysis results
-            return {
-                'method_success': method_success,
-                'accuracy_trend': {'is_improving': is_improving, 'overall_trend': overall_trend},
-                'pattern_stability': True,  # Placeholder for additional stability checks
-                'recommendations': {
-                    'best_method': best_method,
-                    'accuracy_improving': is_improving,
-                    'needs_retraining': needs_retraining
-                }
-            }
-            
+            except (pickle.UnpicklingError, EOFError) as e:
+                print(f"Error loading prediction file: {e}")
+                return default_response
+                
         except Exception as e:
             print(f"Error analyzing prediction history: {e}")
-            return {
-                'method_success': {},
-                'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
-                'pattern_stability': True,
-                'recommendations': {
-                    'best_method': 'pattern_based',
-                    'accuracy_improving': False,
-                    'needs_retraining': False
-                }
-            }
+            import traceback
+            traceback.print_exc()
+            return default_response
 
 if __name__ == "__main__":
     try:
@@ -1892,110 +1706,115 @@ if __name__ == "__main__":
         # Create pattern prediction model with debug enabled
         model = PatternPredictionModel(data_analysis, sequence_length=12, debug=True)
         
-        # NEW PART: Check for previous prediction to evaluate
+        # Check for previous prediction to evaluate
         current_draw_time = datetime.now()
         last_prediction_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_history.pkl')
         
+        # Modified part for loading and checking predictions
         if os.path.exists(last_prediction_file):
             try:
                 with open(last_prediction_file, 'rb') as f:
                     predictions = pickle.load(f)
-                    if predictions:
+                    
+                    # Handle both DataFrame and list formats
+                    if isinstance(predictions, pd.DataFrame) and not predictions.empty:
+                        last_prediction = predictions.iloc[-1].to_dict()
+                    elif isinstance(predictions, list) and predictions:
                         last_prediction = predictions[-1]
-                        prediction_time = last_prediction['draw_time']
+                    else:
+                        print("\nNo valid previous predictions found")
+                        last_prediction = None
                         
-                        print("\nDEBUG: Checking draw times")
-                        print(f"Prediction time: {prediction_time}")
-                        print("Last 5 available draws:")
-                        for dt, nums in data_analysis.draws[-5:]:
-                            print(f"  {dt}: {nums[:5]}...")
-                        
-                        # Find exact matching draw
-                        matching_draw = None
-                        matching_time = None
-                        for draw_time, numbers in data_analysis.draws:
-                            if (draw_time.strip() == prediction_time.strip()):
-                                matching_draw = numbers
-                                matching_time = draw_time
-                                print(f"\nDEBUG: Found matching draw at {draw_time}")
-                                break
-                        
-                        if matching_draw:
-                            print(f"\n=== Evaluating Previous Prediction ===")
-                            print(f"Previous prediction made for: {prediction_time}")
-                            print(f"Predicted numbers: {last_prediction['predicted_numbers']}")
-                            print(f"Actual draw ({matching_time}): {matching_draw}")
+                    if last_prediction:
+                        prediction_time = last_prediction.get('draw_time')
+                        if prediction_time:
+                            print("\nDEBUG: Checking draw times")
+                            print(f"Prediction time: {prediction_time}")
+                            print("Last 5 available draws:")
+                            for dt, nums in data_analysis.draws[-5:]:
+                                print(f"  {dt}: {nums[:5]}...")
                             
-                            evaluation = model.evaluate_prediction(
-                                last_prediction['predicted_numbers'],
-                                matching_draw
-                            )
+                            # Find exact matching draw
+                            matching_draw = None
+                            matching_time = None
+                            for draw_time, numbers in data_analysis.draws:
+                                if draw_time.strip() == prediction_time.strip():
+                                    matching_draw = numbers
+                                    matching_time = draw_time
+                                    print(f"\nDEBUG: Found matching draw at {draw_time}")
+                                    break
                             
-                            print(f"\nEvaluation Results:")
-                            print(f"Hit count: {evaluation['hit_count']} out of {len(last_prediction['predicted_numbers'])}")
-                            print(f"Hit rate: {evaluation['hit_rate']:.4f}")
-                            print(f"Performance vs random: {evaluation['lift']:.2f}x better than random")
-                            print(f"Hit numbers: {evaluation['hit_numbers']}")
-                            
-                            # After evaluating the previous prediction
                             if matching_draw:
-                                print("\n=== Processing Evaluation Results to Adjust Models ===")
-                                processing_result = model.process_prediction_results(
-                                    last_prediction['predicted_numbers'], 
+                                print(f"\n=== Evaluating Previous Prediction ===")
+                                print(f"Previous prediction made for: {prediction_time}")
+                                print(f"Predicted numbers: {last_prediction.get('predicted_numbers', [])}")
+                                print(f"Actual draw ({matching_time}): {matching_draw}")
+                                
+                                evaluation = model.evaluate_prediction(
+                                    last_prediction.get('predicted_numbers', []),
                                     matching_draw
                                 )
-                                if processing_result:
-                                    print("✅ Previous prediction results processed for learning")
-                        else:
-                            print(f"\nWARNING: Could not find matching draw for {prediction_time}")
-                            
-                            # If no exact match, check if we have a new draw to evaluate (time-based)
-                            last_draw_time = datetime.strptime(last_prediction['draw_time'], "%H:%M %d-%m-%Y")
-                            
-                            # If we have a new draw to evaluate
-                            if current_draw_time > last_draw_time:
-                                print("\n=== Evaluating Previous Prediction Using Latest Draw ===")
-                                print(f"Previous prediction made for: {last_prediction['draw_time']}")
-                                print(f"Predicted numbers: {last_prediction['predicted_numbers']}")
                                 
-                                # Get the latest actual draw for comparison
-                                latest_draw = data_analysis.draws[-1][1]
-                                latest_draw_time = data_analysis.draws[-1][0]
-                                print(f"Latest actual draw ({latest_draw_time}): {latest_draw}")
+                                if evaluation:
+                                    print(f"\nEvaluation Results:")
+                                    print(f"Hit count: {evaluation['hit_count']} out of {len(last_prediction.get('predicted_numbers', []))}")
+                                    print(f"Hit rate: {evaluation['hit_rate']:.4f}")
+                                    print(f"Performance vs random: {evaluation['lift']:.2f}x better than random")
+                                    print(f"Hit numbers: {evaluation['hit_numbers']}")
+                                    
+                                    # Process evaluation results
+                                    print("\n=== Processing Evaluation Results to Adjust Models ===")
+                                    processing_result = model.process_prediction_results(
+                                        last_prediction.get('predicted_numbers', []),
+                                        matching_draw
+                                    )
+                                    if processing_result:
+                                        print("✅ Previous prediction results processed for learning")
+                            else:
+                                print(f"\nWARNING: Could not find matching draw for {prediction_time}")
                                 
-                                # Evaluate the prediction
-                                evaluation = model.evaluate_prediction(
-                                    last_prediction['predicted_numbers'],
-                                    latest_draw
-                                )
-                                
-                                print(f"\nEvaluation Results:")
-                                print(f"Hit count: {evaluation['hit_count']} out of {len(last_prediction['predicted_numbers'])}")
-                                print(f"Hit rate: {evaluation['hit_rate']:.4f}")
-                                print(f"Performance vs random: {evaluation['lift']:.2f}x better than random")
-                                print(f"Hit numbers: {evaluation['hit_numbers']}")
-                    else:
-                        print("\nNo previous predictions found to evaluate")
+                                try:
+                                    # If no exact match, check if we have a new draw to evaluate
+                                    last_draw_time = datetime.strptime(prediction_time, "%H:%M %d-%m-%Y")
+                                    
+                                    if current_draw_time > last_draw_time:
+                                        print("\n=== Evaluating Previous Prediction Using Latest Draw ===")
+                                        print(f"Previous prediction made for: {prediction_time}")
+                                        print(f"Predicted numbers: {last_prediction.get('predicted_numbers', [])}")
+                                        
+                                        latest_draw = data_analysis.draws[-1][1]
+                                        latest_draw_time = data_analysis.draws[-1][0]
+                                        print(f"Latest actual draw ({latest_draw_time}): {latest_draw}")
+                                        
+                                        evaluation = model.evaluate_prediction(
+                                            last_prediction.get('predicted_numbers', []),
+                                            latest_draw
+                                        )
+                                        
+                                        if evaluation:
+                                            print(f"\nEvaluation Results:")
+                                            print(f"Hit count: {evaluation['hit_count']} out of {len(last_prediction.get('predicted_numbers', []))}")
+                                            print(f"Hit rate: {evaluation['hit_rate']:.4f}")
+                                            print(f"Performance vs random: {evaluation['lift']:.2f}x better than random")
+                                            print(f"Hit numbers: {evaluation['hit_numbers']}")
+                                except ValueError as e:
+                                    print(f"Error parsing prediction time: {e}")
+                                    
             except Exception as e:
                 print(f"Warning: Could not evaluate previous prediction: {e}")
-                import traceback
                 traceback.print_exc()
-                
+        
         # Display current time and next draw time
         next_draw_time = model.get_next_draw_time()
         print(f"\nMaking prediction for draw at: {next_draw_time}")
         
-        # Add validation checks
+        # ADD VALIDATION CHECKS HERE
         print("\n=== Starting Validation Checks ===")
         
         # 1. Validate data freshness
         data_fresh = model.validate_data_freshness()
         if not data_fresh:
             print("⚠️ Warning: Data may not be fresh - predictions may be less accurate")
-            #user_choice = input("Continue with prediction anyway? (y/n): ")
-            #if user_choice.lower() != 'y':
-             #   print("Prediction cancelled. Please update the data before continuing.")
-              #  sys.exit(0)
         
         # 2. Load models with validation
         models_loaded = model.load_and_validate_models()
@@ -2009,7 +1828,7 @@ if __name__ == "__main__":
                 sys.exit(1)
             print("✅ Models successfully trained")
         
-        # In your main code
+        # Verify models are ready
         models_ready = model.load_and_validate_models()
         if not models_ready:
             print("❌ Could not load or train models. Exiting.")
@@ -2038,19 +1857,19 @@ if __name__ == "__main__":
             print("❌ Warning: Could not create prediction visualization")
         
         # Analyze prediction history if available
-        performance = model.analyze_prediction_history()
-        if 'error' not in performance and 'warning' not in performance:
+        performance = model.analyze_prediction_history_files()
+        if isinstance(performance, dict) and 'error' not in performance and 'warning' not in performance:
             print("\n==== PREDICTION PERFORMANCE ====")
-            print(f"Average hit rate: {performance['average_hit_rate']:.4f}")
-            print(f"Average lift over random: {performance['average_lift']:.4f}x")
-            print(f"Recent performance trend: {performance['trend']}")
-            print("Most successful numbers:")
-            for num, count in performance['most_successful_numbers']:
-                print(f"  Number {num}: hit {count} times")
+            print(f"Average hit rate: {performance.get('accuracy_trend', {}).get('overall_average', 0):.4f}")
+            print(f"Recent trend: {'+' if performance.get('accuracy_trend', {}).get('is_improving', False) else '-'}{abs(performance.get('accuracy_trend', {}).get('overall_trend', 0)*100):.1f}%")
+            
+            # Show best method if available
+            best_method = performance.get('recommendations', {}).get('best_method', 'pattern_based')
+            print(f"Best performing method: {best_method}")
         
         # Compare with traditional frequency-based approach
         print("\n==== COMPARISON WITH FREQUENCY ANALYSIS ====")
-        frequency_pred = data_analysis.get_top_numbers(15)
+        frequency_pred = [num for num, _ in data_analysis.hot_and_cold_numbers().get('hot_numbers', [])[:15]]
         print(f"Traditional frequency-based prediction: {frequency_pred}")
         print(f"Pattern-based prediction: {prediction}")
         
@@ -2064,34 +1883,38 @@ if __name__ == "__main__":
         print(f"\nPrediction generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"For draw at: {next_draw_time}")
         print("\n======================================")
-        
-        # Check if models have been adjusted from evaluation learning
+
+        # Modified part for checking evaluation results
         if os.path.exists(PATHS['EVALUATION_RESULTS']):
             print("\n=== Checking Evaluation-Based Model Adaptation ===")
-            with open(PATHS['EVALUATION_RESULTS'], 'rb') as f:
-                try:
+            try:
+                with open(PATHS['EVALUATION_RESULTS'], 'rb') as f:
                     evaluations = pickle.load(f)
-                    if len(evaluations) > 1:
-                        # Get evaluation trend
-                        recent_evals = evaluations[-min(5, len(evaluations)):]
+                    if isinstance(evaluations, (list, pd.DataFrame)) and len(evaluations) > 1:
+                        # Convert to list if DataFrame
+                        if isinstance(evaluations, pd.DataFrame):
+                            recent_evals = evaluations.tail(5).to_dict('records')
+                        else:
+                            recent_evals = evaluations[-min(5, len(evaluations)):]
+                            
                         hit_rates = [e.get('hit_rate', 0) for e in recent_evals]
                         avg_hit_rate = sum(hit_rates) / len(hit_rates) if hit_rates else 0
                         print(f"Evaluation history: {len(evaluations)} past predictions")
                         print(f"Recent average hit rate: {avg_hit_rate:.4f}")
                         
-                        # Show model adaptation status
                         if 'xgboost' in model.models:
-                            # Check learning rate distribution
-                            lr_values = [m.get_params().get('learning_rate', 0.05) for m in model.models['xgboost'].values()]
-                            avg_lr = sum(lr_values) / len(lr_values) if lr_values else 0
-                            min_lr = min(lr_values) if lr_values else 0
-                            max_lr = max(lr_values) if lr_values else 0
-                            print(f"Model adaptation: Active")
-                            print(f"Learning rate range: {min_lr:.4f} - {max_lr:.4f} (avg: {avg_lr:.4f})")
-                except Exception as e:
-                    print(f"Error checking evaluation history: {e}")
-        
+                            lr_values = [m.get_params().get('learning_rate', 0.05) 
+                                        for m in model.models['xgboost'].values()]
+                            if lr_values:
+                                avg_lr = sum(lr_values) / len(lr_values)
+                                min_lr = min(lr_values)
+                                max_lr = max(lr_values)
+                                print(f"Model adaptation: Active")
+                                print(f"Learning rate range: {min_lr:.4f} - {max_lr:.4f} (avg: {avg_lr:.4f})")
+            except Exception as e:
+                print(f"Error checking evaluation history: {e}")
+                traceback.print_exc()
+                
     except Exception as e:
         print(f"Error in pattern prediction: {e}")
-        import traceback
         traceback.print_exc()
