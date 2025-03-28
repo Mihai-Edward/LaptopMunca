@@ -1028,17 +1028,31 @@ class PatternPredictionModel:
                 print("No XGBoost models to save")
                 return False
                 
+            # Added debug output to show models count
+            model_count = len(self.models['xgboost'])
+            if model_count == 0:
+                print("No models in the xgboost dictionary to save")
+                return False
+            else:
+                print(f"Saving {model_count} XGBoost models to {self.models_path}")
+                
             # Ensure models directory exists
             os.makedirs(self.models_path, exist_ok=True)
+            print(f"Confirmed models directory exists: {self.models_path}")
                 
             # Save each number's model separately
+            saved_count = 0
             for num, model in self.models['xgboost'].items():
                 model_file = os.path.join(self.models_path, f"xgb_model_{num}.joblib")
                 try:
                     dump(model, model_file)
+                    saved_count += 1
+                    print(f"Model for number {num} saved successfully to {model_file}")
                 except Exception as e:
                     print(f"Error saving model {num}: {e}")
                     continue
+            
+            print(f"Saved {saved_count}/{model_count} models to {self.models_path}")
             
             # Prepare metadata
             metadata = {
@@ -1050,14 +1064,20 @@ class PatternPredictionModel:
             
             # Save metadata
             metadata_file = PATHS['MODEL_METADATA']
-            with open(metadata_file, 'wb') as f:
-                pickle.dump(metadata, f)
+            try:
+                with open(metadata_file, 'wb') as f:
+                    pickle.dump(metadata, f)
+                print(f"Metadata saved successfully to {metadata_file}")
+            except Exception as e:
+                print(f"Error saving metadata: {e}")
+                return False
                 
             print(f"Successfully saved models and metadata to {self.models_path}")
             return True
             
         except Exception as e:
             print(f"Error saving models: {e}")
+            traceback.print_exc()
             return False
     
     def load_models(self):
@@ -1066,15 +1086,34 @@ class PatternPredictionModel:
             models = {}
             metadata_file = os.path.join(self.models_path, "model_metadata.pkl")
             
+            # Add debug output for file paths
+            print(f"Attempting to load models from: {self.models_path}")
+            print(f"Looking for metadata file: {metadata_file}")
+            
             if not os.path.exists(metadata_file):
-                print("No saved models found.")
+                print(f"No metadata file found at: {metadata_file}")
+                
+                # Check if any model files exist
+                if os.path.exists(self.models_path):
+                    model_files = [f for f in os.listdir(self.models_path) if "xgb_model_" in f]
+                    if model_files:
+                        print(f"Found {len(model_files)} model files but no metadata")
+                    else:
+                        print("No model files found in the models directory")
+                else:
+                    print(f"Models directory does not exist: {self.models_path}")
                 return False
-                
+            
             # Load metadata
-            with open(metadata_file, 'rb') as f:
-                metadata = pickle.load(f)
-                
-            # Initialize models dict with xgboost key first
+            try:
+                with open(metadata_file, 'rb') as f:
+                    metadata = pickle.load(f)
+                    print("Successfully loaded metadata")
+            except Exception as e:
+                print(f"Error loading metadata file: {e}")
+                return False
+            
+            # Initialize models dict with xgboost key
             self.models = {'xgboost': {}}
             
             # Load each model
@@ -1082,12 +1121,21 @@ class PatternPredictionModel:
             for num in range(1, 81):
                 model_file = os.path.join(self.models_path, f"xgb_model_{num}.joblib")
                 if os.path.exists(model_file):
-                    model = load(model_file)
-                    # Verify it's an XGBoost model
-                    if hasattr(model, 'get_params') and isinstance(model, xgb.XGBClassifier):
-                        self.models['xgboost'][num] = model
-                        loaded_count += 1
-                        
+                    try:
+                        model = load(model_file)
+                        # Verify it's an XGBoost model
+                        if hasattr(model, 'get_params') and isinstance(model, xgb.XGBClassifier):
+                            self.models['xgboost'][num] = model
+                            loaded_count += 1
+                            print(f"Successfully loaded model for number {num} from {model_file}")
+                        else:
+                            print(f"Warning: Model for number {num} is not an XGBoost classifier")
+                    except Exception as e:
+                        print(f"Error loading model {num} from {model_file}: {e}")
+                        continue
+                else:
+                    print(f"Model file not found for number {num}: {model_file}")
+            
             print(f"Loaded {loaded_count} models as XGBoost classifiers")
             
             # Load additional metadata
@@ -1095,10 +1143,12 @@ class PatternPredictionModel:
             self.model_performance = metadata.get('model_performance', {})
             self.sequence_length = metadata.get('sequence_length', 10)
             
+            # Return True if at least one model was loaded
             return loaded_count > 0
             
         except Exception as e:
             print(f"Error loading models: {e}")
+            traceback.print_exc()
             return False
     
     def visualize_predictions(self, prediction, confidence_scores):
@@ -1523,13 +1573,6 @@ class PatternPredictionModel:
     def process_prediction_results(self, predicted_numbers, actual_numbers):
         """
         Process prediction results to learn and adjust models based on performance
-        
-        Args:
-            predicted_numbers: List of numbers that were predicted
-            actual_numbers: List of numbers that were actually drawn
-            
-        Returns:
-            bool: True if processing was successful, False otherwise
         """
         try:
             print("Processing prediction results to adjust models...")
@@ -1542,18 +1585,29 @@ class PatternPredictionModel:
             hit_rate = len(hits) / len(predicted_numbers) if predicted_numbers else 0
             print(f"Hit rate: {hit_rate:.4f} ({len(hits)} of {len(predicted_numbers)})")
             
-            # Nothing to adjust if models aren't loaded
+            # Enhanced model checking and loading logic
             if not hasattr(self, 'models') or not self.models or 'xgboost' not in self.models:
-                print("No models available for adjustment")
-                return False
-                
+                print("Models not loaded, attempting to load models...")
+                if self.load_models():
+                    print(f"Successfully loaded models for adjustment")
+                else:
+                    print("No models available for adjustment - check your models directory")
+                    # Print directory contents to help diagnose the issue
+                    if os.path.exists(self.models_path):
+                        model_files = [f for f in os.listdir(self.models_path) if "xgb_model_" in f]
+                        metadata_file = os.path.exists(os.path.join(self.models_path, "model_metadata.pkl"))
+                        print(f"Models directory contains: {len(model_files)} model files")
+                        print(f"Metadata file exists: {metadata_file}")
+                    else:
+                        print(f"Models directory does not exist: {self.models_path}")
+                    return False
+            
             # Adjust learning rate based on performance
-            # If performance is poor, increase learning rate to adapt faster
-            # If performance is good, decrease learning rate for stability
             adjusted_models = 0
             
             for num in range(1, 81):
                 if num not in self.models['xgboost']:
+                    print(f"Model for number {num} not found, skipping adjustment")
                     continue
                     
                 model = self.models['xgboost'][num]
@@ -1564,17 +1618,22 @@ class PatternPredictionModel:
                     new_lr = min(0.2, current_lr * 1.1)  # Increase by 10%, max 0.2
                     model.set_params(learning_rate=new_lr)
                     adjusted_models += 1
+                    print(f"Adjusted learning rate for number {num}: {current_lr:.4f} -> {new_lr:.4f}")
                     
                 # Adjust learning rate down slightly if model is performing well
                 elif num in hits:
                     new_lr = max(0.01, current_lr * 0.98)  # Decrease by 2%, min 0.01
                     model.set_params(learning_rate=new_lr)
                     adjusted_models += 1
-                    
+                    print(f"Adjusted learning rate for number {num}: {current_lr:.4f} -> {new_lr:.4f}")
+            
             # Save the adjusted models
             if adjusted_models > 0:
                 print(f"Adjusted learning rates for {adjusted_models} models")
-                self.save_models()
+                save_result = self.save_models()
+                print(f"Model saving {'successful' if save_result else 'failed'}")
+            else:
+                print("No model adjustments were made")
                 
             # Record this evaluation for future analysis
             evaluation_data = {
@@ -1582,11 +1641,14 @@ class PatternPredictionModel:
                 'predicted': predicted_numbers,
                 'actual': actual_numbers,
                 'hit_rate': hit_rate,
-                'hits': list(hits)
+                'hits': list(hits),
+                'misses': list(misses),
+                'unexpected': list(unexpected)
             }
             self._save_evaluation(evaluation_data)
+            print("Evaluation data saved successfully")
             
-            return True
+            return adjusted_models > 0
             
         except Exception as e:
             print(f"Error processing prediction results: {e}")
@@ -1594,75 +1656,8 @@ class PatternPredictionModel:
             return False
 
     def analyze_prediction_history_files(self):
-        """Analyze prediction history files to learn from past predictions"""
-        print("\n=== Analyzing Prediction History Files ===")
-        
-        default_response = {
-            'method_success': {},
-            'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
-            'pattern_stability': True,
-            'recommendations': {
-                'best_method': 'pattern_based',
-                'accuracy_improving': False,
-                'needs_retraining': False
-            }
-        }
-        
-        try:
-            prediction_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_history.pkl')
-            
-            if not os.path.exists(prediction_file):
-                print("No prediction history file found")
-                return default_response
-                
-            # Load predictions with proper error handling
-            try:
-                with open(prediction_file, 'rb') as f:
-                    predictions = pickle.load(f)
-                    
-                # Convert to DataFrame if needed
-                if isinstance(predictions, list):
-                    predictions_df = pd.DataFrame(predictions)
-                elif isinstance(predictions, pd.DataFrame):
-                    predictions_df = predictions.copy()
-                else:
-                    print(f"Invalid predictions type: {type(predictions)}")
-                    return default_response
-                    
-                if predictions_df.empty:
-                    print("No predictions found in history file")
-                    return default_response
-                    
-                print(f"Loaded {len(predictions_df)} previous predictions")
-                
-                # Calculate method success
-                method_success = self.analyze_method_success(predictions_df)
-                
-                # Calculate accuracy trend
-                accuracy_trend = self.analyze_accuracy_trend(predictions_df)
-                
-                # Check pattern stability
-                pattern_changes = self.check_significant_pattern_changes()
-                
-                return {
-                    'method_success': method_success,
-                    'accuracy_trend': accuracy_trend,
-                    'pattern_stability': not pattern_changes,
-                    'recommendations': {
-                        'best_method': max(method_success.items(), key=lambda x: x[1])[0] if method_success else 'pattern_based',
-                        'accuracy_improving': accuracy_trend.get('is_improving', False),
-                        'needs_retraining': pattern_changes
-                    }
-                }
-                
-            except (pickle.UnpicklingError, EOFError) as e:
-                print(f"Error loading prediction file: {e}")
-                return default_response
-                
-        except Exception as e:
-            print(f"Error analyzing prediction history: {e}")
-            traceback.print_exc()
-            return default_response
+        """Analyze prediction history files using DataAnalysis instance"""
+        return self.data_analysis.analyze_prediction_history_files()
 
 if __name__ == "__main__":
     try:
