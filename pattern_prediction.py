@@ -1593,6 +1593,77 @@ class PatternPredictionModel:
             traceback.print_exc()
             return False
 
+    def analyze_prediction_history_files(self):
+        """Analyze prediction history files to learn from past predictions"""
+        print("\n=== Analyzing Prediction History Files ===")
+        
+        default_response = {
+            'method_success': {},
+            'accuracy_trend': {'is_improving': False, 'overall_trend': 0.0},
+            'pattern_stability': True,
+            'recommendations': {
+                'best_method': 'pattern_based',
+                'accuracy_improving': False,
+                'needs_retraining': False
+            }
+        }
+        
+        try:
+            prediction_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_history.pkl')
+            
+            if not os.path.exists(prediction_file):
+                print("No prediction history file found")
+                return default_response
+                
+            # Load predictions with proper error handling
+            try:
+                with open(prediction_file, 'rb') as f:
+                    predictions = pickle.load(f)
+                    
+                # Convert to DataFrame if needed
+                if isinstance(predictions, list):
+                    predictions_df = pd.DataFrame(predictions)
+                elif isinstance(predictions, pd.DataFrame):
+                    predictions_df = predictions.copy()
+                else:
+                    print(f"Invalid predictions type: {type(predictions)}")
+                    return default_response
+                    
+                if predictions_df.empty:
+                    print("No predictions found in history file")
+                    return default_response
+                    
+                print(f"Loaded {len(predictions_df)} previous predictions")
+                
+                # Calculate method success
+                method_success = self.analyze_method_success(predictions_df)
+                
+                # Calculate accuracy trend
+                accuracy_trend = self.analyze_accuracy_trend(predictions_df)
+                
+                # Check pattern stability
+                pattern_changes = self.check_significant_pattern_changes()
+                
+                return {
+                    'method_success': method_success,
+                    'accuracy_trend': accuracy_trend,
+                    'pattern_stability': not pattern_changes,
+                    'recommendations': {
+                        'best_method': max(method_success.items(), key=lambda x: x[1])[0] if method_success else 'pattern_based',
+                        'accuracy_improving': accuracy_trend.get('is_improving', False),
+                        'needs_retraining': pattern_changes
+                    }
+                }
+                
+            except (pickle.UnpicklingError, EOFError) as e:
+                print(f"Error loading prediction file: {e}")
+                return default_response
+                
+        except Exception as e:
+            print(f"Error analyzing prediction history: {e}")
+            traceback.print_exc()
+            return default_response
+
 if __name__ == "__main__":
     try:
         import getpass
