@@ -1467,6 +1467,59 @@ class PatternPredictionModel:
             print(f"Error in prediction validation: {e}")
             return [f"Validation error: {str(e)}"]
 
+    def evaluate_prediction(self, prediction, actual_draw):
+        """
+        Evaluate a prediction against actual draw results
+        
+        Args:
+            prediction: List of predicted numbers
+            actual_draw: List of actual drawn numbers
+            
+        Returns:
+            Dictionary with evaluation metrics
+        """
+        if not prediction or not actual_draw:
+            return {"error": "Empty prediction or actual draw"}
+            
+        try:
+            # Calculate hit rate
+            hits = set(prediction).intersection(set(actual_draw))
+            hit_count = len(hits)
+            hit_rate = hit_count / len(prediction) if prediction else 0
+            
+            # Calculate expected hit rate (random)
+            expected_hit_rate = len(prediction) * (len(actual_draw) / 80)
+            
+            # Calculate lift over random
+            lift = hit_rate / expected_hit_rate if expected_hit_rate > 0 else 0
+            
+            # Position-based accuracy
+            top_5_hits = len(set(prediction[:5]).intersection(set(actual_draw)))
+            top_10_hits = len(set(prediction[:10]).intersection(set(actual_draw)))
+            
+            evaluation = {
+                'hit_count': hit_count,
+                'hit_rate': hit_rate,
+                'expected_hit_rate': expected_hit_rate,
+                'lift': lift,
+                'hit_numbers': list(hits),
+                'missed_numbers': list(set(actual_draw) - hits),
+                'false_positives': list(set(prediction) - set(actual_draw)),
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'top_5_hits': top_5_hits,
+                'top_10_hits': top_10_hits
+            }
+            
+            # Save evaluation
+            self._save_evaluation(evaluation)
+            
+            return evaluation
+            
+        except Exception as e:
+            print(f"Error in evaluation: {e}")
+            traceback.print_exc()
+            return {"error": str(e)}
+
     def analyze_method_success(self, predictions_df):
         """Analyze success rates of different prediction methods"""
         method_success = {
@@ -1480,36 +1533,54 @@ class PatternPredictionModel:
             # Convert to DataFrame if it's a list
             if isinstance(predictions_df, list):
                 predictions_df = pd.DataFrame(predictions_df)
-            
+            elif not isinstance(predictions_df, pd.DataFrame):
+                print(f"Invalid type for predictions_df: {type(predictions_df)}")
+                return method_success
+
             # Ensure the DataFrame has the required columns
             required_columns = {'predicted_numbers', 'actual_numbers', 'method'}
             if not required_columns.issubset(predictions_df.columns):
-                raise ValueError(f"Missing required columns in predictions_df. Expected: {required_columns}")
+                print(f"Missing required columns. Expected: {required_columns}")
+                print(f"Got: {predictions_df.columns.tolist()}")
+                return method_success
+            
+            # Initialize method counters
+            method_counts = {method: 0 for method in method_success}
             
             # Iterate through predictions
             for _, prediction in predictions_df.iterrows():
-                predicted = prediction['predicted_numbers']
-                actual = prediction['actual_numbers']
-                method = prediction['method']
-                
-                # Calculate hit rate
-                hits = set(predicted).intersection(set(actual))
-                hit_rate = len(hits) / len(predicted) if predicted else 0
-                
-                # Update method success
-                if method in method_success:
-                    method_success[method] += hit_rate
+                try:
+                    predicted = prediction['predicted_numbers']
+                    actual = prediction['actual_numbers']
+                    method = prediction['method']
+                    
+                    # Skip invalid entries
+                    if not isinstance(predicted, (list, np.ndarray)) or not isinstance(actual, (list, np.ndarray)):
+                        continue
+                    
+                    # Calculate hit rate
+                    hits = set(predicted).intersection(set(actual))
+                    hit_rate = len(hits) / len(predicted) if predicted else 0
+                    
+                    # Update method success and count
+                    if method in method_success:
+                        method_success[method] += hit_rate
+                        method_counts[method] += 1
+                    
+                except Exception as e:
+                    print(f"Error processing prediction: {e}")
+                    continue
             
             # Normalize success rates by the number of predictions per method
-            method_counts = predictions_df['method'].value_counts()
             for method in method_success:
-                if method in method_counts:
+                if method_counts[method] > 0:
                     method_success[method] /= method_counts[method]
             
             return method_success
                 
         except Exception as e:
             print(f"Error in analyze_method_success: {e}")
+            traceback.print_exc()
             return method_success
 
     def analyze_prediction_history_files(self):
@@ -1642,6 +1713,79 @@ class PatternPredictionModel:
             import traceback
             traceback.print_exc()
             return default_response
+
+    def process_prediction_results(self, predicted_numbers, actual_numbers):
+        """
+        Process prediction results to learn and adjust models based on performance
+        
+        Args:
+            predicted_numbers: List of numbers that were predicted
+            actual_numbers: List of numbers that were actually drawn
+            
+        Returns:
+            bool: True if processing was successful, False otherwise
+        """
+        try:
+            print("Processing prediction results to adjust models...")
+            
+            # Calculate hit and miss statistics
+            hits = set(predicted_numbers).intersection(set(actual_numbers))
+            misses = set(predicted_numbers) - set(actual_numbers)
+            unexpected = set(actual_numbers) - hits
+            
+            hit_rate = len(hits) / len(predicted_numbers) if predicted_numbers else 0
+            print(f"Hit rate: {hit_rate:.4f} ({len(hits)} of {len(predicted_numbers)})")
+            
+            # Nothing to adjust if models aren't loaded
+            if not hasattr(self, 'models') or not self.models or 'xgboost' not in self.models:
+                print("No models available for adjustment")
+                return False
+                
+            # Adjust learning rate based on performance
+            # If performance is poor, increase learning rate to adapt faster
+            # If performance is good, decrease learning rate for stability
+            adjusted_models = 0
+            
+            for num in range(1, 81):
+                if num not in self.models['xgboost']:
+                    continue
+                    
+                model = self.models['xgboost'][num]
+                current_lr = model.get_params().get('learning_rate', 0.05)
+                
+                # Adjust learning rate up if number was unpredicted but appeared
+                if num in unexpected:
+                    new_lr = min(0.2, current_lr * 1.1)  # Increase by 10%, max 0.2
+                    model.set_params(learning_rate=new_lr)
+                    adjusted_models += 1
+                    
+                # Adjust learning rate down slightly if model is performing well
+                elif num in hits:
+                    new_lr = max(0.01, current_lr * 0.98)  # Decrease by 2%, min 0.01
+                    model.set_params(learning_rate=new_lr)
+                    adjusted_models += 1
+                    
+            # Save the adjusted models
+            if adjusted_models > 0:
+                print(f"Adjusted learning rates for {adjusted_models} models")
+                self.save_models()
+                
+            # Record this evaluation for future analysis
+            evaluation_data = {
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'predicted': predicted_numbers,
+                'actual': actual_numbers,
+                'hit_rate': hit_rate,
+                'hits': list(hits)
+            }
+            self._save_evaluation(evaluation_data)
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error processing prediction results: {e}")
+            traceback.print_exc()
+            return False
 
 if __name__ == "__main__":
     try:
