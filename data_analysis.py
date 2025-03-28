@@ -1,5 +1,5 @@
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from itertools import combinations
 import pandas as pd
 from sklearn.cluster import KMeans
@@ -8,152 +8,42 @@ import os
 import sys
 import traceback
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.paths import PATHS, ensure_directories, print_system_info
+from config.paths import PATHS, ensure_directories
 
 class DataAnalysis:
-    def print_system_info():
-        """Print system information"""
-        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        print(f"Current Date and Time (UTC - YYYY-MM-DD HH:MM:SS formatted): {current_time}")
-        print(f"Current User's Login: {os.getenv('USER', 'Mihai-Edward')}")
-
-    def safe_parse_date(self, draw_info):
-        """
-        Parse draw dates in various formats
-        
-        Args:
-            draw_info (tuple): Tuple containing draw date and numbers
-            
-        Returns:
-            datetime: Parsed datetime object
-        """
-        try:
-            draw_date = draw_info[0].strip()
-            # First normalize the date string - combine multiple spaces
-            draw_date = ' '.join(draw_date.split())
-            
-            try:
-                # Try standard format "HH:MM DD-MM-YYYY"
-                parts = draw_date.split(' ', 1)
-                if len(parts) == 2:
-                    time_part, date_part = parts
-                    # Parse date in correct order: day, month, year
-                    dt = datetime.strptime(f"{date_part} {time_part}", "%d-%m-%Y %H:%M")
-                    return dt
-            except ValueError:
-                try:
-                    # Try direct parsing with the expected format
-                    dt = datetime.strptime(draw_date, "%H:%M %d-%m-%Y")
-                    return dt
-                except ValueError:
-                    # Try alternative date formats
-                    formats = [
-                        "%d-%m-%Y %H:%M",  # Day-Month-Year Hour:Minute
-                        "%m-%d-%Y %H:%M",  # Month-Day-Year Hour:Minute
-                        "%Y-%m-%d %H:%M"   # Year-Month-Day Hour:Minute
-                    ]
-                    for fmt in formats:
-                        try:
-                            dt = datetime.strptime(draw_date, fmt)
-                            return dt
-                        except ValueError:
-                            continue
-            
-            # If we get here, no formats worked
-            print(f"WARNING: Could not parse date '{draw_date}', using minimum date")
-            return datetime.min
-        except Exception as e:
-            print(f"ERROR parsing date '{draw_info[0]}': {e}")
-            return datetime.min
-
-    def __init__(self, draws=None, debug=False):
+    def __init__(self, draws, debug=False):
         """Initialize DataAnalysis with proper draw validation"""
+        self.draws = []
         self.debug = debug
-        if draws is None:
-            self.draws = self.load_historical_data(PATHS['HISTORICAL_DATA'])
-        else:
-            self.draws = []
-            
+        
         if self.debug:
-            print(f"\nDEBUG: Initializing DataAnalysis with {len(draws if draws else [])} draws")
+            print(f"\nDEBUG: Initializing DataAnalysis with {len(draws)} draws")
             print(f"DEBUG: First draw format: {draws[0] if draws else 'None'}")
         
-        # Process draws if provided directly
-        if draws:
-            for draw_date, numbers in draws:
-                try:
-                    # Ensure numbers is a list and contains valid numbers
-                    numbers = [n for n in numbers if isinstance(n, (int, float)) and 1 <= n <= 80]
-                    
-                    # Remove duplicates while preserving order
-                    valid_numbers = []
-                    seen = set()
-                    for num in numbers:
-                        if num not in seen and len(valid_numbers) < 20:
-                            valid_numbers.append(num)
-                            seen.add(num)
-                    
-                    # Only add if we have exactly 20 valid numbers
-                    if len(valid_numbers) == 20:
-                        self.draws.append((draw_date, valid_numbers))
-                    else:
-                        print(f"DEBUG: Skipping draw {draw_date} - invalid number count: {len(valid_numbers)}")
-                        
-                except Exception as e:
-                    print(f"DEBUG: Error processing draw {draw_date}: {e}")
-        
-        # Print sample of dates before sorting
-        if self.debug and self.draws:
-            print("\nDEBUG: Sample of dates before sorting:")
-            for i in range(min(3, len(self.draws))):
-                print(f"  {self.draws[i][0]}")
-        
-        # Sort draws by date in chronological order with robust parsing
-        try:
-            self.draws.sort(key=self.safe_parse_date)
-            
-            if self.debug:
-                print(f"\nDEBUG: Sorted {len(self.draws)} draws by date")
-                print(f"DEBUG: First draw (oldest): {self.draws[0][0] if self.draws else 'None'}")
-                print(f"DEBUG: Last draw (newest): {self.draws[-1][0] if self.draws else 'None'}")
+        for draw_date, numbers in draws:
+            try:
+                # Ensure numbers is a list and contains valid numbers
+                numbers = [n for n in numbers if isinstance(n, (int, float)) and 1 <= n <= 80]
                 
-                # Print the last few draws to verify sorting
-                if len(self.draws) > 5:
-                    print("\nDEBUG: Last 5 draws (most recent):")
-                    for i in range(1, 6):
-                        if i <= len(self.draws):
-                            print(f"  {self.draws[-i][0]}")
-        except Exception as e:
-            print(f"ERROR during draw sorting: {e}")
-            traceback.print_exc()
-
+                # Remove duplicates while preserving order
+                valid_numbers = []
+                seen = set()
+                for num in numbers:
+                    if num not in seen and len(valid_numbers) < 20:
+                        valid_numbers.append(num)
+                        seen.add(num)
+                
+                # Only add if we have exactly 20 valid numbers
+                if len(valid_numbers) == 20:
+                    self.draws.append((draw_date, valid_numbers))
+                else:
+                    print(f"DEBUG: Skipping draw {draw_date} - invalid number count: {len(valid_numbers)}")
+                    
+            except Exception as e:
+                print(f"DEBUG: Error processing draw {draw_date}: {e}")
+        
         if not self.draws:
             raise ValueError("No valid draws were processed!")
-
-    def load_historical_data(self, data_path):
-        """Load historical data from CSV file"""
-        draws = []
-        try:
-            if os.path.exists(data_path):
-                with open(data_path, 'r', encoding='utf-8') as file:
-                    import csv
-                    csv_reader = csv.reader(file)
-                    header = next(csv_reader, None)  # Skip header if exists
-                    
-                    for row in csv_reader:
-                        if len(row) >= 21:  # Date/time + 20 numbers
-                            draw_date = row[0]
-                            try:
-                                numbers = [int(num.strip()) for num in row[1:21] if num.strip()]
-                                draws.append((draw_date, numbers))
-                            except ValueError as e:
-                                print(f"Skipping row with invalid numbers: {e}")
-            else:
-                print(f"Historical data file not found: {data_path}")
-        except Exception as e:
-            print(f"Error loading historical data: {e}")
-            traceback.print_exc()
-        return draws
 
     def count_frequency(self):
         """Count frequency of all numbers across all draws"""
@@ -215,7 +105,7 @@ class DataAnalysis:
         print(f"DEBUG: Range analysis completed. Distribution: {ranges}")
         return ranges
     
-    def hot_and_cold_numbers(self, top_n=10, window_size=24):
+    def hot_and_cold_numbers(self, top_n=10, window_size=50):
         """Enhanced hot/cold analysis with trending detection"""
         # Overall hot/cold
         frequency = self.count_frequency()
@@ -394,7 +284,7 @@ class DataAnalysis:
     def save_to_excel(self, filename=None):
         """Save analysis results to Excel file using config paths"""
         if filename is None:
-           filename = PATHS['ANALYSIS_RESULTS'] 
+            filename = PATHS['ANALYSIS']
         
         try:
             ensure_directories()
@@ -578,17 +468,6 @@ class DataAnalysis:
                 consistent_hot_numbers_df = pd.DataFrame()
                 consistent_pairs_df = pd.DataFrame()
                 consistent_trends_df = pd.DataFrame()
-            
-            # Add new sheet for focused predictions
-            focused_predictions = self.get_focused_prediction()
-            if focused_predictions:
-                focused_df = pd.DataFrame({
-                    'Predicted Numbers': [str(focused_predictions['numbers'])],
-                    'Confidence Scores': [str(focused_predictions['confidence'])],
-                    'Timestamp': [focused_predictions['timestamp']]
-                })
-            else:
-                focused_df = pd.DataFrame(columns=['Predicted Numbers', 'Confidence Scores', 'Timestamp'])
     
             # Save to Excel with all sheets
             with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
@@ -617,7 +496,6 @@ class DataAnalysis:
                 consistent_hot_numbers_df.to_excel(writer, sheet_name='Consistent Hot Numbers', index=False)
                 consistent_pairs_df.to_excel(writer, sheet_name='Consistent Pairs', index=False)
                 consistent_trends_df.to_excel(writer, sheet_name='Consistent Trends', index=False)
-                focused_df.to_excel(writer, sheet_name='Focused_Predictions', index=False)
     
             print(f"\nAnalysis results saved to {filename}")
             return True
@@ -779,7 +657,7 @@ class DataAnalysis:
                 }
             }
 
-    def analyze_skip_patterns(self, window_size=6):
+    def analyze_skip_patterns(self, window_size=10):
         """
         Analyze patterns in number skips between consecutive draws
         
@@ -1138,487 +1016,13 @@ class DataAnalysis:
             traceback.print_exc()
             return None
 
-    def get_focused_prediction(self, top_n=15):
-        """
-        Get focused prediction of top N numbers
-        
-        Args:
-            top_n (int): Number of predictions to return
-            
-        Returns:
-            dict: Dictionary containing predicted numbers, confidence scores, and timestamp
-        """
-        try:
-            # Combine multiple analysis methods for scoring
-            scores = {}
-            
-            # 1. Frequency Analysis (30%)
-            frequency = self.count_frequency()
-            max_freq = max(frequency.values()) if frequency else 1
-            
-            # 2. Recent Performance (30%)
-            hot_cold = self.hot_and_cold_numbers(top_n=80)  # Get all numbers
-            
-            # 3. Pattern Strength (40%)
-            gaps = self.analyze_gaps()
-            
-            # Calculate combined scores
-            for num in range(1, 81):
-                # Frequency score
-                freq_score = (frequency.get(num, 0) / max_freq) * 0.30
-                
-                # Recent performance score
-                recent_score = 0
-                for hot_num, _ in hot_cold['hot_numbers']:
-                    if hot_num == num:
-                        recent_score = 0.30
-                        break
-                
-                # Pattern score
-                gap_data = gaps.get(num, {})
-                if gap_data:
-                    current_gap = gap_data.get('current_gap', 0)
-                    avg_gap = gap_data.get('avg_gap', 0)
-                    pattern_score = 0.40 if current_gap > avg_gap else 0.20
-                else:
-                    pattern_score = 0
-                    
-                # Combined score
-                scores[num] = freq_score + recent_score + pattern_score
-                
-            # Get top N numbers with their confidence scores
-            sorted_numbers = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-            top_numbers = sorted_numbers[:top_n]
-            
-            return {
-                'numbers': [num for num, _ in top_numbers],
-                'confidence': [round(score, 3) for _, score in top_numbers],
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-        except Exception as e:
-            print(f"Error in focused prediction: {e}")
-            traceback.print_exc()
-            return None
-
-    def check_prediction_health(self):
-        """Monitor prediction system health"""
-        health_status = {
-            'needs_attention': False,
-            'reasons': []
-        }
-        
-        try:
-            # 1. Check pattern stability
-            validation_results = self.validate_patterns()
-            if validation_results:
-                stability = validation_results['validation_summary']['average_hot_numbers_stability']
-                if stability < 50:  # Less than 50% stability
-                    health_status['needs_attention'] = True
-                    health_status['reasons'].append(f"Low pattern stability: {stability}%")
-            
-            # 2. Check recent accuracy
-            recent_performance = self.analyze_recent_performance()
-            if recent_performance['average_accuracy'] < 15:  # Less than 15% accuracy
-                health_status['needs_attention'] = True
-                health_status['reasons'].append("Low prediction accuracy")
-            
-            # 3. Check pattern changes
-            if self.check_significant_pattern_changes():
-                health_status['needs_attention'] = True
-                health_status['reasons'].append("Significant pattern changes detected")
-                
-            return health_status
-            
-        except Exception as e:
-            print(f"Error in health check: {e}")
-            return {'needs_attention': True, 'reasons': ['Error in health monitoring']}
-
-    def track_prediction_performance(self, prediction, actual_draw):
-        """Track prediction performance"""
-        try:
-            correct_numbers = set(prediction['numbers']).intersection(set(actual_draw))
-            accuracy = len(correct_numbers) / len(prediction['numbers'])
-            
-            performance_data = {
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'predicted_numbers': prediction['numbers'],
-                'actual_numbers': actual_draw,
-                'correct_count': len(correct_numbers),
-                'accuracy': accuracy,
-                'confidence_correlation': self.calculate_confidence_correlation(
-                    prediction['numbers'], 
-                    prediction['confidence'], 
-                    actual_draw
-                )
-            }
-            
-            return performance_data
-            
-        except Exception as e:
-            print(f"Error tracking performance: {e}")
-            return None
-
-    def save_focused_predictions(self, prediction_data):
-        """
-        Save focused predictions with confidence scores
-        
-        Args:
-            prediction_data (dict): Dictionary containing prediction data
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            # Add to the existing save_to_excel method
-            focused_predictions_df = pd.DataFrame({
-                'timestamp': [prediction_data['timestamp']],
-                'numbers': [str(prediction_data['numbers'])],  # Convert list to string for Excel
-                'confidence_scores': [str(prediction_data['confidence'])]  # Convert list to string for Excel
-            })
-            
-            # Save to a new sheet in the existing Excel file
-            with pd.ExcelWriter(PATHS['ANALYSIS_RESULTS'], mode='a', engine='openpyxl', if_sheet_exists='replace') as writer:  # CORRECT
-                focused_predictions_df.to_excel(writer, 
-                                             sheet_name='Focused_Predictions', 
-                                             index=False)
-            return True
-        except Exception as e:
-            print(f"Error saving focused predictions: {e}")
-            traceback.print_exc()
-            return False
-
-    def analyze_recent_performance(self, window_size=24):
-        """
-        Analyze recent prediction performance
-        
-        Args:
-            window_size (int): Number of recent draws to analyze
-            
-        Returns:
-            dict: Dictionary containing accuracy metrics
-        """
-        try:
-            recent_draws = self.draws[-window_size:] if len(self.draws) > window_size else self.draws
-            # Calculate performance metrics
-            total_accuracy = 0
-            predictions_count = 0
-            
-            for i in range(len(recent_draws) - 1):
-                prediction = self.get_focused_prediction()
-                if prediction:
-                    actual_draw = recent_draws[i + 1][1]
-                    correct = len(set(prediction['numbers']).intersection(set(actual_draw)))
-                    total_accuracy += correct / len(prediction['numbers'])
-                    predictions_count += 1
-            
-            return {
-                'average_accuracy': round(total_accuracy / predictions_count if predictions_count > 0 else 0, 4),
-                'predictions_analyzed': predictions_count
-            }
-        except Exception as e:
-            print(f"Error in recent performance analysis: {e}")
-            return {'average_accuracy': 0, 'predictions_analyzed': 0}
-
-    def calculate_confidence_correlation(self, predicted_numbers, confidence_scores, actual_numbers):
-        """
-        Calculate correlation between confidence scores and actual hits
-        
-        Args:
-            predicted_numbers (list): List of predicted numbers
-            confidence_scores (list): List of confidence scores for each prediction
-            actual_numbers (list): List of numbers that actually appeared
-            
-        Returns:
-            float: Correlation coefficient between confidence and actual hits
-        """
-        try:
-            hits = [1 if num in actual_numbers else 0 for num in predicted_numbers]
-            if len(hits) != len(confidence_scores):
-                return 0
-                
-            # Calculate correlation coefficient
-            n = len(hits)
-            hits_mean = sum(hits) / n
-            conf_mean = sum(confidence_scores) / n
-            
-            numerator = sum((h - hits_mean) * (c - conf_mean) 
-                           for h, c in zip(hits, confidence_scores))
-            denominator = (sum((h - hits_mean) ** 2 for h in hits) * 
-                          sum((c - conf_mean) ** 2 for c in confidence_scores)) ** 0.5
-            
-            correlation = numerator / denominator if denominator != 0 else 0
-            return round(correlation, 4)
-            
-        except Exception as e:
-            print(f"Error calculating confidence correlation: {e}")
-            return 0
-
-    def check_significant_pattern_changes(self, threshold=0.30):
-        """
-        Check for significant changes in number patterns
-        
-        Args:
-            threshold (float): Threshold for determining significant change
-            
-        Returns:
-            bool: True if significant pattern changes detected, False otherwise
-        """
-        try:
-            # Compare recent vs historical patterns
-            window_size = min(50, len(self.draws) // 2)
-            recent_draws = self.draws[-window_size:]
-            historical_draws = self.draws[:-window_size]
-            
-            if not historical_draws:
-                return False
-                
-            # Analyze both sets
-            recent_analysis = DataAnalysis(recent_draws, debug=False)
-            historical_analysis = DataAnalysis(historical_draws, debug=False)
-            
-            # Compare frequency distributions
-            recent_freq = recent_analysis.count_frequency()
-            historical_freq = historical_analysis.count_frequency()
-            
-            # Calculate pattern change magnitude
-            total_change = 0
-            total_numbers = 0
-            
-            for num in range(1, 81):
-                recent_prob = recent_freq.get(num, 0) / len(recent_draws) if recent_draws else 0
-                hist_prob = historical_freq.get(num, 0) / len(historical_draws) if historical_draws else 0
-                
-                if hist_prob > 0:  # Only consider numbers that appeared in historical data
-                    change = abs(recent_prob - hist_prob) / hist_prob
-                    total_change += change
-                    total_numbers += 1
-            
-            avg_change = total_change / total_numbers if total_numbers > 0 else 0
-            return avg_change > threshold
-            
-        except Exception as e:
-            print(f"Error checking pattern changes: {e}")
-            return False
-
-    def analyze_method_success(self, predictions_df):
-        """Analyze success rates of different prediction methods"""
-        method_success = {
-            'pattern_based': 0.0,
-            'frequency_based': 0.0,
-            'gap_based': 0.0,
-            'combination_based': 0.0
-        }
-        
-        try:
-            # Calculate each method's success rate from predictions_df
-            for _, prediction in predictions_df.iterrows():
-                predicted = prediction['predicted_numbers']
-                actual = prediction['actual_numbers']
-                
-                # Calculate hit rates for each method
-                pattern_hits = len(set(predicted) & set(actual)) / len(predicted)
-                method_success['pattern_based'] += pattern_hits
-                
-                # Get frequency-based hits
-                freq_numbers = self.get_top_numbers(15)  # Same length as predictions
-                freq_hits = len(set(freq_numbers) & set(actual)) / len(freq_numbers)
-                method_success['frequency_based'] += freq_hits
-                
-                # Get gap-based hits
-                gaps = self.analyze_gaps()
-                gap_numbers = sorted(gaps.items(), key=lambda x: x[1]['current_gap'], reverse=True)[:15]
-                gap_hits = len(set(n[0] for n in gap_numbers) & set(actual)) / 15
-                method_success['gap_based'] += gap_hits
-                
-                # Get combination-based hits
-                combos = self.analyze_combinations()['most_common'][:5]
-                combo_numbers = {num for combo in combos for num in combo['combination']}
-                combo_numbers = list(combo_numbers)[:15]  # Take top 15
-                combo_hits = len(set(combo_numbers) & set(actual)) / len(combo_numbers)
-                method_success['combination_based'] += combo_hits
-                
-            # Average the success rates
-            num_predictions = len(predictions_df)
-            for method in method_success:
-                method_success[method] /= num_predictions
-                
-            return method_success
-            
-        except Exception as e:
-            print(f"Error in analyze_method_success: {e}")
-            return method_success
-
-    def analyze_accuracy_trend(self, predictions_df):
-        """Analyze prediction accuracy trends over time"""
-        try:
-            trend_data = {
-                'is_improving': False,
-                'window_accuracy': [],
-                'overall_trend': 0.0
-            }
-            
-            # Calculate rolling accuracy
-            window_size = 5
-            accuracies = []
-            
-            for i in range(len(predictions_df)):
-                if i < window_size:
-                    continue
-                    
-                window = predictions_df.iloc[i-window_size:i]
-                window_hits = 0
-                window_total = 0
-                
-                for _, prediction in window.iterrows():
-                    predicted = prediction['predicted_numbers']
-                    actual = prediction['actual_numbers']
-                    hits = len(set(predicted) & set(actual))
-                    window_hits += hits
-                    window_total += len(predicted)
-                
-                window_accuracy = window_hits / window_total if window_total > 0 else 0
-                accuracies.append(window_accuracy)
-                
-            if accuracies:
-                # Calculate trend
-                trend_data['is_improving'] = accuracies[-1] > accuracies[0]
-                trend_data['window_accuracy'] = accuracies
-                trend_data['overall_trend'] = (accuracies[-1] - accuracies[0]) / len(accuracies)
-                
-            return trend_data
-            
-        except Exception as e:
-            print(f"Error in analyze_accuracy_trend: {e}")
-            return {'is_improving': False, 'window_accuracy': [], 'overall_trend': 0.0}
-
-    def analyze_prediction_history_files(self):
-        """Analyze prediction history files to learn from past predictions"""
-        print("\n=== Analyzing Prediction History Files ===")
-        
-        try:
-            # Load prediction history
-            prediction_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_history.pkl')
-            evaluation_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_evaluations.pkl')
-            
-            if not os.path.exists(prediction_file):
-                print("No prediction history file found")
-                return None
-                
-            predictions_df = pd.read_pickle(prediction_file)
-            evaluations_df = pd.read_pickle(evaluation_file) if os.path.exists(evaluation_file) else None
-            
-            print(f"Loaded {len(predictions_df)} previous predictions")
-            
-            # Analyze which methods were most successful
-            method_success = self.analyze_method_success(predictions_df)
-            
-            # Get recent accuracy trends
-            accuracy_trend = self.analyze_accuracy_trend(predictions_df)
-            
-            # Check pattern stability
-            pattern_changes = self.check_significant_pattern_changes()
-            
-            results = {
-                'method_success': method_success,
-                'accuracy_trend': accuracy_trend,
-                'pattern_stability': not pattern_changes,
-                'recommendations': {
-                    'best_method': max(method_success.items(), key=lambda x: x[1])[0] if method_success else None,
-                    'accuracy_improving': accuracy_trend['is_improving'],
-                    'needs_retraining': pattern_changes
-                }
-            }
-            
-            print("\n=== Learning from Previous Predictions ===")
-            print(f"Best performing method: {results['recommendations']['best_method']}")
-            print(f"Accuracy trend: {'Improving' if results['recommendations']['accuracy_improving'] else 'Declining'}")
-            print(f"Retraining needed: {'Yes' if results['recommendations']['needs_retraining'] else 'No'}")
-            
-            return results
-            
-        except Exception as e:
-            print(f"Error analyzing prediction history: {e}")
-            traceback.print_exc()
-            return None
-
-    def update_prediction_tracker(self, predicted_numbers, actual_numbers, correct_count, accuracy):
-        """
-        Export prediction results to Excel without modifying core functionality
-        This function only exports data that's already calculated by the system
-        
-        Args:
-            predicted_numbers (list): List of predicted numbers
-            actual_numbers (list): List of actual draw numbers  
-            correct_count (int): Number of correct predictions
-            accuracy (float): Hit rate (correct_count / len(predicted_numbers))
-        
-        Returns:
-            bool: True if export successful, False otherwise
-        """
-        try:
-            import pandas as pd
-            from datetime import datetime
-            
-            # Path to tracker file
-            tracker_file = r"C:\Users\MihaiNita\OneDrive - Prime Batteries\Desktop\versiuni_de_care_nu_ma_ating\Versiune1.4\data\processed\prediction_tracker.xlsx"
-            
-            current_date = datetime.now().strftime('%Y-%m-%d')
-            current_time = datetime.now().strftime('%H:%M')
-            
-            # Create or load existing tracker
-            if os.path.exists(tracker_file):
-                try:
-                    df = pd.read_excel(tracker_file)
-                except Exception as e:
-                    print(f"Could not read existing tracker file: {e}")
-                    df = pd.DataFrame(columns=[
-                        'Date', 'Time', 'Predicted_Numbers', 'Actual_Numbers',
-                        'Hits', 'Hit_Rate', 'Notes'
-                    ])
-            else:
-                df = pd.DataFrame(columns=[
-                    'Date', 'Time', 'Predicted_Numbers', 'Actual_Numbers',
-                    'Hits', 'Hit_Rate', 'Notes'
-                ])
-            
-            # Create new entry
-            new_entry = {
-                'Date': current_date,
-                'Time': current_time,
-                'Predicted_Numbers': str(predicted_numbers),
-                'Actual_Numbers': str(actual_numbers),
-                'Hits': correct_count,
-                'Hit_Rate': accuracy,
-                'Notes': f"Auto-tracked on {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            }
-            
-            # Add to dataframe
-            df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
-            
-            # Save to Excel
-            try:
-                df.to_excel(tracker_file, index=False)
-                print(f"✅ Prediction tracker updated: {tracker_file}")
-                if self.debug:
-                    print(f"DEBUG: Added prediction entry with {correct_count} hits and {accuracy:.2%} accuracy")
-                return True
-            except Exception as e:
-                print(f"❌ Could not update prediction tracker: {e}")
-                return False
-                
-        except Exception as e:
-            print(f"Error in prediction tracker: {e}")
-            traceback.print_exc()
-            return False
-
 if __name__ == "__main__":
     example_draws = [
-        (datetime.now().strftime("%H:%M %d-%m-%Y"), [1, 2, 2, 9, 12, 14, 17, 25, 26, 30, 38, 44, 54, 57, 58, 61, 65, 71, 72, 76, 79]),
-        ((datetime.now() - timedelta(minutes=5)).strftime("%H:%M %d-%m-%Y"), [4, 5, 7, 7, 9, 18, 24, 27, 29, 34, 40, 45, 48, 52, 55, 57, 70, 71, 72, 74, 77]),
+        ("20:15 26-02-2025", [1, 2, 2, 9, 12, 14, 17, 25, 26, 30, 38, 44, 54, 57, 58, 61, 65, 71, 72, 76, 79]),
+        ("20:10 26-02-2025", [4, 5, 7, 7, 9, 18, 24, 27, 29, 34, 40, 45, 48, 52, 55, 57, 70, 71, 72, 74, 77]),
     ]
-    print_system_info()
+    
     try:
-        # Initialize real draws list and get the path to historical data
         real_draws = []
         csv_file = PATHS['HISTORICAL_DATA']
         
@@ -1650,107 +1054,22 @@ if __name__ == "__main__":
             print("Using example draws instead")
             draws_to_analyze = example_draws
             
-        # Create analysis instance with our data
         analysis = DataAnalysis(draws_to_analyze)
         
-        # Basic frequency analysis
         frequency = analysis.count_frequency()
         print(f"Number of unique numbers: {len(frequency)}")
         
-        # Top numbers analysis
         top_numbers = analysis.get_top_numbers(20)
         print(f"Top 20 numbers: {', '.join(map(str, top_numbers))}")
         
-        # Gap analysis showcase
+        # Add gap analysis showcase
         gap_analysis = analysis.analyze_gaps()
         print("\nSample gap analysis for first 5 numbers:")
         for num in range(1, 6):
             print(f"Number {num}: {gap_analysis[num]}")
         
-        # Focused prediction showcase
-        focused_prediction = analysis.get_focused_prediction()
-        if focused_prediction:
-            print("\nFocused Prediction (Top 15 numbers):")
-            for num, conf in zip(focused_prediction['numbers'], 
-                                focused_prediction['confidence']):
-                print(f"Number {num}: {conf:.3f} confidence")
-        
-        # Save results to Excel
-        analysis.save_to_excel(PATHS['ANALYSIS_RESULTS'])
+        analysis.save_to_excel(PATHS['ANALYSIS'])
         print("Analysis complete!")
-        
-        # Deep Pattern Analysis Section
-        print("\n=== Starting Deep Pattern Analysis ===")
-        
-        print("\n1. Analyzing Sequence Patterns...")
-        sequence_analysis = analysis.sequence_pattern_analysis()
-        if sequence_analysis and 'overall_sequences' in sequence_analysis:
-            print(f"Found patterns in {len(sequence_analysis['overall_sequences'])} sequences")
-            if 'statistics' in sequence_analysis and 'most_active_time_slot' in sequence_analysis['statistics']:
-                print(f"Most active time: {sequence_analysis['statistics']['most_active_time_slot']}")
-        
-        print("\n2. Analyzing Skip Patterns...")
-        skip_patterns = analysis.analyze_skip_patterns()
-        if skip_patterns and 'statistics' in skip_patterns:
-            print(f"Average skipped numbers: {skip_patterns['statistics'].get('avg_skipped', 0):.2f}")
-            print(f"Average new numbers: {skip_patterns['statistics'].get('avg_new', 0):.2f}")
-        
-        print("\n3. Checking System Health...")
-        health_status = analysis.check_prediction_health()
-        if health_status:
-            if health_status.get('needs_attention'):
-                print("System needs attention:")
-                for reason in health_status.get('reasons', []):
-                    print(f"- {reason}")
-            else:
-                print("System health: Good")
-        
-        print("\n4. Validating Patterns...")
-        pattern_validation = analysis.validate_patterns()
-        if pattern_validation and 'validation_summary' in pattern_validation:
-            summary = pattern_validation['validation_summary']
-            print(f"Pattern Stability: {summary.get('predictive_power', 'N/A')}")
-            print(f"Hit Rate vs Random: {summary.get('hit_rate_advantage', 0):.2f}")
-        
-        print("\n=== Deep Analysis Complete ===")
-        
-        # Performance Analysis Section
-        print("\n=== Starting Performance Analysis ===")
-        
-        print("\nAnalyzing recent performance...")
-        recent_performance = analysis.analyze_recent_performance()
-        if recent_performance:
-            print(f"Average Accuracy: {recent_performance['average_accuracy']*100:.2f}%")
-            print(f"Number of Predictions Analyzed: {recent_performance['predictions_analyzed']}")
-        
-        print("\nSaving current focused prediction...")
-        if focused_prediction:
-            saved = analysis.save_focused_predictions(focused_prediction)
-            if saved:
-                print("Successfully saved focused prediction")
-            else:
-                print("Failed to save focused prediction")
-        
-        print("\nChecking prediction performance...")
-        # Get most recent actual draw for comparison
-        if draws_to_analyze and len(draws_to_analyze) > 0:
-            latest_actual_draw = draws_to_analyze[-1][1]  # Get numbers from last draw
-            if focused_prediction and latest_actual_draw:
-                performance_data = analysis.track_prediction_performance(
-                    focused_prediction,
-                    latest_actual_draw
-                )
-                if performance_data:
-                    print(f"Latest Prediction Accuracy: {performance_data['accuracy']*100:.2f}%")
-                    print(f"Correct Numbers: {performance_data['correct_count']}")
-                    print(f"Confidence Correlation: {performance_data['confidence_correlation']:.4f}")
-                    analysis.update_prediction_tracker(
-                    predicted_numbers=focused_prediction['numbers'],
-                    actual_numbers=latest_actual_draw,
-                    correct_count=performance_data['correct_count'],
-                    accuracy=performance_data['accuracy'] 
-                    )   
-        print("\n=== Analysis and Performance Tracking Complete ===")
         
     except Exception as e:
         print(f"Error in data analysis: {e}")
