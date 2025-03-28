@@ -1047,7 +1047,7 @@ class PatternPredictionModel:
                 try:
                     dump(model, model_file)
                     saved_count += 1
-                    print(f"Model for number {num} saved successfully to {model_file}")
+                    #print(f"Model for number {num} saved successfully to {model_file}")
                 except Exception as e:
                     print(f"Error saving model {num}: {e}")
                     continue
@@ -1127,7 +1127,7 @@ class PatternPredictionModel:
                         if hasattr(model, 'get_params') and isinstance(model, xgb.XGBClassifier):
                             self.models['xgboost'][num] = model
                             loaded_count += 1
-                            print(f"Successfully loaded model for number {num} from {model_file}")
+                            #print(f"Successfully loaded model for number {num} from {model_file}")
                         else:
                             print(f"Warning: Model for number {num} is not an XGBoost classifier")
                     except Exception as e:
