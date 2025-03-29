@@ -3,6 +3,7 @@ import sys
 import argparse
 from datetime import datetime
 from collections import Counter
+from itertools import combinations
 
 # Add parent directory to path to import from data_analysis
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -18,11 +19,11 @@ class PredictionGenerator:
     
     def generate_prediction(self, predict_count=15, recent_window=150, 
                            freq_weight=0.25, hot_cold_weight=0.25,
-                           gap_weight=0.25, pairs_weight=0.25,
+                           gap_weight=0.25, triplets_weight=0.25,
                            historical_influence=0.3):
         """
         Generate enhanced prediction using multiple analysis methods
-        with tiered confidence levels and pair analysis
+        with tiered confidence levels and triplet analysis
         
         Args:
             predict_count (int): Number of numbers to predict (default 15)
@@ -30,7 +31,7 @@ class PredictionGenerator:
             freq_weight (float): Weight for frequency analysis (default 0.25)
             hot_cold_weight (float): Weight for hot/cold analysis (default 0.25)
             gap_weight (float): Weight for gap analysis (default 0.25)
-            pairs_weight (float): Weight for common pairs analysis (default 0.25)
+            triplets_weight (float): Weight for common triplets analysis (default 0.25)
             historical_influence (float): Weight given to historical patterns vs. recent (default 0.3)
             
         Returns:
@@ -123,39 +124,43 @@ class PredictionGenerator:
         candidates = sorted(base_scores.items(), key=lambda x: x[1], reverse=True)
         candidate_numbers = [num for num, _ in candidates[:predict_count*2]]  # Get more candidates than needed
         
-        # Component 4: Common Pairs Analysis (using both recent and historical)
-        recent_common_pairs = windowed_analysis.find_common_pairs(top_n=50)
-        historical_common_pairs = self.analysis.find_common_pairs(top_n=50)
+        # Component 4: Common Triplets Analysis (using both recent and historical)
+        # Find triplets instead of pairs
+        recent_common_triplets = self.find_common_triplets(windowed_analysis.draws, top_n=30)
+        historical_common_triplets = self.find_common_triplets(self.analysis.draws, top_n=30)
         
-        # Combine pairs with appropriate weights
-        combined_pairs = {}
-        for pair, freq in recent_common_pairs:
-            combined_pairs[pair] = freq * (1 - historical_influence)
+        # Combine triplets with appropriate weights
+        combined_triplets = {}
+        for triplet, freq in recent_common_triplets:
+            combined_triplets[triplet] = freq * (1 - historical_influence)
         
-        for pair, freq in historical_common_pairs:
-            if pair in combined_pairs:
-                combined_pairs[pair] += freq * historical_influence
+        for triplet, freq in historical_common_triplets:
+            if triplet in combined_triplets:
+                combined_triplets[triplet] += freq * historical_influence
             else:
-                combined_pairs[pair] = freq * historical_influence
+                combined_triplets[triplet] = freq * historical_influence
         
-        # Sort combined pairs
-        sorted_pairs = sorted(combined_pairs.items(), key=lambda x: x[1], reverse=True)
+        # Sort combined triplets
+        sorted_triplets = sorted(combined_triplets.items(), key=lambda x: x[1], reverse=True)
         
-        # Store the top common pairs for display later
-        top_pairs = sorted_pairs[:10]
+        # Store the top common triplets for display later
+        top_triplets = sorted_triplets[:10]
         
-        # Final scores with pair boosts
+        # Final scores with triplet boosts
         final_scores = base_scores.copy()
         
-        # Boost scores for numbers that appear in common pairs with high-scoring candidates
+        # Boost scores for numbers that appear in common triplets with high-scoring candidates
+        # First, check all possible triplets among candidates
         for i, num1 in enumerate(candidate_numbers):
-            for num2 in candidate_numbers[i+1:]:
-                pair = tuple(sorted((num1, num2)))
-                if pair in combined_pairs:
-                    pair_strength = combined_pairs[pair] / max(combined_pairs.values()) if combined_pairs else 0
-                    # Boost both numbers in the pair
-                    final_scores[num1] += (pairs_weight / 10) * pair_strength
-                    final_scores[num2] += (pairs_weight / 10) * pair_strength
+            for j, num2 in enumerate(candidate_numbers[i+1:], i+1):
+                for num3 in candidate_numbers[j+1:]:
+                    triplet = tuple(sorted((num1, num2, num3)))
+                    if triplet in combined_triplets:
+                        triplet_strength = combined_triplets[triplet] / max(combined_triplets.values()) if combined_triplets else 0
+                        # Boost all three numbers in the triplet
+                        final_scores[num1] += (triplets_weight / 15) * triplet_strength
+                        final_scores[num2] += (triplets_weight / 15) * triplet_strength
+                        final_scores[num3] += (triplets_weight / 15) * triplet_strength
         
         # Select final numbers
         sorted_final = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
@@ -185,37 +190,50 @@ class PredictionGenerator:
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
         
-        # Add two types of common pairs information:
-        # 1. Pairs that exist within the final prediction
-        common_pairs_in_prediction = []
+        # Add two types of common triplets information:
+        # 1. Triplets that exist within the final prediction
+        common_triplets_in_prediction = []
         for i, num1 in enumerate(final_numbers):
-            for num2 in final_numbers[i+1:]:
-                pair = tuple(sorted((num1, num2)))
-                if pair in combined_pairs:
-                    common_pairs_in_prediction.append({
-                        'pair': pair,
-                        'frequency': combined_pairs[pair]
-                    })
+            for j, num2 in enumerate(final_numbers[i+1:], i+1):
+                for num3 in final_numbers[j+1:]:
+                    triplet = tuple(sorted((num1, num2, num3)))
+                    if triplet in combined_triplets:
+                        common_triplets_in_prediction.append({
+                            'triplet': triplet,
+                            'frequency': combined_triplets[triplet]
+                        })
         
-        # 2. Overall most common pairs from the analysis
-        top_common_pairs = [
+        # 2. Overall most common triplets from the analysis
+        top_common_triplets = [
             {
-                'pair': pair,
+                'triplet': triplet,
                 'frequency': freq,
-                'in_prediction': any(num in final_numbers for num in pair)
+                'in_prediction': all(num in final_numbers for num in triplet)
             }
-            for pair, freq in top_pairs
+            for triplet, freq in top_triplets
         ]
         
-        prediction['common_pairs'] = sorted(
-            common_pairs_in_prediction, 
+        prediction['common_triplets'] = sorted(
+            common_triplets_in_prediction, 
             key=lambda x: x['frequency'], 
             reverse=True
-        )[:10]  # Top 10 common pairs in our prediction
+        )[:10]  # Top 10 common triplets in our prediction
         
-        prediction['top_common_pairs'] = top_common_pairs
+        prediction['top_common_triplets'] = top_common_triplets
         
         return prediction
+
+    def find_common_triplets(self, draws, top_n=30):
+        """Find most common triplets of numbers"""
+        triplets = Counter()
+        for _, numbers in draws:
+            # Get all possible combinations of 3 numbers from this draw
+            triplets.update(combinations(sorted(numbers), 3))
+        
+        # Return the most common triplets
+        common_triplets = triplets.most_common(top_n)
+        print(f"DEBUG: Found {len(common_triplets)} common triplets")
+        return common_triplets
 
     def display_prediction(self, prediction):
         """Display prediction results in a user-friendly format"""
@@ -246,24 +264,26 @@ class PredictionGenerator:
             idx = prediction['numbers'].index(num)
             print(f"    {num} ({prediction['confidence_scores'][idx]}%)")
         
-        print("\n" + "="*20 + " COMMON PAIRS IN PREDICTION " + "="*20)
-        if prediction['common_pairs']:
-            for i, pair_info in enumerate(prediction['common_pairs'][:5]):
-                print(f"    {pair_info['pair'][0]} and {pair_info['pair'][1]} (Appears together {int(pair_info['frequency'])} times)")
+        # Display common triplets instead of pairs
+        print("\n" + "="*20 + " COMMON TRIPLETS IN PREDICTION " + "="*20)
+        if 'common_triplets' in prediction and prediction['common_triplets']:
+            for i, triplet_info in enumerate(prediction['common_triplets'][:5]):
+                print(f"    {triplet_info['triplet'][0]}, {triplet_info['triplet'][1]}, and {triplet_info['triplet'][2]} (Appears together {int(triplet_info['frequency'])} times)")
         else:
-            print("    No common pairs found among predicted numbers")
+            print("    No common triplets found among predicted numbers")
         
-        if 'top_common_pairs' in prediction:
-            print("\n" + "="*20 + " TOP COMMON PAIRS OVERALL " + "="*20)
-            for i, pair_info in enumerate(prediction['top_common_pairs'][:5]):
-                status = "✓" if pair_info['in_prediction'] else " "
-                print(f"    {status} {pair_info['pair'][0]} and {pair_info['pair'][1]} (Appears together {int(pair_info['frequency'])} times)")
+        if 'top_common_triplets' in prediction:
+            print("\n" + "="*20 + " TOP COMMON TRIPLETS OVERALL " + "="*20)
+            for i, triplet_info in enumerate(prediction['top_common_triplets'][:5]):
+                status = "✓" if triplet_info['in_prediction'] else " "
+                print(f"    {status} {triplet_info['triplet'][0]}, {triplet_info['triplet'][1]}, and {triplet_info['triplet'][2]} (Appears together {int(triplet_info['frequency'])} times)")
         
         print("\n" + "="*20 + " ALL PREDICTED NUMBERS " + "="*20)
         formatted_numbers = ", ".join([str(num).rjust(2) for num in prediction['numbers']])
         print(f"    {formatted_numbers}")
         print("\n" + "="*50)
 
+    # The other methods remain the same
     def evaluate_prediction(self, prediction, actual_draw):
         """Evaluate the accuracy of a prediction against actual draw numbers"""
         prediction_set = set(prediction['numbers'])
@@ -363,38 +383,132 @@ class PredictionGenerator:
 
 def main():
     """Main function to run the prediction generator"""
-    parser = argparse.ArgumentParser(description='Generate Keno number predictions')
-    parser.add_argument('--save', action='store_true', help='Save prediction to file')
-    parser.add_argument('--evaluate', action='store_true', help='Evaluate against most recent draw')
-    args = parser.parse_args()
-    
-    # Initialize prediction generator
-    predictor = PredictionGenerator()
-    
-    # Generate prediction with configurable parameters - adjust values as needed
-    prediction = predictor.generate_prediction(
-        predict_count=15,          # Number of numbers to predict
-        recent_window=150,         # Focus on most recent 150 draws (increased from 50)
-        freq_weight=0.25,          # Weight for frequency analysis
-        hot_cold_weight=0.25,      # Weight for hot/cold analysis
-        gap_weight=0.25,           # Weight for gap analysis
-        pairs_weight=0.25,         # Weight for common pairs analysis
-        historical_influence=0.1   # 10% weight to overall historical patterns
-    )
-    
-    # Display prediction
-    predictor.display_prediction(prediction)
-    
-    # Save prediction
-    predictor.save_prediction(prediction)
-    
-    # Always evaluate prediction
-    latest_draw = predictor.get_latest_draw()
-    if latest_draw:
-        evaluation = predictor.evaluate_prediction(prediction, latest_draw)
-        predictor.display_evaluation(evaluation)
-    else:
-        print("No historical draws available for evaluation")
+    try:
+        print("Starting prediction generation...")
+        parser = argparse.ArgumentParser(description='Generate Keno number predictions')
+        parser.add_argument('--save', action='store_true', help='Save prediction to file')
+        parser.add_argument('--evaluate', action='store_true', help='Evaluate against most recent draw')
+        args = parser.parse_args()
+        
+        # Initialize prediction generator
+        print("Initializing prediction generator...")
+        predictor = PredictionGenerator()
+        
+        # Generate prediction with configurable parameters
+        print("Generating prediction with triplet analysis...")
+        prediction = predictor.generate_prediction(
+            predict_count=15,          # Number of numbers to predict
+            recent_window=150,         # Focus on most recent 150 draws
+            freq_weight=0.25,          # Weight for frequency analysis
+            hot_cold_weight=0.25,      # Weight for hot/cold analysis
+            gap_weight=0.25,           # Weight for gap analysis
+            triplets_weight=0.25,      # Weight for common triplets analysis
+            historical_influence=0.1   # 10% weight to overall historical patterns
+        )
+        
+        # Display prediction
+        print("Displaying prediction...")
+        predictor.display_prediction(prediction)
+        
+        # Save prediction with timestamp info
+        print("Preparing to save prediction...")
+        predictions_dir = PATHS['PREDICTIONS_DIR']
+        
+        # Ensure the predictions directory exists
+        print(f"Checking if directory exists: {predictions_dir}")
+        if not os.path.exists(predictions_dir):
+            print(f"Creating directory: {predictions_dir}")
+            os.makedirs(predictions_dir, exist_ok=True)
+        
+        timestamp = datetime.now()
+        
+        # Get current time and format it for filename
+        time_str = timestamp.strftime('%Y%m%d_%H%M%S')
+        filename = os.path.join(predictions_dir, f"prediction_{time_str}.json")
+        print(f"Will save prediction to: {filename}")
+        
+        # Add target draw time info to the prediction
+        # Assuming draws are every 5 minutes (00, 05, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55)
+        current_minute = timestamp.minute
+        target_minute = ((current_minute // 5) + 1) * 5  # Next 5-minute interval
+        
+        if target_minute >= 60:
+            target_hour = (timestamp.hour + 1) % 24
+            target_minute = 0
+        else:
+            target_hour = timestamp.hour
+        
+        # Create target timestamp
+        target_time = timestamp.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        target_time_str = target_time.strftime('%H:%M %d-%m-%Y')
+        
+        # Add target draw time to prediction
+        prediction['target_draw_time'] = target_time_str
+        prediction['prediction_made_at'] = timestamp.strftime('%H:%M %d-%m-%Y')
+        
+        # Save the prediction
+        print("Saving prediction...")
+        save_result = predictor.save_prediction(prediction, filename)
+        print(f"Save result: {'Success' if save_result else 'Failed'}")
+        
+        # Evaluate the previous prediction against the latest draw
+        print("Getting latest draw for evaluation...")
+        latest_draw = predictor.get_latest_draw()
+        
+        if latest_draw:
+            print(f"Latest draw found: {latest_draw}")
+            
+            # Check if predictions directory exists
+            if os.path.exists(predictions_dir):
+                print("Looking for previous prediction files...")
+                
+                # Find prediction files (excluding the one we just created)
+                prediction_files = [f for f in os.listdir(predictions_dir) 
+                                  if f.startswith('prediction_') and f.endswith('.json')
+                                  and f != os.path.basename(filename)]
+                
+                print(f"Found {len(prediction_files)} previous prediction files")
+                
+                if prediction_files:
+                    # Sort by timestamp, get the most recent
+                    prediction_files.sort(reverse=True)
+                    prev_prediction_file = os.path.join(predictions_dir, prediction_files[0])
+                    print(f"Using most recent prediction file: {prev_prediction_file}")
+                    
+                    try:
+                        # Load the previous prediction
+                        print("Loading previous prediction...")
+                        with open(prev_prediction_file, 'r') as f:
+                            import json
+                            prev_prediction = json.load(f)
+                        
+                        # Get the latest draw date string 
+                        draw_time_str = predictor.analysis.draws[-1][0]
+                        print(f"\nEvaluating prediction made for: {prev_prediction.get('target_draw_time', 'unknown time')}")
+                        print(f"Against actual draw at: {draw_time_str}")
+                        
+                        # Evaluate and display
+                        print("Evaluating prediction...")
+                        evaluation = predictor.evaluate_prediction(prev_prediction, latest_draw)
+                        predictor.display_evaluation(evaluation)
+                        
+                    except Exception as e:
+                        print(f"Error evaluating previous prediction: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print("\nNo previous predictions found to evaluate")
+            else:
+                print(f"Predictions directory does not exist: {predictions_dir}")
+        else:
+            print("No historical draws available for evaluation")
+        
+        print("Prediction generator completed successfully!")
+        
+    except Exception as e:
+        print(f"ERROR in main function: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()

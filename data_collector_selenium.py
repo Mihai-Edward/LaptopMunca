@@ -145,7 +145,7 @@ class KinoDataCollector:
             self.collection_status['last_error'] = str(e)
             return False
 
-    def fetch_latest_draws(self, num_draws=1, delay=1, max_pages=5):
+    def fetch_latest_draws(self, num_draws=2, delay=1, max_pages=5):
         """
         Fetch latest lottery draws by navigating through paginated results tables.
         
