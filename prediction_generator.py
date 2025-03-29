@@ -1,4 +1,3 @@
-
 import os
 import sys
 import argparse
@@ -17,13 +16,22 @@ class PredictionGenerator:
         """Initialize with optional DataAnalysis object"""
         self.analysis = data_analysis if data_analysis else DataAnalysis()
     
-    def generate_prediction(self, predict_count=15):
+    def generate_prediction(self, predict_count=15, recent_window=150, 
+                           freq_weight=0.25, hot_cold_weight=0.25,
+                           gap_weight=0.25, pairs_weight=0.25,
+                           historical_influence=0.3):
         """
         Generate enhanced prediction using multiple analysis methods
         with tiered confidence levels and pair analysis
         
         Args:
             predict_count (int): Number of numbers to predict (default 15)
+            recent_window (int): Number of recent draws to focus on (default 150)
+            freq_weight (float): Weight for frequency analysis (default 0.25)
+            hot_cold_weight (float): Weight for hot/cold analysis (default 0.25)
+            gap_weight (float): Weight for gap analysis (default 0.25)
+            pairs_weight (float): Weight for common pairs analysis (default 0.25)
+            historical_influence (float): Weight given to historical patterns vs. recent (default 0.3)
             
         Returns:
             dict: Prediction results with confidence tiers
@@ -31,54 +39,123 @@ class PredictionGenerator:
         # Initialize base scores
         base_scores = {num: 0 for num in range(1, 81)}
         
-        # Component 1: Frequency Analysis (25%)
-        frequency = self.analysis.count_frequency()
-        max_freq = max(frequency.values()) if frequency else 1
-        for num, freq in frequency.items():
-            base_scores[num] += (freq / max_freq) * 0.25
+        # Get recent draws for windowing
+        recent_draws = self.analysis.draws[-recent_window:] if len(self.analysis.draws) >= recent_window else self.analysis.draws
         
-        # Component 2: Hot/Cold Analysis (25%)
-        hot_cold = self.analysis.hot_and_cold_numbers(window_size=30)
+        # Print debug info about window size
+        print(f"DEBUG: Using {len(recent_draws)} recent draws out of {len(self.analysis.draws)} total draws")
+        
+        # Create a windowed analysis object that only uses recent draws
+        windowed_analysis = DataAnalysis(recent_draws, debug=False)
+        
+        # 1. RECENT PATTERNS ANALYSIS (70% weight by default)
+        # --------------------------------------------------
+        
+        # Component 1: Frequency Analysis
+        recent_frequency = windowed_analysis.count_frequency()
+        max_recent_freq = max(recent_frequency.values()) if recent_frequency else 1
+        
+        for num, freq in recent_frequency.items():
+            base_scores[num] += ((freq / max_recent_freq) * freq_weight) * (1 - historical_influence)
+        
+        # Component 2: Hot/Cold Analysis - NO ADDITIONAL WINDOW
+        recent_hot_cold = windowed_analysis.hot_and_cold_numbers()  # Use the entire windowed dataset
         # Get trending numbers with their scores
-        trending_up = hot_cold['trending_up']
-        trending_numbers = {num: data['trend'] for num, data in trending_up}
-        max_trend = max(trending_numbers.values()) if trending_numbers else 1
-        for num, trend in trending_numbers.items():
-            # Normalize and add to score
-            base_scores[num] += (trend / max_trend) * 0.25
+        recent_trending_up = recent_hot_cold['trending_up']
+        recent_trending_numbers = {num: data['trend'] for num, data in recent_trending_up}
+        max_recent_trend = max(recent_trending_numbers.values()) if recent_trending_numbers else 1
         
-        # Component 3: Gap Analysis (25%)
-        gaps = self.analysis.analyze_gaps()
-        for num, gap_data in gaps.items():
+        for num, trend in recent_trending_numbers.items():
+            # Normalize and add to score
+            base_scores[num] += ((trend / max_recent_trend) * hot_cold_weight) * (1 - historical_influence)
+        
+        # Component 3: Gap Analysis
+        recent_gaps = windowed_analysis.analyze_gaps()
+        for num, gap_data in recent_gaps.items():
+            current_gap = gap_data['current_gap']
+            avg_gap = gap_data['avg_gap']
+            
+            if avg_gap > 0:
+                # Treat overdue numbers neutrally and score based on readiness
+                if current_gap >= avg_gap:
+                    # Number is overdue or exactly on time - neutral score
+                    gap_score = 0.5 * gap_weight
+                else:
+                    # Number has appeared recently - score based on "readiness" to appear again
+                    readiness = 1 - (current_gap / avg_gap)  # Readiness is inversely proportional to gap
+                    gap_score = readiness * gap_weight
+                
+                base_scores[num] += gap_score * (1 - historical_influence)
+        
+        # 2. HISTORICAL PATTERNS ANALYSIS (30% weight by default)
+        # ------------------------------------------------------
+        
+        # Component 1: Overall Frequency Analysis
+        historical_frequency = self.analysis.count_frequency()
+        max_hist_freq = max(historical_frequency.values()) if historical_frequency else 1
+        
+        for num, freq in historical_frequency.items():
+            base_scores[num] += ((freq / max_hist_freq) * freq_weight) * historical_influence
+        
+        # Component 2: Overall Hot/Cold Analysis - NO ADDITIONAL WINDOW
+        historical_hot_cold = self.analysis.hot_and_cold_numbers()  # Use the entire historical dataset
+        # Get trending numbers with their scores
+        historical_trending_up = historical_hot_cold['trending_up']
+        historical_trending_numbers = {num: data['trend'] for num, data in historical_trending_up}
+        max_hist_trend = max(historical_trending_numbers.values()) if historical_trending_numbers else 1
+        
+        for num, trend in historical_trending_numbers.items():
+            # Normalize and add to score
+            base_scores[num] += ((trend / max_hist_trend) * hot_cold_weight) * historical_influence
+        
+        # Component 3: Overall Gap Analysis
+        historical_gaps = self.analysis.analyze_gaps()
+        for num, gap_data in historical_gaps.items():
             current_gap = gap_data['current_gap']
             avg_gap = gap_data['avg_gap']
             # Give higher scores to numbers more overdue than their average
             if avg_gap > 0:
-                gap_ratio = current_gap / avg_gap
-                # Cap the gap score to avoid extreme values
-                gap_score = min(1.0, gap_ratio) * 0.25
-                base_scores[num] += gap_score
+                # Improved gap ratio calculation with cap to prevent extreme values
+                gap_ratio = min(2.0, current_gap / avg_gap)
+                base_scores[num] += ((gap_ratio / 2.0) * gap_weight) * historical_influence
         
         # Get initial candidate numbers based on base scores
         candidates = sorted(base_scores.items(), key=lambda x: x[1], reverse=True)
         candidate_numbers = [num for num, _ in candidates[:predict_count*2]]  # Get more candidates than needed
         
-        # Component 4: Common Pairs Analysis (25%)
-        common_pairs = self.analysis.find_common_pairs(top_n=50)
-        pairs = {pair: freq for pair, freq in common_pairs}
+        # Component 4: Common Pairs Analysis (using both recent and historical)
+        recent_common_pairs = windowed_analysis.find_common_pairs(top_n=50)
+        historical_common_pairs = self.analysis.find_common_pairs(top_n=50)
         
-        # Create final scores with pair boosts
+        # Combine pairs with appropriate weights
+        combined_pairs = {}
+        for pair, freq in recent_common_pairs:
+            combined_pairs[pair] = freq * (1 - historical_influence)
+        
+        for pair, freq in historical_common_pairs:
+            if pair in combined_pairs:
+                combined_pairs[pair] += freq * historical_influence
+            else:
+                combined_pairs[pair] = freq * historical_influence
+        
+        # Sort combined pairs
+        sorted_pairs = sorted(combined_pairs.items(), key=lambda x: x[1], reverse=True)
+        
+        # Store the top common pairs for display later
+        top_pairs = sorted_pairs[:10]
+        
+        # Final scores with pair boosts
         final_scores = base_scores.copy()
         
         # Boost scores for numbers that appear in common pairs with high-scoring candidates
         for i, num1 in enumerate(candidate_numbers):
             for num2 in candidate_numbers[i+1:]:
                 pair = tuple(sorted((num1, num2)))
-                if pair in pairs:
-                    pair_strength = pairs[pair] / max(pairs.values()) if pairs else 0
+                if pair in combined_pairs:
+                    pair_strength = combined_pairs[pair] / max(combined_pairs.values()) if combined_pairs else 0
                     # Boost both numbers in the pair
-                    final_scores[num1] += 0.025 * pair_strength
-                    final_scores[num2] += 0.025 * pair_strength
+                    final_scores[num1] += (pairs_weight / 10) * pair_strength
+                    final_scores[num2] += (pairs_weight / 10) * pair_strength
         
         # Select final numbers
         sorted_final = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
@@ -108,22 +185,35 @@ class PredictionGenerator:
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
         
-        # Add common pair information
+        # Add two types of common pairs information:
+        # 1. Pairs that exist within the final prediction
         common_pairs_in_prediction = []
         for i, num1 in enumerate(final_numbers):
             for num2 in final_numbers[i+1:]:
                 pair = tuple(sorted((num1, num2)))
-                if pair in pairs:
+                if pair in combined_pairs:
                     common_pairs_in_prediction.append({
                         'pair': pair,
-                        'frequency': pairs[pair]
+                        'frequency': combined_pairs[pair]
                     })
+        
+        # 2. Overall most common pairs from the analysis
+        top_common_pairs = [
+            {
+                'pair': pair,
+                'frequency': freq,
+                'in_prediction': any(num in final_numbers for num in pair)
+            }
+            for pair, freq in top_pairs
+        ]
         
         prediction['common_pairs'] = sorted(
             common_pairs_in_prediction, 
             key=lambda x: x['frequency'], 
             reverse=True
         )[:10]  # Top 10 common pairs in our prediction
+        
+        prediction['top_common_pairs'] = top_common_pairs
         
         return prediction
 
@@ -156,9 +246,18 @@ class PredictionGenerator:
             idx = prediction['numbers'].index(num)
             print(f"    {num} ({prediction['confidence_scores'][idx]}%)")
         
-        print("\n" + "="*20 + " COMMON PAIRS DETECTED " + "="*20)
-        for i, pair_info in enumerate(prediction['common_pairs'][:5]):
-            print(f"    {pair_info['pair'][0]} and {pair_info['pair'][1]} (Appears together {pair_info['frequency']} times)")
+        print("\n" + "="*20 + " COMMON PAIRS IN PREDICTION " + "="*20)
+        if prediction['common_pairs']:
+            for i, pair_info in enumerate(prediction['common_pairs'][:5]):
+                print(f"    {pair_info['pair'][0]} and {pair_info['pair'][1]} (Appears together {int(pair_info['frequency'])} times)")
+        else:
+            print("    No common pairs found among predicted numbers")
+        
+        if 'top_common_pairs' in prediction:
+            print("\n" + "="*20 + " TOP COMMON PAIRS OVERALL " + "="*20)
+            for i, pair_info in enumerate(prediction['top_common_pairs'][:5]):
+                status = "✓" if pair_info['in_prediction'] else " "
+                print(f"    {status} {pair_info['pair'][0]} and {pair_info['pair'][1]} (Appears together {int(pair_info['frequency'])} times)")
         
         print("\n" + "="*20 + " ALL PREDICTED NUMBERS " + "="*20)
         formatted_numbers = ", ".join([str(num).rjust(2) for num in prediction['numbers']])
@@ -170,6 +269,9 @@ class PredictionGenerator:
         prediction_set = set(prediction['numbers'])
         actual_set = set(actual_draw)
         correct_numbers = prediction_set.intersection(actual_set)
+        
+        # Debug the actual draw
+        print(f"DEBUG: Evaluating against draw: {sorted(actual_draw)}")
         
         # Overall accuracy
         accuracy = len(correct_numbers) / len(prediction['numbers'])
@@ -211,7 +313,7 @@ class PredictionGenerator:
         # Correct numbers
         print("\n" + "="*20 + " CORRECT PREDICTIONS " + "="*20)
         correct_str = ", ".join([str(num).rjust(2) for num in sorted(evaluation['correct_numbers'])])
-        print(f"    {correct_str}")
+        print(f"    {correct_str}" if correct_str else "    None")
         
         # Overall metrics
         print("\n" + "="*20 + " PERFORMANCE METRICS " + "="*20)
@@ -269,19 +371,24 @@ def main():
     # Initialize prediction generator
     predictor = PredictionGenerator()
     
-    # Generate prediction
-    prediction = predictor.generate_prediction()
+    # Generate prediction with configurable parameters - adjust values as needed
+    prediction = predictor.generate_prediction(
+        predict_count=15,          # Number of numbers to predict
+        recent_window=150,         # Focus on most recent 150 draws (increased from 50)
+        freq_weight=0.25,          # Weight for frequency analysis
+        hot_cold_weight=0.25,      # Weight for hot/cold analysis
+        gap_weight=0.25,           # Weight for gap analysis
+        pairs_weight=0.25,         # Weight for common pairs analysis
+        historical_influence=0.1   # 10% weight to overall historical patterns
+    )
     
     # Display prediction
     predictor.display_prediction(prediction)
     
     # Save prediction
-    
     predictor.save_prediction(prediction)
     
-    
-    # Evaluate prediction if requested
-    # Always evaluate prediction (not conditional on args.evaluate)
+    # Always evaluate prediction
     latest_draw = predictor.get_latest_draw()
     if latest_draw:
         evaluation = predictor.evaluate_prediction(prediction, latest_draw)
