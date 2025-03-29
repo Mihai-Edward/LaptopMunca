@@ -275,19 +275,19 @@ def main():
     # Display prediction
     predictor.display_prediction(prediction)
     
-    # Save prediction if requested
-    if args.save:
-        predictor.save_prediction(prediction)
+    # Save prediction
+    
+    predictor.save_prediction(prediction)
+    
     
     # Evaluate prediction if requested
-    if args.evaluate:
-        latest_draw = predictor.get_latest_draw()
-        if latest_draw:
-            evaluation = predictor.evaluate_prediction(prediction, latest_draw)
-            predictor.display_evaluation(evaluation)
-        else:
-            print("No historical draws available for evaluation")
-
+    # Always evaluate prediction (not conditional on args.evaluate)
+    latest_draw = predictor.get_latest_draw()
+    if latest_draw:
+        evaluation = predictor.evaluate_prediction(prediction, latest_draw)
+        predictor.display_evaluation(evaluation)
+    else:
+        print("No historical draws available for evaluation")
 
 if __name__ == "__main__":
     main()
