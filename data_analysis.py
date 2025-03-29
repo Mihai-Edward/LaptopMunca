@@ -168,9 +168,6 @@ class DataAnalysis:
         print(f"DEBUG: Retrieved top {len(most_common_numbers)} numbers")
         return most_common_numbers
 
-    def suggest_numbers(self, top_n=20):
-        """Suggest numbers based on frequency analysis"""
-        return self.get_top_numbers(top_n)
 
     def find_common_pairs(self, top_n=30):
         """Find most common pairs of numbers"""
@@ -181,16 +178,6 @@ class DataAnalysis:
         common_pairs = pairs.most_common(top_n)
         print(f"DEBUG: Found {len(common_pairs)} common pairs")
         return common_pairs
-
-    def find_consecutive_numbers(self, top_n=20):
-        """Find most common consecutive number pairs"""
-        consecutive_pairs = Counter()
-        for draw in self.draws:
-            numbers = sorted(draw[1])
-            for i in range(len(numbers) - 1):
-                if numbers[i] + 1 == numbers[i + 1]:
-                    consecutive_pairs.update([(numbers[i], numbers[i + 1])])
-        return consecutive_pairs.most_common(top_n)
 
     def number_range_analysis(self):
         """Analyze number distribution across ranges"""
@@ -215,7 +202,7 @@ class DataAnalysis:
         print(f"DEBUG: Range analysis completed. Distribution: {ranges}")
         return ranges
     
-    def hot_and_cold_numbers(self, top_n=20, window_size=24):
+    def hot_and_cold_numbers(self, top_n=10, window_size=24):
         """Enhanced hot/cold analysis with trending detection"""
         # Overall hot/cold
         frequency = self.count_frequency()
@@ -345,32 +332,6 @@ class DataAnalysis:
             }
         }
 
-    def cluster_analysis(self, n_clusters=3):
-        """Cluster numbers based on their frequency"""
-        try:
-            frequency = self.count_frequency()
-            numbers = list(frequency.keys())
-            frequencies = list(frequency.values())
-            
-            if len(numbers) < n_clusters:
-                print(f"WARNING: Not enough unique numbers ({len(numbers)}) for {n_clusters} clusters")
-                n_clusters = min(len(numbers), 2)
-            
-            X = np.array(frequencies).reshape(-1, 1)
-            kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init=10).fit(X)
-            
-            clusters = {i: [] for i in range(n_clusters)}
-            for number, label in zip(numbers, kmeans.labels_):
-                clusters[label].append(number)
-                
-            print(f"DEBUG: Created {len(clusters)} clusters")
-            return clusters
-            
-        except Exception as e:
-            print(f"ERROR in cluster_analysis: {e}")
-            traceback.print_exc()
-            return {0: list(range(1, 81))}
-
     def get_analysis_results(self):
         """Get all analysis results in one call"""
         try:
@@ -399,6 +360,10 @@ class DataAnalysis:
         try:
             ensure_directories()
             
+            if not os.path.exists(PATHS['ANALYSIS_RESULTS']):
+                with pd.ExcelWriter(PATHS['ANALYSIS_RESULTS'], engine='openpyxl') as writer:
+                    pass  # Create an empty Excel file
+
             if os.path.dirname(filename):
                 os.makedirs(os.path.dirname(filename), exist_ok=True)
     
@@ -1200,38 +1165,6 @@ class DataAnalysis:
             traceback.print_exc()
             return None
 
-    def check_prediction_health(self):
-        """Monitor prediction system health"""
-        health_status = {
-            'needs_attention': False,
-            'reasons': []
-        }
-        
-        try:
-            # 1. Check pattern stability
-            validation_results = self.validate_patterns()
-            if validation_results:
-                stability = validation_results['validation_summary']['average_hot_numbers_stability']
-                if stability < 50:  # Less than 50% stability
-                    health_status['needs_attention'] = True
-                    health_status['reasons'].append(f"Low pattern stability: {stability}%")
-            
-            # 2. Check recent accuracy
-            recent_performance = self.analyze_recent_performance()
-            if recent_performance['average_accuracy'] < 15:  # Less than 15% accuracy
-                health_status['needs_attention'] = True
-                health_status['reasons'].append("Low prediction accuracy")
-            
-            # 3. Check pattern changes
-            if self.check_significant_pattern_changes():
-                health_status['needs_attention'] = True
-                health_status['reasons'].append("Significant pattern changes detected")
-                
-            return health_status
-            
-        except Exception as e:
-            print(f"Error in health check: {e}")
-            return {'needs_attention': True, 'reasons': ['Error in health monitoring']}
 
     def track_prediction_performance(self, prediction, actual_draw):
         """Track prediction performance"""
@@ -1400,146 +1333,6 @@ class DataAnalysis:
             print(f"Error checking pattern changes: {e}")
             return False
 
-    def analyze_method_success(self, predictions_df):
-        """Analyze success rates of different prediction methods"""
-        method_success = {
-            'pattern_based': 0.0,
-            'frequency_based': 0.0,
-            'gap_based': 0.0,
-            'combination_based': 0.0
-        }
-        
-        try:
-            # Calculate each method's success rate from predictions_df
-            for _, prediction in predictions_df.iterrows():
-                predicted = prediction['predicted_numbers']
-                actual = prediction['actual_numbers']
-                
-                # Calculate hit rates for each method
-                pattern_hits = len(set(predicted) & set(actual)) / len(predicted)
-                method_success['pattern_based'] += pattern_hits
-                
-                # Get frequency-based hits
-                freq_numbers = self.get_top_numbers(15)  # Same length as predictions
-                freq_hits = len(set(freq_numbers) & set(actual)) / len(freq_numbers)
-                method_success['frequency_based'] += freq_hits
-                
-                # Get gap-based hits
-                gaps = self.analyze_gaps()
-                gap_numbers = sorted(gaps.items(), key=lambda x: x[1]['current_gap'], reverse=True)[:15]
-                gap_hits = len(set(n[0] for n in gap_numbers) & set(actual)) / 15
-                method_success['gap_based'] += gap_hits
-                
-                # Get combination-based hits
-                combos = self.analyze_combinations()['most_common'][:5]
-                combo_numbers = {num for combo in combos for num in combo['combination']}
-                combo_numbers = list(combo_numbers)[:15]  # Take top 15
-                combo_hits = len(set(combo_numbers) & set(actual)) / len(combo_numbers)
-                method_success['combination_based'] += combo_hits
-                
-            # Average the success rates
-            num_predictions = len(predictions_df)
-            for method in method_success:
-                method_success[method] /= num_predictions
-                
-            return method_success
-            
-        except Exception as e:
-            print(f"Error in analyze_method_success: {e}")
-            return method_success
-
-    def analyze_accuracy_trend(self, predictions_df):
-        """Analyze prediction accuracy trends over time"""
-        try:
-            trend_data = {
-                'is_improving': False,
-                'window_accuracy': [],
-                'overall_trend': 0.0
-            }
-            
-            # Calculate rolling accuracy
-            window_size = 5
-            accuracies = []
-            
-            for i in range(len(predictions_df)):
-                if i < window_size:
-                    continue
-                    
-                window = predictions_df.iloc[i-window_size:i]
-                window_hits = 0
-                window_total = 0
-                
-                for _, prediction in window.iterrows():
-                    predicted = prediction['predicted_numbers']
-                    actual = prediction['actual_numbers']
-                    hits = len(set(predicted) & set(actual))
-                    window_hits += hits
-                    window_total += len(predicted)
-                
-                window_accuracy = window_hits / window_total if window_total > 0 else 0
-                accuracies.append(window_accuracy)
-                
-            if accuracies:
-                # Calculate trend
-                trend_data['is_improving'] = accuracies[-1] > accuracies[0]
-                trend_data['window_accuracy'] = accuracies
-                trend_data['overall_trend'] = (accuracies[-1] - accuracies[0]) / len(accuracies)
-                
-            return trend_data
-            
-        except Exception as e:
-            print(f"Error in analyze_accuracy_trend: {e}")
-            return {'is_improving': False, 'window_accuracy': [], 'overall_trend': 0.0}
-
-    def analyze_prediction_history_files(self):
-        """Analyze prediction history files to learn from past predictions"""
-        print("\n=== Analyzing Prediction History Files ===")
-        
-        try:
-            # Load prediction history
-            prediction_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_history.pkl')
-            evaluation_file = os.path.join(PATHS['PREDICTIONS_DIR'], 'prediction_evaluations.pkl')
-            
-            if not os.path.exists(prediction_file):
-                print("No prediction history file found")
-                return None
-                
-            predictions_df = pd.read_pickle(prediction_file)
-            evaluations_df = pd.read_pickle(evaluation_file) if os.path.exists(evaluation_file) else None
-            
-            print(f"Loaded {len(predictions_df)} previous predictions")
-            
-            # Analyze which methods were most successful
-            method_success = self.analyze_method_success(predictions_df)
-            
-            # Get recent accuracy trends
-            accuracy_trend = self.analyze_accuracy_trend(predictions_df)
-            
-            # Check pattern stability
-            pattern_changes = self.check_significant_pattern_changes()
-            
-            results = {
-                'method_success': method_success,
-                'accuracy_trend': accuracy_trend,
-                'pattern_stability': not pattern_changes,
-                'recommendations': {
-                    'best_method': max(method_success.items(), key=lambda x: x[1])[0] if method_success else None,
-                    'accuracy_improving': accuracy_trend['is_improving'],
-                    'needs_retraining': pattern_changes
-                }
-            }
-            
-            print("\n=== Learning from Previous Predictions ===")
-            print(f"Best performing method: {results['recommendations']['best_method']}")
-            print(f"Accuracy trend: {'Improving' if results['recommendations']['accuracy_improving'] else 'Declining'}")
-            print(f"Retraining needed: {'Yes' if results['recommendations']['needs_retraining'] else 'No'}")
-            
-            return results
-            
-        except Exception as e:
-            print(f"Error analyzing prediction history: {e}")
-            traceback.print_exc()
-            return None
 
 
 if __name__ == "__main__":
@@ -1592,91 +1385,42 @@ if __name__ == "__main__":
         top_numbers = analysis.get_top_numbers(20)
         print(f"Top 20 numbers: {', '.join(map(str, top_numbers))}")
         
-        # Gap analysis showcase
+        # Common pairs analysis
+        common_pairs = analysis.find_common_pairs(30)
+        print("\nMost common pairs:")
+        for pair, freq in common_pairs[:5]:
+            print(f"Pair {pair}: appeared {freq} times")
+            
+        # Hot and cold numbers analysis
+        hot_cold = analysis.hot_and_cold_numbers()
+        print("\nHot/Cold Analysis:")
+        print("Top 5 Hot Numbers:", [num for num, _ in hot_cold['hot_numbers'][:5]])
+        print("Top 5 Cold Numbers:", [num for num, _ in hot_cold['cold_numbers'][:5]])
+        
+        # Gap analysis
         gap_analysis = analysis.analyze_gaps()
-        print("\nSample gap analysis for first 5 numbers:")
+        print("\nGap Analysis for first 5 numbers:")
         for num in range(1, 6):
-            print(f"Number {num}: {gap_analysis[num]}")
+            gap_data = gap_analysis[num]
+            print(f"Number {num}: Average gap {gap_data['avg_gap']}, Current gap {gap_data['current_gap']}")
         
-        # Focused prediction showcase
-        focused_prediction = analysis.get_focused_prediction()
-        if focused_prediction:
-            print("\nFocused Prediction (Top 15 numbers):")
-            for num, conf in zip(focused_prediction['numbers'], 
-                                focused_prediction['confidence']):
-                print(f"Number {num}: {conf:.3f} confidence")
+        # Combinations analysis
+        combinations = analysis.analyze_combinations(group_size=3, top_n=10)
+        print("\nTop 5 Common Combinations:")
+        for combo in combinations['most_common'][:5]:
+            print(f"Combination {combo['combination']}: Frequency {combo['frequency']}")
         
-        # Save results to Excel
-        analysis.save_to_excel(PATHS['ANALYSIS_RESULTS'])
-        print("Analysis complete!")
-        
-        # Deep Pattern Analysis Section
-        print("\n=== Starting Deep Pattern Analysis ===")
-        
-        print("\n1. Analyzing Sequence Patterns...")
-        sequence_analysis = analysis.sequence_pattern_analysis()
-        if sequence_analysis and 'overall_sequences' in sequence_analysis:
-            print(f"Found patterns in {len(sequence_analysis['overall_sequences'])} sequences")
-            if 'statistics' in sequence_analysis and 'most_active_time_slot' in sequence_analysis['statistics']:
-                print(f"Most active time: {sequence_analysis['statistics']['most_active_time_slot']}")
-        
-        print("\n2. Analyzing Skip Patterns...")
+        # Skip patterns analysis
         skip_patterns = analysis.analyze_skip_patterns()
-        if skip_patterns and 'statistics' in skip_patterns:
-            print(f"Average skipped numbers: {skip_patterns['statistics'].get('avg_skipped', 0):.2f}")
-            print(f"Average new numbers: {skip_patterns['statistics'].get('avg_new', 0):.2f}")
+        if 'statistics' in skip_patterns:
+            print(f"\nAverage numbers skipped per draw: {skip_patterns['statistics']['avg_skipped']:.2f}")
+            print(f"Average new numbers per draw: {skip_patterns['statistics']['avg_new']:.2f}")
         
-        print("\n3. Checking System Health...")
-        health_status = analysis.check_prediction_health()
-        if health_status:
-            if health_status.get('needs_attention'):
-                print("System needs attention:")
-                for reason in health_status.get('reasons', []):
-                    print(f"- {reason}")
-            else:
-                print("System health: Good")
+        # Save all analysis results to Excel
+        analysis.save_to_excel(PATHS['ANALYSIS_RESULTS'])
+        print("\nAnalysis results saved to Excel!")
         
-        print("\n4. Validating Patterns...")
-        pattern_validation = analysis.validate_patterns()
-        if pattern_validation and 'validation_summary' in pattern_validation:
-            summary = pattern_validation['validation_summary']
-            print(f"Pattern Stability: {summary.get('predictive_power', 'N/A')}")
-            print(f"Hit Rate vs Random: {summary.get('hit_rate_advantage', 0):.2f}")
-        
-        print("\n=== Deep Analysis Complete ===")
-        
-        # Performance Analysis Section
-        print("\n=== Starting Performance Analysis ===")
-        
-        print("\nAnalyzing recent performance...")
-        recent_performance = analysis.analyze_recent_performance()
-        if recent_performance:
-            print(f"Average Accuracy: {recent_performance['average_accuracy']*100:.2f}%")
-            print(f"Number of Predictions Analyzed: {recent_performance['predictions_analyzed']}")
-        
-        print("\nSaving current focused prediction...")
-        if focused_prediction:
-            saved = analysis.save_focused_predictions(focused_prediction)
-            if saved:
-                print("Successfully saved focused prediction")
-            else:
-                print("Failed to save focused prediction")
-        
-        print("\nChecking prediction performance...")
-        # Get most recent actual draw for comparison
-        if draws_to_analyze and len(draws_to_analyze) > 0:
-            latest_actual_draw = draws_to_analyze[-1][1]  # Get numbers from last draw
-            if focused_prediction and latest_actual_draw:
-                performance_data = analysis.track_prediction_performance(
-                    focused_prediction,
-                    latest_actual_draw
-                )
-                if performance_data:
-                    print(f"Latest Prediction Accuracy: {performance_data['accuracy']*100:.2f}%")
-                    print(f"Correct Numbers: {performance_data['correct_count']}")
-                    print(f"Confidence Correlation: {performance_data['confidence_correlation']:.4f}")
-        
-        print("\n=== Analysis and Performance Tracking Complete ===")
+        print("\n=== Analysis Complete ===")
         
     except Exception as e:
         print(f"Error in data analysis: {e}")
