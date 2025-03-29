@@ -355,238 +355,34 @@ class DataAnalysis:
     def save_to_excel(self, filename=None):
         """Save analysis results to Excel file using config paths"""
         if filename is None:
-           filename = PATHS['ANALYSIS_RESULTS'] 
+            filename = PATHS['ANALYSIS_RESULTS']
         
         try:
             ensure_directories()
             
-            if not os.path.exists(PATHS['ANALYSIS_RESULTS']):
-                with pd.ExcelWriter(PATHS['ANALYSIS_RESULTS'], engine='openpyxl') as writer:
-                    pass  # Create an empty Excel file
+            # Create an empty Excel file if it doesn't exist
+            if not os.path.exists(filename):
+                with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                    pass
 
-            if os.path.dirname(filename):
-                os.makedirs(os.path.dirname(filename), exist_ok=True)
-    
             # Get all analysis results
             frequency = self.count_frequency()
-            common_pairs = self.find_common_pairs()
-            consecutive_numbers = self.find_consecutive_numbers()
-            range_analysis = self.number_range_analysis()
-            
-            # Update to use new hot_and_cold_numbers return format
-            hot_cold_data = self.hot_and_cold_numbers()
-            hot_numbers = hot_cold_data['hot_numbers']
-            cold_numbers = hot_cold_data['cold_numbers']
-            trending_up = hot_cold_data['trending_up']
-            trending_down = hot_cold_data['trending_down']
-            
-            sequence_patterns = self.sequence_pattern_analysis()
-            clusters = self.cluster_analysis()
-    
-            # Create DataFrames
             frequency_df = pd.DataFrame(frequency.items(), columns=["Number", "Frequency"])
-            
-            common_pairs_df = pd.DataFrame(common_pairs, columns=["Pair", "Frequency"])
-            common_pairs_df["Number 1"] = common_pairs_df["Pair"].apply(lambda x: x[0])
-            common_pairs_df["Number 2"] = common_pairs_df["Pair"].apply(lambda x: x[1])
-            common_pairs_df = common_pairs_df.drop(columns=["Pair"])
-    
-            consecutive_numbers_df = pd.DataFrame(consecutive_numbers, columns=["Pair", "Frequency"])
-            consecutive_numbers_df["Number 1"] = consecutive_numbers_df["Pair"].apply(lambda x: x[0])
-            consecutive_numbers_df["Number 2"] = consecutive_numbers_df["Pair"].apply(lambda x: x[1])
-            consecutive_numbers_df = consecutive_numbers_df.drop(columns=["Pair"])
-    
-            range_analysis_df = pd.DataFrame(range_analysis.items(), columns=["Range", "Count"])
-    
-            # Create DataFrames for hot/cold analysis
-            hot_numbers_df = pd.DataFrame(hot_numbers, columns=["Number", "Frequency"])
-            cold_numbers_df = pd.DataFrame(cold_numbers, columns=["Number", "Frequency"])
-            
-            # Add new DataFrames for trending analysis
-            trending_up_df = pd.DataFrame([
-                {"Number": num, "Overall_Freq": data['overall_freq'], 
-                 "Recent_Freq": data['recent_freq'], "Trend": data['trend']} 
-                for num, data in trending_up
-            ])
-            
-            trending_down_df = pd.DataFrame([
-                {"Number": num, "Overall_Freq": data['overall_freq'], 
-                 "Recent_Freq": data['recent_freq'], "Trend": data['trend']} 
-                for num, data in trending_down
-            ])
-    
-            # Create DataFrame for sequence patterns
-            if isinstance(sequence_patterns, dict) and 'overall_sequences' in sequence_patterns:
-                sequence_patterns_df = pd.DataFrame(sequence_patterns['overall_sequences'], 
-                                                 columns=["Sequence", "Frequency"])
-                
-                if 'time_analysis' in sequence_patterns and 'hourly_favorites' in sequence_patterns['time_analysis']:
-                    time_analysis_df = pd.DataFrame([
-                        {
-                            'Hour': hour,
-                            'Most_Common_Sequence': str(data['most_common'][0][0]) if data['most_common'] else 'None',
-                            'Frequency': data['most_common'][0][1] if data['most_common'] else 0,
-                            'Total_Draws': data['total_draws']
-                        }
-                        for hour, data in sequence_patterns['time_analysis']['hourly_favorites'].items()
-                    ])
-            else:
-                sequence_patterns_df = pd.DataFrame(sequence_patterns, columns=["Sequence", "Frequency"])
-                time_analysis_df = pd.DataFrame(columns=['Hour', 'Most_Common_Sequence', 'Frequency', 'Total_Draws'])
-    
-            clusters_df = pd.DataFrame([(k, v) for k, vs in clusters.items() for v in vs], 
-                                     columns=["Cluster", "Number"])
-    
-            # Create DataFrame for gap analysis
-            gap_stats = self.analyze_gaps()
-            gap_analysis_df = pd.DataFrame([
-                {
-                    'Number': num,
-                    'Average_Gap': stats['avg_gap'],
-                    'Max_Gap': stats['max_gap'],
-                    'Min_Gap': stats['min_gap'],
-                    'Current_Gap': stats['current_gap']
-                }
-                for num, stats in gap_stats.items()
-            ])
-    
-            # Get combinations analysis
-            combinations_analysis = self.analyze_combinations(group_size=3, top_n=30)
-            
-            # Create DataFrames for combinations analysis
-            most_common_combinations_df = pd.DataFrame([
-                {
-                    'Combination': str(list(item['combination'])).replace('[', '').replace(']', ''),
-                    'Frequency': item['frequency'],
-                    'Percentage': round(item['percentage'], 2),
-                    'Average_Gap': round(item['average_gap'], 2)
-                }
-                for item in combinations_analysis['most_common']
-            ])
-            
-            least_common_combinations_df = pd.DataFrame([
-                {
-                    'Combination': str(list(item['combination'])).replace('[', '').replace(']', ''),
-                    'Frequency': item['frequency'],
-                    'Percentage': round(item['percentage'], 2),
-                    'Average_Gap': round(item['average_gap'], 2)
-                }
-                for item in combinations_analysis['least_common']
-            ])
-            
-            # Create statistics dataframe for combinations
-            combinations_stats_df = pd.DataFrame([{
-                'Total_Combinations': combinations_analysis['statistics']['total_combinations'],
-                'Total_Occurrences': combinations_analysis['statistics']['total_occurrences'],
-                'Average_Frequency': combinations_analysis['statistics']['avg_frequency'],
-                'Group_Size': combinations_analysis['statistics']['group_size']
-            }])
-    
-            # Add skip patterns analysis
-            skip_analysis = self.analyze_skip_patterns()
-    
-            # Create DataFrames for skip patterns
-            skip_patterns_df = pd.DataFrame([
-                {
-                    'Draw Date': pattern['draw_date'],
-                    'Skipped Count': pattern['skipped_count'],
-                    'New Count': pattern['new_count'],
-                    'Repeat Count': pattern['repeat_count'],
-                    'Skipped Numbers': str(pattern['skipped_numbers']).replace('[', '').replace(']', ''),
-                    'New Numbers': str(pattern['new_numbers']).replace('[', '').replace(']', ''),
-                    'Repeated Numbers': str(pattern['repeated_numbers']).replace('[', '').replace(']', '')
-                }
-                for pattern in skip_analysis['patterns']
-            ])
-    
-            # Create stats DataFrame for skip patterns
-            skip_patterns_stats_df = pd.DataFrame([{
-                'Average Skipped': skip_analysis['statistics']['avg_skipped'],
-                'Average New': skip_analysis['statistics']['avg_new'],
-                'Most Volatile Date': skip_analysis['statistics']['most_volatile_dates'][0]['draw_date'] if skip_analysis['statistics']['most_volatile_dates'] else 'N/A',
-                'Most Stable Date': skip_analysis['statistics']['most_stable_dates'][0]['draw_date'] if skip_analysis['statistics']['most_stable_dates'] else 'N/A'
-            }])
-    
-            # Get statistical significance results
-            significance_results = self.analyze_statistical_significance()
-            if significance_results and 'frequency_tests' in significance_results:
-                significance_df = pd.DataFrame(significance_results['frequency_tests'])
-                pattern_tests_df = pd.DataFrame(significance_results['pattern_tests']) if 'pattern_tests' in significance_results and significance_results['pattern_tests'] else pd.DataFrame()
-                time_tests_df = pd.DataFrame(significance_results['time_tests']) if 'time_tests' in significance_results and significance_results['time_tests'] else pd.DataFrame()
-            else:
-                significance_df = pd.DataFrame()
-                pattern_tests_df = pd.DataFrame()
-                time_tests_df = pd.DataFrame()
-                
-            # Get cross-validation results
-            validation_results = self.validate_patterns()
-            if validation_results and 'fold_results' in validation_results:
-                validation_folds_df = pd.DataFrame(validation_results['fold_results'])
-                validation_summary_df = pd.DataFrame([validation_results['validation_summary']])
-                
-                # Create DataFrame for consistent patterns
-                consistent_hot_numbers_df = pd.DataFrame(
-                    validation_results['pattern_stability']['consistent_hot_numbers']
-                    if 'pattern_stability' in validation_results else []
-                )
-                consistent_pairs_df = pd.DataFrame(
-                    validation_results['pattern_stability']['consistent_pairs']
-                    if 'pattern_stability' in validation_results else []
-                )
-                consistent_trends_df = pd.DataFrame(
-                    validation_results['pattern_stability']['consistent_trends']
-                    if 'pattern_stability' in validation_results else []
-                )
-            else:
-                validation_folds_df = pd.DataFrame()
-                validation_summary_df = pd.DataFrame()
-                consistent_hot_numbers_df = pd.DataFrame()
-                consistent_pairs_df = pd.DataFrame()
-                consistent_trends_df = pd.DataFrame()
-            
-            # Add new sheet for focused predictions
-            focused_predictions = self.get_focused_prediction()
-            if focused_predictions:
-                focused_df = pd.DataFrame({
-                    'Predicted Numbers': [str(focused_predictions['numbers'])],
-                    'Confidence Scores': [str(focused_predictions['confidence'])],
-                    'Timestamp': [focused_predictions['timestamp']]
-                })
-            else:
-                focused_df = pd.DataFrame(columns=['Predicted Numbers', 'Confidence Scores', 'Timestamp'])
-    
-            # Save to Excel with all sheets
-            with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
-                frequency_df.to_excel(writer, sheet_name='Frequency', index=False)
-                common_pairs_df.to_excel(writer, sheet_name='Common Pairs', index=False)
-                consecutive_numbers_df.to_excel(writer, sheet_name='Consecutive Numbers', index=False)
-                range_analysis_df.to_excel(writer, sheet_name='Number Range', index=False)
-                hot_numbers_df.to_excel(writer, sheet_name='Hot Numbers', index=False)
-                cold_numbers_df.to_excel(writer, sheet_name='Cold Numbers', index=False)
-                trending_up_df.to_excel(writer, sheet_name='Trending Up', index=False)
-                trending_down_df.to_excel(writer, sheet_name='Trending Down', index=False)
-                sequence_patterns_df.to_excel(writer, sheet_name='Sequence Patterns', index=False)
-                time_analysis_df.to_excel(writer, sheet_name='Time Analysis', index=False)
-                clusters_df.to_excel(writer, sheet_name='Clusters', index=False)
-                gap_analysis_df.to_excel(writer, sheet_name='Gap Analysis', index=False)
-                most_common_combinations_df.to_excel(writer, sheet_name='Most Common Combinations', index=False)
-                least_common_combinations_df.to_excel(writer, sheet_name='Least Common Combinations', index=False)
-                combinations_stats_df.to_excel(writer, sheet_name='Combinations Statistics', index=False)
-                skip_patterns_df.to_excel(writer, sheet_name='Skip Patterns', index=False)
-                skip_patterns_stats_df.to_excel(writer, sheet_name='Skip Pattern Stats', index=False)
-                significance_df.to_excel(writer, sheet_name='Significance Tests', index=False)
-                pattern_tests_df.to_excel(writer, sheet_name='Pattern Tests', index=False)
-                time_tests_df.to_excel(writer, sheet_name='Time Tests', index=False)
-                validation_folds_df.to_excel(writer, sheet_name='Validation Folds', index=False)
-                validation_summary_df.to_excel(writer, sheet_name='Validation Summary', index=False)
-                consistent_hot_numbers_df.to_excel(writer, sheet_name='Consistent Hot Numbers', index=False)
-                consistent_pairs_df.to_excel(writer, sheet_name='Consistent Pairs', index=False)
-                consistent_trends_df.to_excel(writer, sheet_name='Consistent Trends', index=False)
-                focused_df.to_excel(writer, sheet_name='Focused_Predictions', index=False)
-    
+
+            # Write to Excel
+            with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                if not frequency_df.empty:
+                    frequency_df.to_excel(writer, sheet_name='Frequency', index=False)
+                else:
+                    # Add a default sheet if no data is available
+                    pd.DataFrame(["No data available"]).to_excel(writer, sheet_name='Default', index=False)
+
+                # Ensure at least one sheet is visible
+                writer.book.active = 0  # Set the first sheet as active
+
             print(f"\nAnalysis results saved to {filename}")
             return True
-            
+
         except Exception as e:
             print(f"Error saving analysis results: {e}")
             traceback.print_exc()
@@ -819,12 +615,6 @@ if __name__ == "__main__":
         print("\nTop 5 Common Combinations:")
         for combo in combinations['most_common'][:5]:
             print(f"Combination {combo['combination']}: Frequency {combo['frequency']}")
-        
-        # Skip patterns analysis
-        skip_patterns = analysis.analyze_skip_patterns()
-        if 'statistics' in skip_patterns:
-            print(f"\nAverage numbers skipped per draw: {skip_patterns['statistics']['avg_skipped']:.2f}")
-            print(f"Average new numbers per draw: {skip_patterns['statistics']['avg_new']:.2f}")
         
         # Save all analysis results to Excel
         analysis.save_to_excel(PATHS['ANALYSIS_RESULTS'])
