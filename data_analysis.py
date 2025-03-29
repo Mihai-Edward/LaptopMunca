@@ -172,7 +172,7 @@ class DataAnalysis:
         """Suggest numbers based on frequency analysis"""
         return self.get_top_numbers(top_n)
 
-    def find_common_pairs(self, top_n=10):
+    def find_common_pairs(self, top_n=30):
         """Find most common pairs of numbers"""
         pairs = Counter()
         for draw in self.draws:
@@ -182,7 +182,7 @@ class DataAnalysis:
         print(f"DEBUG: Found {len(common_pairs)} common pairs")
         return common_pairs
 
-    def find_consecutive_numbers(self, top_n=10):
+    def find_consecutive_numbers(self, top_n=20):
         """Find most common consecutive number pairs"""
         consecutive_pairs = Counter()
         for draw in self.draws:
@@ -215,7 +215,7 @@ class DataAnalysis:
         print(f"DEBUG: Range analysis completed. Distribution: {ranges}")
         return ranges
     
-    def hot_and_cold_numbers(self, top_n=10, window_size=24):
+    def hot_and_cold_numbers(self, top_n=20, window_size=24):
         """Enhanced hot/cold analysis with trending detection"""
         # Overall hot/cold
         frequency = self.count_frequency()
@@ -486,7 +486,7 @@ class DataAnalysis:
             ])
     
             # Get combinations analysis
-            combinations_analysis = self.analyze_combinations(group_size=3, top_n=10)
+            combinations_analysis = self.analyze_combinations(group_size=3, top_n=30)
             
             # Create DataFrames for combinations analysis
             most_common_combinations_df = pd.DataFrame([
@@ -689,7 +689,7 @@ class DataAnalysis:
             
         return gap_stats
 
-    def analyze_combinations(self, group_size=3, top_n=10):
+    def analyze_combinations(self, group_size=3, top_n=30):
         """
         Analyze frequently occurring number combinations
         

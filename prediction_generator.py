@@ -398,12 +398,12 @@ def main():
         print("Generating prediction with triplet analysis...")
         prediction = predictor.generate_prediction(
             predict_count=15,          # Number of numbers to predict
-            recent_window=150,         # Focus on most recent 150 draws
+            recent_window=96,         # Focus on most recent 96 draws
             freq_weight=0.25,          # Weight for frequency analysis
-            hot_cold_weight=0.25,      # Weight for hot/cold analysis
-            gap_weight=0.25,           # Weight for gap analysis
+            hot_cold_weight=0.30,      # Weight for hot/cold analysis
+            gap_weight=0.20,           # Weight for gap analysis
             triplets_weight=0.25,      # Weight for common triplets analysis
-            historical_influence=0.1   # 10% weight to overall historical patterns
+            historical_influence=0.15   # 10% weight to overall historical patterns
         )
         
         # Display prediction
