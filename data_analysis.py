@@ -1,6 +1,6 @@
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
-from itertools import combinations
+from itertools import combinations as iter_combinations  # Renamed to avoid conflicts
 import pandas as pd
 from sklearn.cluster import KMeans
 import numpy as np
@@ -174,7 +174,8 @@ class DataAnalysis:
         pairs = Counter()
         for draw in self.draws:
             numbers = draw[1]
-            pairs.update(combinations(sorted(numbers), 2))
+            # Use iter_combinations to generate all pairs of numbers
+            pairs.update(iter_combinations(sorted(numbers), 2))
         common_pairs = pairs.most_common(top_n)
         print(f"DEBUG: Found {len(common_pairs)} common pairs")
         return common_pairs
@@ -202,7 +203,7 @@ class DataAnalysis:
         print(f"DEBUG: Range analysis completed. Distribution: {ranges}")
         return ranges
     
-    def hot_and_cold_numbers(self, top_n=10, window_size=24):
+    def hot_and_cold_numbers(self, top_n=80, window_size=24):
         """Enhanced hot/cold analysis with trending detection"""
         # Overall hot/cold
         frequency = self.count_frequency()
@@ -360,29 +361,89 @@ class DataAnalysis:
         try:
             ensure_directories()
             
-            # Create an empty Excel file if it doesn't exist
-            if not os.path.exists(filename):
-                with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-                    pass
-
             # Get all analysis results
             frequency = self.count_frequency()
+            hot_cold_data = self.hot_and_cold_numbers()
+            gap_stats = self.analyze_gaps()
+            combinations_analysis = self.analyze_combinations(group_size=3, top_n=30)
+            
+            # Create DataFrames
+            # Frequency analysis
             frequency_df = pd.DataFrame(frequency.items(), columns=["Number", "Frequency"])
-
-            # Write to Excel
-            with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-                if not frequency_df.empty:
-                    frequency_df.to_excel(writer, sheet_name='Frequency', index=False)
-                else:
-                    # Add a default sheet if no data is available
-                    pd.DataFrame(["No data available"]).to_excel(writer, sheet_name='Default', index=False)
-
-                # Ensure at least one sheet is visible
-                writer.book.active = 0  # Set the first sheet as active
-
+            
+            # Hot/Cold analysis
+            hot_numbers_df = pd.DataFrame(hot_cold_data['hot_numbers'], columns=["Number", "Frequency"])
+            cold_numbers_df = pd.DataFrame(hot_cold_data['cold_numbers'], columns=["Number", "Frequency"])
+            
+            # Trending analysis
+            trending_up_df = pd.DataFrame([
+                {"Number": num, "Overall_Freq": data['overall_freq'], 
+                 "Recent_Freq": data['recent_freq'], "Trend": data['trend']} 
+                for num, data in hot_cold_data['trending_up']
+            ])
+            
+            trending_down_df = pd.DataFrame([
+                {"Number": num, "Overall_Freq": data['overall_freq'], 
+                 "Recent_Freq": data['recent_freq'], "Trend": data['trend']} 
+                for num, data in hot_cold_data['trending_down']
+            ])
+            
+            # Gap analysis
+            gap_analysis_df = pd.DataFrame([
+                {
+                    'Number': num,
+                    'Average_Gap': stats['avg_gap'],
+                    'Max_Gap': stats['max_gap'],
+                    'Min_Gap': stats['min_gap'],
+                    'Current_Gap': stats['current_gap']
+                }
+                for num, stats in gap_stats.items()
+            ])
+            
+            # Combinations analysis
+            most_common_combinations_df = pd.DataFrame([
+                {
+                    'Combination': str(list(item['combination'])).replace('[', '').replace(']', ''),
+                    'Frequency': item['frequency'],
+                    'Percentage': item['percentage'],
+                    'Average_Gap': item['average_gap']
+                }
+                for item in combinations_analysis['most_common']
+            ])
+            
+            least_common_combinations_df = pd.DataFrame([
+                {
+                    'Combination': str(list(item['combination'])).replace('[', '').replace(']', ''),
+                    'Frequency': item['frequency'],
+                    'Percentage': item['percentage'],
+                    'Average_Gap': item['average_gap']
+                }
+                for item in combinations_analysis['least_common']
+            ])
+            
+            # Combinations statistics
+            combinations_stats_df = pd.DataFrame([{
+                'Total_Combinations': combinations_analysis['statistics']['total_combinations'],
+                'Total_Occurrences': combinations_analysis['statistics']['total_occurrences'],
+                'Average_Frequency': combinations_analysis['statistics']['avg_frequency'],
+                'Group_Size': combinations_analysis['statistics']['group_size']
+            }])
+            
+            # Save to Excel
+            with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
+                frequency_df.to_excel(writer, sheet_name='Frequency', index=False)
+                hot_numbers_df.to_excel(writer, sheet_name='Hot Numbers', index=False)
+                cold_numbers_df.to_excel(writer, sheet_name='Cold Numbers', index=False)
+                trending_up_df.to_excel(writer, sheet_name='Trending Up', index=False)
+                trending_down_df.to_excel(writer, sheet_name='Trending Down', index=False)
+                gap_analysis_df.to_excel(writer, sheet_name='Gap Analysis', index=False)
+                most_common_combinations_df.to_excel(writer, sheet_name='Most Common Combinations', index=False)
+                least_common_combinations_df.to_excel(writer, sheet_name='Least Common Combinations', index=False)
+                combinations_stats_df.to_excel(writer, sheet_name='Combinations Statistics', index=False)
+            
             print(f"\nAnalysis results saved to {filename}")
             return True
-
+            
         except Exception as e:
             print(f"Error saving analysis results: {e}")
             traceback.print_exc()
@@ -480,7 +541,7 @@ class DataAnalysis:
             for _, numbers in self.draws:
                 if len(numbers) >= group_size:  # Ensure we have enough numbers
                     # Get all possible combinations of the specified size
-                    combos = combinations(sorted(numbers), group_size)
+                    combos = iter_combinations(sorted(numbers), group_size)
                     combinations_count.update(combos)
             
             if not combinations_count:
@@ -611,9 +672,9 @@ if __name__ == "__main__":
             print(f"Number {num}: Average gap {gap_data['avg_gap']}, Current gap {gap_data['current_gap']}")
         
         # Combinations analysis
-        combinations = analysis.analyze_combinations(group_size=3, top_n=10)
+        combinations_result = analysis.analyze_combinations(group_size=3, top_n=10)  # Rename to combinations_result
         print("\nTop 5 Common Combinations:")
-        for combo in combinations['most_common'][:5]:
+        for combo in combinations_result['most_common'][:5]:
             print(f"Combination {combo['combination']}: Frequency {combo['frequency']}")
         
         # Save all analysis results to Excel
