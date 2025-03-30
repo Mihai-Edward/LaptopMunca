@@ -155,19 +155,16 @@ class DataAnalysis:
             traceback.print_exc()
         return draws
 
-    def count_frequency(self):
-        """Count frequency of all numbers across all draws"""
-        all_numbers = [number for draw in self.draws for number in draw[1]]
+    def count_frequency(self, window_size=1440):
+        
+        # Get recent draws based on window size
+        recent_draws = self.draws[-window_size:] if len(self.draws) >= window_size else self.draws
+        
+        # Count frequencies (keeping original logic)
+        all_numbers = [number for draw in recent_draws for number in draw[1]]
         frequency = Counter(all_numbers)
+        
         return frequency
-
-    def get_top_numbers(self, top_n=20):
-        """Get top N most frequent numbers"""
-        frequency = self.count_frequency()
-        most_common_numbers = [number for number, count in frequency.most_common(top_n)]
-        print(f"DEBUG: Retrieved top {len(most_common_numbers)} numbers")
-        return most_common_numbers
-
 
     def find_common_pairs(self, top_n=30):
         """Find most common pairs of numbers"""
@@ -180,50 +177,95 @@ class DataAnalysis:
         print(f"DEBUG: Found {len(common_pairs)} common pairs")
         return common_pairs
 
-    def hot_and_cold_numbers(self, top_n=80, window_size=24):
-        """Enhanced hot/cold analysis with trending detection"""
-        # Overall hot/cold
-        frequency = self.count_frequency()
-        sorted_numbers = frequency.most_common()
-        
+    def hot_and_cold_numbers(self, top_n=80, window_size=124):
+        """
+        Enhanced hot/cold analysis with trending detection
+        Uses the same window size as predictions for consistency.
+        """
+        # Validate window size
+        total_draws = len(self.draws)
+        if window_size > total_draws:
+            window_size = total_draws
+
+        # Get frequencies for the recent period
+        recent_frequency = Counter()
+        for draw in self.draws[-window_size:]:
+            for num in draw[1]:
+                recent_frequency[num] += 1
+
+        total_recent_draws = min(window_size, total_draws)
+
+        # Calculate rates for the recent period
+        rates = {}
+        for num in range(1, 81):
+            freq = recent_frequency.get(num, 0)
+            rate = freq / total_recent_draws
+            rates[num] = (freq, rate)
+
+        # Sort numbers by frequency
+        sorted_numbers = sorted(rates.items(), key=lambda x: x[1][0], reverse=True)
+
         # Get hot numbers (most frequent)
-        hot_numbers = sorted_numbers[:top_n]
-        
+        hot_numbers = [(num, freq) for num, (freq, _) in sorted_numbers[:top_n]]
+
         # Get cold numbers (least frequent)
-        cold_numbers = sorted_numbers[-top_n:]
-        cold_numbers.reverse()  # Reverse to get least frequent first
-        
-        # Recent trends (using window)
-        recent_draws = self.draws[-window_size:] if len(self.draws) > window_size else self.draws
-        recent_numbers = [number for _, numbers in recent_draws for number in numbers]
-        recent_frequency = Counter(recent_numbers)
-        
-        # Calculate trend (increasing/decreasing frequency)
+        cold_numbers = [(num, freq) for num, (freq, _) in sorted_numbers[-top_n:]]
+        cold_numbers.reverse()
+
+        # Calculate trends using half windows
+        half_window = window_size // 2
+        recent_half_frequency = Counter()
+        older_half_frequency = Counter()
+
+        # Count frequencies for the recent half
+        for draw in self.draws[-half_window:]:
+            for num in draw[1]:
+                recent_half_frequency[num] += 1
+
+        # Count frequencies for the older half
+        for draw in self.draws[-window_size:-half_window]:
+            for num in draw[1]:
+                older_half_frequency[num] += 1
+
+        # Calculate trend scores
         trends = {}
         for num in range(1, 81):
-            overall_freq = frequency[num] / max(len(self.draws), 1) if self.draws else 0
-            recent_freq = recent_frequency[num] / max(len(recent_draws), 1) if recent_draws else 0
-            trend = recent_freq - overall_freq
+            recent_count = recent_half_frequency.get(num, 0)
+            older_count = older_half_frequency.get(num, 0)
+            recent_rate = recent_count / half_window
+            older_rate = older_count / half_window
+            trend = recent_rate - older_rate
+
             trends[num] = {
-                'overall_freq': round(overall_freq, 4),
-                'recent_freq': round(recent_freq, 4),
+                'recent_rate': round(recent_rate, 4),
+                'older_rate': round(older_rate, 4),
                 'trend': round(trend, 4),
-                'number': num
+                'number': num,
+                'recent_count': recent_count,
+                'older_count': older_count,
+                'window_size': window_size
             }
-        
-        # Get trending up and down numbers
-        trending_up = sorted([(k, v) for k, v in trends.items()], key=lambda x: x[1]['trend'], reverse=True)[:top_n]
-        trending_down = sorted([(k, v) for k, v in trends.items()], key=lambda x: x[1]['trend'])[:top_n]
-        
+
+        # Get trending up and down
+        trending_up = sorted([(k, v) for k, v in trends.items()],
+                             key=lambda x: x[1]['trend'],
+                             reverse=True)[:top_n]
+        trending_down = sorted([(k, v) for k, v in trends.items()],
+                               key=lambda x: x[1]['trend'])[:top_n]
+
         if self.debug:
-            print(f"DEBUG: Analyzed hot/cold numbers with window size {window_size}")
-            print(f"DEBUG: Found {len(trending_up)} trending up and {len(trending_down)} trending down numbers")
-        
+            print(f"\nHot/Cold Analysis Summary:")
+            print(f"Window size: {window_size} draws")
+            print(f"Split into: 2 periods of {half_window} draws each")
+            print("\nTop 5 Hot Numbers:")
+            for num, freq in hot_numbers[:5]:
+                print(f"Number {num}: {freq} appearances")
+
         return {
-            'hot_numbers': hot_numbers,
-            'cold_numbers': cold_numbers,
-            'trending_up': trending_up,
-            'trending_down': trending_down
+            'hot_numbers': hot_numbers,      # (number, frequency) pairs
+            'cold_numbers': cold_numbers,    # (number, frequency) pairs
+            'trending_up': trending_up,      # (number, trend_data) pairs
+            'trending_down': trending_down   # (number, trend_data) pairs
         }
 
     def sequence_pattern_analysis(self, sequence_length=3):
@@ -341,9 +383,10 @@ class DataAnalysis:
             filename = PATHS['ANALYSIS_RESULTS']
         
         try:
+            # Ensure necessary directories exist
             ensure_directories()
             
-            # Get all analysis results
+            # Retrieve all analysis results
             frequency = self.count_frequency()
             hot_cold_data = self.hot_and_cold_numbers()
             gap_stats = self.analyze_gaps()
@@ -354,19 +397,33 @@ class DataAnalysis:
             frequency_df = pd.DataFrame(frequency.items(), columns=["Number", "Frequency"])
             
             # Hot/Cold analysis
-            hot_numbers_df = pd.DataFrame(hot_cold_data['hot_numbers'], columns=["Number", "Frequency"])
-            cold_numbers_df = pd.DataFrame(hot_cold_data['cold_numbers'], columns=["Number", "Frequency"])
+            hot_numbers_df = pd.DataFrame(hot_cold_data['hot_numbers'], columns=["Number", "Rate"])
+            cold_numbers_df = pd.DataFrame(hot_cold_data['cold_numbers'], columns=["Number", "Rate"])
             
             # Trending analysis
             trending_up_df = pd.DataFrame([
-                {"Number": num, "Overall_Freq": data['overall_freq'], 
-                 "Recent_Freq": data['recent_freq'], "Trend": data['trend']} 
+                {
+                    "Number": num,
+                    "Recent_Rate": data['recent_rate'],
+                    "Older_Rate": data['older_rate'],
+                    "Trend": data['trend'],
+                    "Recent_Count": data['recent_count'],
+                    "Older_Count": data['older_count'],
+                    "Window_Size": data['window_size']
+                } 
                 for num, data in hot_cold_data['trending_up']
             ])
             
             trending_down_df = pd.DataFrame([
-                {"Number": num, "Overall_Freq": data['overall_freq'], 
-                 "Recent_Freq": data['recent_freq'], "Trend": data['trend']} 
+                {
+                    "Number": num,
+                    "Recent_Rate": data['recent_rate'],
+                    "Older_Rate": data['older_rate'],
+                    "Trend": data['trend'],
+                    "Recent_Count": data['recent_count'],
+                    "Older_Count": data['older_count'],
+                    "Window_Size": data['window_size']
+                } 
                 for num, data in hot_cold_data['trending_down']
             ])
             
@@ -385,7 +442,7 @@ class DataAnalysis:
             # Combinations analysis
             most_common_combinations_df = pd.DataFrame([
                 {
-                    'Combination': str(list(item['combination'])).replace('[', '').replace(']', ''),
+                    'Combination': str(list(item['combination'])),
                     'Frequency': item['frequency'],
                     'Percentage': item['percentage'],
                     'Average_Gap': item['average_gap']
@@ -395,7 +452,7 @@ class DataAnalysis:
             
             least_common_combinations_df = pd.DataFrame([
                 {
-                    'Combination': str(list(item['combination'])).replace('[', '').replace(']', ''),
+                    'Combination': str(list(item['combination'])),
                     'Frequency': item['frequency'],
                     'Percentage': item['percentage'],
                     'Average_Gap': item['average_gap']
@@ -403,15 +460,7 @@ class DataAnalysis:
                 for item in combinations_analysis['least_common']
             ])
             
-            # Combinations statistics
-            combinations_stats_df = pd.DataFrame([{
-                'Total_Combinations': combinations_analysis['statistics']['total_combinations'],
-                'Total_Occurrences': combinations_analysis['statistics']['total_occurrences'],
-                'Average_Frequency': combinations_analysis['statistics']['avg_frequency'],
-                'Group_Size': combinations_analysis['statistics']['group_size']
-            }])
-            
-            # Save to Excel
+            # Save all DataFrames to an Excel file
             with pd.ExcelWriter(filename, engine='xlsxwriter') as writer:
                 frequency_df.to_excel(writer, sheet_name='Frequency', index=False)
                 hot_numbers_df.to_excel(writer, sheet_name='Hot Numbers', index=False)
@@ -421,13 +470,16 @@ class DataAnalysis:
                 gap_analysis_df.to_excel(writer, sheet_name='Gap Analysis', index=False)
                 most_common_combinations_df.to_excel(writer, sheet_name='Most Common Combinations', index=False)
                 least_common_combinations_df.to_excel(writer, sheet_name='Least Common Combinations', index=False)
-                combinations_stats_df.to_excel(writer, sheet_name='Combinations Statistics', index=False)
             
-            print(f"\nAnalysis results saved to {filename}")
+            print(f"\nAnalysis results successfully saved to {filename}")
             return True
             
+        except KeyError as e:
+            print(f"KeyError: Missing key in data structure - {e}")
+            traceback.print_exc()
+            return False
         except Exception as e:
-            print(f"Error saving analysis results: {e}")
+            print(f"Error saving analysis results: {str(e)}")
             traceback.print_exc()
             return False
 
@@ -630,10 +682,8 @@ if __name__ == "__main__":
         frequency = analysis.count_frequency()
         print(f"Number of unique numbers: {len(frequency)}")
         
-        # Top numbers analysis
-        top_numbers = analysis.get_top_numbers(20)
-        print(f"Top 20 numbers: {', '.join(map(str, top_numbers))}")
-        
+    
+
         # Common pairs analysis
         common_pairs = analysis.find_common_pairs(30)
         print("\nMost common pairs:")

@@ -17,10 +17,10 @@ class PredictionGenerator:
         """Initialize with optional DataAnalysis object"""
         self.analysis = data_analysis if data_analysis else DataAnalysis()
     
-    def generate_prediction(self, predict_count=15, recent_window=150, 
-                           freq_weight=0.25, hot_cold_weight=0.25,
-                           gap_weight=0.25, triplets_weight=0.25,
-                           historical_influence=0.3):
+    def generate_prediction(self, predict_count=15, recent_window=60, 
+                           freq_weight=0.30, hot_cold_weight=0.30,
+                           gap_weight=0.30, triplets_weight=0.10,
+                           historical_influence=0.1):
         """
         Generate enhanced prediction using multiple analysis methods
         with tiered confidence levels and triplet analysis
@@ -49,7 +49,7 @@ class PredictionGenerator:
         # Create a windowed analysis object that only uses recent draws
         windowed_analysis = DataAnalysis(recent_draws, debug=False)
         
-        # 1. RECENT PATTERNS ANALYSIS (70% weight by default)
+        # 1. RECENT PATTERNS ANALYSIS (90% weight by default)
         # --------------------------------------------------
         
         # Component 1: Frequency Analysis
@@ -80,7 +80,7 @@ class PredictionGenerator:
                 # Treat overdue numbers neutrally and score based on readiness
                 if current_gap >= avg_gap:
                     # Number is overdue or exactly on time - neutral score
-                    gap_score = 0.5 * gap_weight
+                    gap_score = 0.0
                 else:
                     # Number has appeared recently - score based on "readiness" to appear again
                     readiness = 1 - (current_gap / avg_gap)  # Readiness is inversely proportional to gap
@@ -88,7 +88,7 @@ class PredictionGenerator:
                 
                 base_scores[num] += gap_score * (1 - historical_influence)
         
-        # 2. HISTORICAL PATTERNS ANALYSIS (30% weight by default)
+        # 2. HISTORICAL PATTERNS ANALYSIS (10% weight by default)
         # ------------------------------------------------------
         
         # Component 1: Overall Frequency Analysis
@@ -399,10 +399,10 @@ def main():
         prediction = predictor.generate_prediction(
             predict_count=15,          # Number of numbers to predict
             recent_window=60,         # Focus on most recent 60 draws
-            freq_weight=0.25,          # Weight for frequency analysis
+            freq_weight=0.30,          # Weight for frequency analysis
             hot_cold_weight=0.30,      # Weight for hot/cold analysis
             gap_weight=0.30,           # Weight for gap analysis
-            triplets_weight=0.15,      # Weight for common triplets analysis
+            triplets_weight=0.10,      # Weight for common triplets analysis
             historical_influence=0.10   # 10% weight to overall historical patterns
         )
         
