@@ -209,6 +209,13 @@ class DataAnalysis:
         frequency = self.count_frequency()
         sorted_numbers = frequency.most_common()
         
+        # Get hot numbers (most frequent)
+        hot_numbers = sorted_numbers[:top_n]
+        
+        # Get cold numbers (least frequent)
+        cold_numbers = sorted_numbers[-top_n:]
+        cold_numbers.reverse()  # Reverse to get least frequent first
+        
         # Recent trends (using window)
         recent_draws = self.draws[-window_size:] if len(self.draws) > window_size else self.draws
         recent_numbers = [number for _, numbers in recent_draws for number in numbers]
@@ -236,8 +243,8 @@ class DataAnalysis:
             print(f"DEBUG: Found {len(trending_up)} trending up and {len(trending_down)} trending down numbers")
         
         return {
-            'hot_numbers': sorted_numbers[:top_n],
-            'cold_numbers': sorted_numbers[-top_n:],
+            'hot_numbers': hot_numbers,
+            'cold_numbers': cold_numbers,
             'trending_up': trending_up,
             'trending_down': trending_down
         }
@@ -340,11 +347,9 @@ class DataAnalysis:
                 'frequency': self.count_frequency(),
                 'top_numbers': self.get_top_numbers(),
                 'common_pairs': self.find_common_pairs(),
-                'consecutive': self.find_consecutive_numbers(),
                 'ranges': self.number_range_analysis(),
                 'hot_cold': self.hot_and_cold_numbers(),
                 'sequences': self.sequence_pattern_analysis(),
-                'clusters': self.cluster_analysis()
             }
             print(f"DEBUG: Generated complete analysis with {len(results)} components")
             return results

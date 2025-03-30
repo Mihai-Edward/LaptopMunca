@@ -400,9 +400,9 @@ def main():
             predict_count=15,          # Number of numbers to predict
             recent_window=60,         # Focus on most recent 60 draws
             freq_weight=0.25,          # Weight for frequency analysis
-            hot_cold_weight=0.25,      # Weight for hot/cold analysis
-            gap_weight=0.25,           # Weight for gap analysis
-            triplets_weight=0.25,      # Weight for common triplets analysis
+            hot_cold_weight=0.30,      # Weight for hot/cold analysis
+            gap_weight=0.30,           # Weight for gap analysis
+            triplets_weight=0.15,      # Weight for common triplets analysis
             historical_influence=0.10   # 10% weight to overall historical patterns
         )
         
