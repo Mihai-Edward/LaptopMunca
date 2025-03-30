@@ -180,29 +180,6 @@ class DataAnalysis:
         print(f"DEBUG: Found {len(common_pairs)} common pairs")
         return common_pairs
 
-    def number_range_analysis(self):
-        """Analyze number distribution across ranges"""
-        ranges = {
-            '1-20': 0,
-            '21-40': 0,
-            '41-60': 0,
-            '61-80': 0
-        }
-        
-        for draw in self.draws:
-            for number in draw[1]:
-                if 1 <= number <= 20:
-                    ranges['1-20'] += 1
-                elif 21 <= number <= 40:
-                    ranges['21-40'] += 1
-                elif 41 <= number <= 60:
-                    ranges['41-60'] += 1
-                elif 61 <= number <= 80:
-                    ranges['61-80'] += 1
-                    
-        print(f"DEBUG: Range analysis completed. Distribution: {ranges}")
-        return ranges
-    
     def hot_and_cold_numbers(self, top_n=80, window_size=24):
         """Enhanced hot/cold analysis with trending detection"""
         # Overall hot/cold
