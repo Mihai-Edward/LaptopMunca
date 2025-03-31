@@ -155,7 +155,7 @@ class DataAnalysis:
             traceback.print_exc()
         return draws
 
-    def count_frequency(self, window_size=1440):
+    def count_frequency(self, window_size=576):
         
         # Get recent draws based on window size
         recent_draws = self.draws[-window_size:] if len(self.draws) >= window_size else self.draws
@@ -177,7 +177,7 @@ class DataAnalysis:
         print(f"DEBUG: Found {len(common_pairs)} common pairs")
         return common_pairs
 
-    def hot_and_cold_numbers(self, top_n=80, window_size=124):
+    def hot_and_cold_numbers(self, top_n=80, window_size=72):
         """
         Enhanced hot/cold analysis with trending detection
         Uses the same window size as predictions for consistency.
@@ -483,12 +483,13 @@ class DataAnalysis:
             traceback.print_exc()
             return False
 
-    def analyze_gaps(self, num_range=(1, 80)):
+    def analyze_gaps(self, num_range=(1, 80), window_size=576):
         """
-        Analyze gaps between appearances for each number
+        Analyze gaps between appearances for each number, considering only the last `window_size` draws.
         
         Args:
             num_range (tuple): Range of numbers to analyze (min, max)
+            window_size (int): Number of recent draws to consider for the analysis
             
         Returns:
             dict: Dictionary containing gap analysis for each number with structure:
@@ -502,13 +503,16 @@ class DataAnalysis:
                     }
                 }
         """
+        # Limit the draws to the last `window_size` draws
+        recent_draws = self.draws[-window_size:] if len(self.draws) >= window_size else self.draws
+        
         # Initialize tracking dictionaries
         gaps = defaultdict(list)
         last_seen = defaultdict(int)
         current_draw_index = 0
         
         # Track gaps for each number
-        for draw_index, (draw_date, numbers) in enumerate(self.draws):
+        for draw_index, (draw_date, numbers) in enumerate(recent_draws):
             current_draw_index = draw_index
             
             # Check each possible number
@@ -541,7 +545,7 @@ class DataAnalysis:
                 }
         
         if self.debug:
-            print(f"DEBUG: Analyzed gaps for {len(gap_stats)} numbers")
+            print(f"DEBUG: Analyzed gaps for {len(gap_stats)} numbers using the last {len(recent_draws)} draws")
             
         return gap_stats
 
