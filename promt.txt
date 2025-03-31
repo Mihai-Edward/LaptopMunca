@@ -1,0 +1,19 @@
+
+If you have to do this parameters alone without influence what do you choose to do and why? 
+what do you think is the most valuable parameters since the draws are from 5 to 5 minutes non stop 
+this is the format that i want , ignore numbers:
+Data _analysis.py file 
+count_frequency: 144     # 12 hours - More responsive to current patterns
+hot_and_cold_numbers: 36 # 3 hours - Very recent trends
+analyze_gaps: 144        # 12 hours - Recent enough for meaningful gaps
+
+# Prediction Generator parameters(prediction_generator.py file(recent analysis)
+
+prediction = predictor.generate_prediction(
+predict_count=15,          # Number of numbers to predict
+ recent_window=36,          # 3 hours - Highly focused on current trends
+  freq_weight=0.50,          # Increased from 0.45 - Most reliable indicator
+  hot_cold_weight=0.30,      # Increased from 0.25 - More weight on recent trends
+  gap_weight=0.20,          # Unchanged - Supporting indicator
+   triplets_weight=0.0,       # Removed completely
+   historical_influence=0.05   # Unchanged - Minimal historical influence
